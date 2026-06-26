@@ -1,0 +1,99 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model CatalogModel {
+  id        String         @id @default(cuid())
+  brand     String
+  name      String
+  series    String?
+  year      Int?
+  color     String?
+  scale     String?
+  notes     String?
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+  items     ItemInstance[]
+}
+
+model ItemInstance {
+  id             String           @id @default(cuid())
+  sku            String           @unique
+  catalogId      String
+  catalog        CatalogModel     @relation(fields: [catalogId], references: [id])
+  locationId     String?
+  location       StorageLocation? @relation(fields: [locationId], references: [id])
+  cardedOrLoose  String
+  condition      String
+  conditionNotes String?
+  purchasePrice  Float?
+  listPrice      Float?
+  status         String           @default("draft")
+  notes          String?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  photos         Photo[]
+  listing        Listing?
+  orderItems     OrderItem[]
+}
+
+model Photo {
+  id        String       @id @default(cuid())
+  itemId    String
+  item      ItemInstance @relation(fields: [itemId], references: [id])
+  url       String
+  type      String
+  sortOrder Int          @default(0)
+  createdAt DateTime     @default(now())
+}
+
+model StorageLocation {
+  id        String         @id @default(cuid())
+  label     String
+  notes     String?
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+  items     ItemInstance[]
+}
+
+model Listing {
+  id          String       @id @default(cuid())
+  itemId      String       @unique
+  item        ItemInstance @relation(fields: [itemId], references: [id])
+  price       Float
+  title       String
+  description String?
+  status      String       @default("active")
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  orderItems  OrderItem[]
+}
+
+model Order {
+  id         String      @id @default(cuid())
+  buyerName  String
+  buyerEmail String
+  buyerPhone String?
+  status     String      @default("pending")
+  notes      String?
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  orderItems OrderItem[]
+}
+
+model OrderItem {
+  id        String       @id @default(cuid())
+  orderId   String
+  order     Order        @relation(fields: [orderId], references: [id])
+  itemId    String
+  item      ItemInstance @relation(fields: [itemId], references: [id])
+  listingId String
+  listing   Listing      @relation(fields: [listingId], references: [id])
+  price     Float
+  createdAt DateTime     @default(now())
+}

@@ -1,0 +1,6 @@
+export type Condition = 'mint' | 'near_mint' | 'good' | 'fair' | 'poor' | 'damaged'
+export type CardedOrLoose = 'carded' | 'loose'
+export type ItemStatus = 'draft' | 'available' | 'reserved' | 'sold' | 'not_for_sale'
+export type PhotoType = 'front' | 'back' | 'detail' | 'damage'
+export type ListingStatus = 'active' | 'sold' | 'archived'
+export type OrderStatus = 'pending' | 'paid' | 'picking' | 'shipped' | 'complete' | 'cancelled'
