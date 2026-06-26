@@ -10,7 +10,10 @@ export default async function BrowsePage({
 }) {
   const { q, condition, type } = await searchParams
 
-  const conditions: Prisma.ListingWhereInput[] = [{ status: 'active' }]
+  const conditions: Prisma.ListingWhereInput[] = [
+    { status: 'active' },
+    { item: { status: 'available' } },
+  ]
 
   if (condition) conditions.push({ item: { condition } })
   if (type) conditions.push({ item: { cardedOrLoose: type } })

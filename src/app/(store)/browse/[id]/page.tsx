@@ -1,6 +1,8 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { prisma } from '@/lib/prisma'
+import { AddToCartButton } from '@/components/store/AddToCartButton'
+import type { CartItem } from '@/lib/cart'
 
 const CONDITION_LABELS: Record<string, string> = {
   mint: 'Mint',
@@ -24,10 +26,10 @@ export default async function ListingDetailPage({
       item: {
         select: {
           sku: true,
+          status: true,
           cardedOrLoose: true,
           condition: true,
           conditionNotes: true,
-          // location, purchasePrice, listPrice, status, notes intentionally excluded
           catalog: {
             select: {
               brand: true,
@@ -43,10 +45,19 @@ export default async function ListingDetailPage({
     },
   })
 
-  if (!listing || listing.status !== 'active') notFound()
+  if (!listing || listing.status !== 'active' || listing.item.status !== 'available') notFound()
 
   const { item } = listing
   const { catalog } = item
+
+  const cartItem: CartItem = {
+    listingId: listing.id,
+    title: listing.title,
+    price: listing.price,
+    sku: item.sku,
+    condition: item.condition,
+    cardedOrLoose: item.cardedOrLoose,
+  }
 
   return (
     <>
@@ -64,6 +75,10 @@ export default async function ListingDetailPage({
         <div>
           <h1 className="text-2xl font-bold text-gray-900 leading-snug">{listing.title}</h1>
           <p className="text-3xl font-bold mt-2">${listing.price.toFixed(2)}</p>
+
+          <div className="mt-4">
+            <AddToCartButton item={cartItem} />
+          </div>
 
           {listing.description && (
             <p className="mt-4 text-gray-700 text-sm leading-relaxed">{listing.description}</p>
