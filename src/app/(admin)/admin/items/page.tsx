@@ -26,11 +26,24 @@ const STATUS_COLORS: Record<string, string> = {
   not_for_sale: 'bg-red-100 text-red-700',
 }
 
+const LISTING_STATUS_COLORS: Record<string, string> = {
+  active: 'bg-green-100 text-green-700',
+  sold: 'bg-blue-100 text-blue-700',
+  archived: 'bg-gray-100 text-gray-600',
+}
+
+const LISTING_STATUS_LABELS: Record<string, string> = {
+  active: 'Active',
+  sold: 'Sold',
+  archived: 'Archived',
+}
+
 export default async function AdminItemsPage() {
   const items = await prisma.itemInstance.findMany({
     include: {
       catalog: { select: { brand: true, name: true } },
       location: { select: { label: true } },
+      listing: { select: { id: true, status: true } },
     },
     orderBy: { sku: 'asc' },
   })
@@ -60,6 +73,7 @@ export default async function AdminItemsPage() {
                 <th className="px-4 py-3 font-medium">Condition</th>
                 <th className="px-4 py-3 font-medium">Status</th>
                 <th className="px-4 py-3 font-medium">List Price</th>
+                <th className="px-4 py-3 font-medium">Listing</th>
                 <th className="px-4 py-3" />
               </tr>
             </thead>
@@ -71,17 +85,42 @@ export default async function AdminItemsPage() {
                     {item.catalog.brand} – {item.catalog.name}
                   </td>
                   <td className="px-4 py-3 text-gray-500">{item.location?.label ?? '—'}</td>
-                  <td className="px-4 py-3 text-gray-500">{CONDITION_LABELS[item.condition] ?? item.condition}</td>
+                  <td className="px-4 py-3 text-gray-500">
+                    {CONDITION_LABELS[item.condition] ?? item.condition}
+                  </td>
                   <td className="px-4 py-3">
-                    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_COLORS[item.status] ?? 'bg-gray-100 text-gray-600'}`}>
+                    <span
+                      className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_COLORS[item.status] ?? 'bg-gray-100 text-gray-600'}`}
+                    >
                       {STATUS_LABELS[item.status] ?? item.status}
                     </span>
                   </td>
                   <td className="px-4 py-3 text-gray-500">
                     {item.listPrice != null ? `$${item.listPrice.toFixed(2)}` : '—'}
                   </td>
+                  <td className="px-4 py-3">
+                    {item.listing ? (
+                      <span
+                        className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${LISTING_STATUS_COLORS[item.listing.status] ?? 'bg-gray-100 text-gray-600'}`}
+                      >
+                        {LISTING_STATUS_LABELS[item.listing.status] ?? item.listing.status}
+                      </span>
+                    ) : item.status === 'available' ? (
+                      <Link
+                        href={`/admin/listings/new?itemId=${item.id}`}
+                        className="text-blue-600 hover:underline text-sm"
+                      >
+                        List →
+                      </Link>
+                    ) : (
+                      <span className="text-gray-400">—</span>
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-right">
-                    <Link href={`/admin/items/${item.id}/edit`} className="text-blue-600 hover:underline text-sm">
+                    <Link
+                      href={`/admin/items/${item.id}/edit`}
+                      className="text-blue-600 hover:underline text-sm"
+                    >
                       Edit
                     </Link>
                   </td>
