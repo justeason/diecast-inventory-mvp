@@ -22,7 +22,7 @@ const ORDER_STATUS_LABELS: Record<string, string> = {
   paid: 'Paid',
   picking: 'Picking',
   shipped: 'Shipped',
-  completed: 'Completed',
+  complete: 'Complete',
   cancelled: 'Cancelled',
 }
 
@@ -32,7 +32,7 @@ const ORDER_STATUS_COLORS: Record<string, string> = {
   paid: 'bg-blue-100 text-blue-700',
   picking: 'bg-indigo-100 text-indigo-700',
   shipped: 'bg-purple-100 text-purple-700',
-  completed: 'bg-green-100 text-green-700',
+  complete: 'bg-green-100 text-green-700',
   cancelled: 'bg-red-100 text-red-700',
 }
 
@@ -42,7 +42,7 @@ const ORDER_PIPELINE_COLORS: Record<string, string> = {
   paid: 'bg-blue-50 border-blue-200 text-blue-800',
   picking: 'bg-indigo-50 border-indigo-200 text-indigo-800',
   shipped: 'bg-purple-50 border-purple-200 text-purple-800',
-  completed: 'bg-green-50 border-green-200 text-green-800',
+  complete: 'bg-green-50 border-green-200 text-green-800',
   cancelled: 'bg-red-50 border-red-200 text-red-800',
 }
 
@@ -52,7 +52,7 @@ const LISTING_STATUS_COLORS: Record<string, string> = {
   archived: 'bg-gray-100 text-gray-500',
 }
 
-const ORDER_PIPELINE = ['pending', 'paid', 'picking', 'shipped', 'completed', 'cancelled'] as const
+const ORDER_PIPELINE = ['pending', 'paid', 'picking', 'shipped', 'complete', 'cancelled'] as const
 
 type CardColor = 'gray' | 'green' | 'yellow' | 'blue' | 'orange' | 'teal'
 

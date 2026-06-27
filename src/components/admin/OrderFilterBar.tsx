@@ -2,17 +2,20 @@ import Link from 'next/link'
 
 const STATUS_OPTIONS = [
   { value: 'all', label: 'All statuses' },
-  { value: 'active', label: 'Active' },
-  { value: 'sold', label: 'Sold' },
-  { value: 'archived', label: 'Archived' },
+  { value: 'pending', label: 'Pending' },
+  { value: 'paid', label: 'Paid' },
+  { value: 'picking', label: 'Picking' },
+  { value: 'shipped', label: 'Shipped' },
+  { value: 'complete', label: 'Complete' },
+  { value: 'cancelled', label: 'Cancelled' },
 ]
 
 const SORT_OPTIONS = [
   { value: 'newest', label: 'Newest first' },
   { value: 'oldest', label: 'Oldest first' },
-  { value: 'price_asc', label: 'Price: Low to High' },
-  { value: 'price_desc', label: 'Price: High to Low' },
   { value: 'status', label: 'Status' },
+  { value: 'total_desc', label: 'Total: High to Low' },
+  { value: 'total_asc', label: 'Total: Low to High' },
 ]
 
 type Props = {
@@ -21,31 +24,31 @@ type Props = {
   sort: string
 }
 
-export function ListingFilterBar({ q, status, sort }: Props) {
+export function OrderFilterBar({ q, status, sort }: Props) {
   const isActive = q !== '' || status !== '' || sort !== 'newest'
   const formKey = [q, status, sort].join('|')
 
   return (
-    <form key={formKey} method="GET" action="/admin/listings" className="flex flex-wrap items-end gap-3 mb-6">
+    <form key={formKey} method="GET" action="/admin/orders" className="flex flex-wrap items-end gap-3 mb-6">
       <div className="flex-1 min-w-48">
-        <label htmlFor="listing-q" className="block text-xs font-medium text-gray-600 mb-1">
+        <label htmlFor="order-q" className="block text-xs font-medium text-gray-600 mb-1">
           Search
         </label>
         <input
-          id="listing-q"
+          id="order-q"
           name="q"
           type="text"
           defaultValue={q}
-          placeholder="Title, SKU, brand, name…"
+          placeholder="Buyer name, email, notes, SKU, listing title…"
           className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
         />
       </div>
       <div>
-        <label htmlFor="listing-status" className="block text-xs font-medium text-gray-600 mb-1">
+        <label htmlFor="order-status" className="block text-xs font-medium text-gray-600 mb-1">
           Status
         </label>
         <select
-          id="listing-status"
+          id="order-status"
           name="status"
           defaultValue={status || 'all'}
           className="rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
@@ -58,11 +61,11 @@ export function ListingFilterBar({ q, status, sort }: Props) {
         </select>
       </div>
       <div>
-        <label htmlFor="listing-sort" className="block text-xs font-medium text-gray-600 mb-1">
+        <label htmlFor="order-sort" className="block text-xs font-medium text-gray-600 mb-1">
           Sort
         </label>
         <select
-          id="listing-sort"
+          id="order-sort"
           name="sort"
           defaultValue={sort}
           className="rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
@@ -81,7 +84,7 @@ export function ListingFilterBar({ q, status, sort }: Props) {
         Apply
       </button>
       {isActive && (
-        <Link href="/admin/listings" className="text-sm text-gray-500 hover:text-gray-900">
+        <Link href="/admin/orders" className="text-sm text-gray-500 hover:text-gray-900">
           Clear
         </Link>
       )}

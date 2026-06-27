@@ -23,9 +23,10 @@ type Props = {
 
 export function IntakeFilterBar({ q, status, sort }: Props) {
   const isActive = q !== '' || status !== '' || sort !== 'newest'
+  const formKey = [q, status, sort].join('|')
 
   return (
-    <form method="GET" action="/admin/intake" className="flex flex-wrap items-end gap-3 mb-6">
+    <form key={formKey} method="GET" action="/admin/intake" className="flex flex-wrap items-end gap-3 mb-6">
       <div className="flex-1 min-w-48">
         <label htmlFor="intake-q" className="block text-xs font-medium text-gray-600 mb-1">
           Search
