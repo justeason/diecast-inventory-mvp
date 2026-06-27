@@ -5,6 +5,7 @@ export type CartItem = {
   sku: string
   condition: string
   cardedOrLoose: string
+  photoUrl?: string | null
 }
 
 const CART_KEY = 'diecast-cart'

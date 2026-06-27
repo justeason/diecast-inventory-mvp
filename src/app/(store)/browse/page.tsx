@@ -42,6 +42,7 @@ export default async function BrowsePage({
           catalog: {
             select: { brand: true, name: true, year: true, series: true, color: true },
           },
+          photos: { where: { type: 'front' }, take: 1, select: { url: true } },
         },
       },
     },
@@ -64,7 +65,11 @@ export default async function BrowsePage({
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
           {listings.map((listing) => (
-            <ListingCard key={listing.id} listing={listing} />
+            <ListingCard
+              key={listing.id}
+              listing={listing}
+              photoUrl={listing.item.photos[0]?.url ?? null}
+            />
           ))}
         </div>
       )}

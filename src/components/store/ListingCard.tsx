@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import { AddToCartButton } from './AddToCartButton'
+import { PhotoThumbnail } from '@/components/shared/PhotoThumbnail'
 import type { CartItem } from '@/lib/cart'
 
 const CONDITION_LABELS: Record<string, string> = {
@@ -29,9 +30,10 @@ type Props = {
       }
     }
   }
+  photoUrl?: string | null
 }
 
-export function ListingCard({ listing }: Props) {
+export function ListingCard({ listing, photoUrl }: Props) {
   const { item } = listing
   const { catalog } = item
 
@@ -42,13 +44,14 @@ export function ListingCard({ listing }: Props) {
     sku: item.sku,
     condition: item.condition,
     cardedOrLoose: item.cardedOrLoose,
+    photoUrl: photoUrl ?? null,
   }
 
   return (
     <div className="rounded-lg border border-gray-200 overflow-hidden bg-white hover:border-gray-400 transition-colors">
       <Link href={`/browse/${listing.id}`} className="group block">
-        <div className="aspect-square bg-gray-100 flex items-center justify-center">
-          <span className="text-gray-400 text-sm">No photo</span>
+        <div className="aspect-square overflow-hidden">
+          <PhotoThumbnail photoUrl={photoUrl} alt={listing.title} size="fill" />
         </div>
 
         <div className="p-4 pb-3">

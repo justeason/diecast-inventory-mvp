@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { prisma } from '@/lib/prisma'
 import { AddToCartButton } from '@/components/store/AddToCartButton'
+import { PhotoThumbnail } from '@/components/shared/PhotoThumbnail'
 import type { CartItem } from '@/lib/cart'
 
 const CONDITION_LABELS: Record<string, string> = {
@@ -40,6 +41,10 @@ export default async function ListingDetailPage({
               scale: true,
             },
           },
+          photos: {
+            select: { url: true, type: true, sortOrder: true },
+            orderBy: { sortOrder: 'asc' },
+          },
         },
       },
     },
@@ -49,6 +54,10 @@ export default async function ListingDetailPage({
 
   const { item } = listing
   const { catalog } = item
+  const photos = item.photos
+
+  const mainPhotoUrl = photos.find((p) => p.type === 'front')?.url ?? photos[0]?.url ?? null
+  const secondaryPhotos = photos.filter((p) => p.url !== mainPhotoUrl)
 
   const cartItem: CartItem = {
     listingId: listing.id,
@@ -57,6 +66,7 @@ export default async function ListingDetailPage({
     sku: item.sku,
     condition: item.condition,
     cardedOrLoose: item.cardedOrLoose,
+    photoUrl: mainPhotoUrl,
   }
 
   return (
@@ -68,8 +78,24 @@ export default async function ListingDetailPage({
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
-        <div className="aspect-square rounded-lg bg-gray-100 flex items-center justify-center">
-          <p className="text-gray-400 text-sm">No photo yet</p>
+        {/* Photo gallery */}
+        <div className="space-y-2">
+          <div className="aspect-square rounded-lg overflow-hidden">
+            <PhotoThumbnail photoUrl={mainPhotoUrl} alt={listing.title} size="fill" />
+          </div>
+          {secondaryPhotos.length > 0 && (
+            <div className="grid grid-cols-4 gap-2">
+              {secondaryPhotos.map((p, i) => (
+                <div key={i} className="aspect-square rounded overflow-hidden">
+                  <PhotoThumbnail
+                    photoUrl={p.url}
+                    alt={`${listing.title} — ${p.type}`}
+                    size="fill"
+                  />
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         <div>

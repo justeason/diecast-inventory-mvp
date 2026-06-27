@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { prisma } from '@/lib/prisma'
 import { OrderStatusForm } from '@/components/admin/OrderStatusForm'
+import { PhotoThumbnail } from '@/components/shared/PhotoThumbnail'
 
 const CONDITION_LABELS: Record<string, string> = {
   mint: 'Mint',
@@ -52,6 +53,7 @@ export default async function AdminOrderDetailPage({
                 select: { brand: true, name: true, year: true, series: true, color: true },
               },
               location: { select: { label: true } },
+              photos: { where: { type: 'front' }, take: 1, select: { url: true } },
             },
           },
         },
@@ -144,6 +146,7 @@ export default async function AdminOrderDetailPage({
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr className="text-left text-gray-500">
+                <th className="px-4 py-3 font-medium w-14"></th>
                 <th className="px-4 py-3 font-medium">SKU</th>
                 <th className="px-4 py-3 font-medium">Listing</th>
                 <th className="px-4 py-3 font-medium">Catalog</th>
@@ -167,6 +170,13 @@ export default async function AdminOrderDetailPage({
 
                 return (
                   <tr key={oi.id} className="hover:bg-gray-50">
+                    <td className="px-4 py-3">
+                      <PhotoThumbnail
+                        photoUrl={oi.item.photos[0]?.url ?? null}
+                        alt={oi.listing.title}
+                        size="sm"
+                      />
+                    </td>
                     <td className="px-4 py-3 font-mono text-xs text-gray-600">{oi.item.sku}</td>
                     <td className="px-4 py-3 text-gray-900">{oi.listing.title}</td>
                     <td className="px-4 py-3 text-gray-700 text-xs">{catalogStr}</td>
@@ -198,6 +208,7 @@ export default async function AdminOrderDetailPage({
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr className="text-left text-gray-500">
+                <th className="px-4 py-3 font-medium w-14"></th>
                 <th className="px-4 py-3 font-medium">Location</th>
                 <th className="px-4 py-3 font-medium">SKU</th>
                 <th className="px-4 py-3 font-medium">Item</th>
@@ -208,6 +219,13 @@ export default async function AdminOrderDetailPage({
             <tbody className="divide-y divide-gray-100">
               {pickingList.map((oi) => (
                 <tr key={oi.id} className="hover:bg-gray-50">
+                  <td className="px-4 py-3">
+                    <PhotoThumbnail
+                      photoUrl={oi.item.photos[0]?.url ?? null}
+                      alt={oi.listing.title}
+                      size="sm"
+                    />
+                  </td>
                   <td className="px-4 py-3 font-medium text-gray-700">
                     {oi.item.location?.label ?? <span className="text-gray-400">No location</span>}
                   </td>

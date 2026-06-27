@@ -4,6 +4,7 @@ import { useEffect } from 'react'
 import { useActionState } from 'react'
 import { useCart } from '@/lib/use-cart'
 import { createOrder, type OrderActionState } from '@/lib/actions/orders'
+import { PhotoThumbnail } from '@/components/shared/PhotoThumbnail'
 
 const CONDITION_LABELS: Record<string, string> = {
   mint: 'Mint',
@@ -60,6 +61,7 @@ export function CartPage() {
             <table className="w-full text-sm">
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr className="text-left text-gray-500">
+                  <th className="px-4 py-3 font-medium w-14"></th>
                   <th className="px-4 py-3 font-medium">Item</th>
                   <th className="px-4 py-3 font-medium">SKU</th>
                   <th className="px-4 py-3 font-medium">Condition</th>
@@ -71,6 +73,9 @@ export function CartPage() {
               <tbody className="divide-y divide-gray-100">
                 {items.map((item) => (
                   <tr key={item.listingId}>
+                    <td className="px-4 py-3">
+                      <PhotoThumbnail photoUrl={item.photoUrl ?? null} alt={item.title} size="sm" />
+                    </td>
                     <td className="px-4 py-3 font-medium text-gray-900">{item.title}</td>
                     <td className="px-4 py-3 font-mono text-xs text-gray-500">{item.sku}</td>
                     <td className="px-4 py-3 text-gray-500">
@@ -97,7 +102,7 @@ export function CartPage() {
               <tfoot className="border-t border-gray-200 bg-gray-50">
                 <tr>
                   <td
-                    colSpan={4}
+                    colSpan={5}
                     className="px-4 py-3 text-right font-semibold text-gray-900"
                   >
                     Subtotal

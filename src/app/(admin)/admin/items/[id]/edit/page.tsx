@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { prisma } from '@/lib/prisma'
 import { ItemInstanceForm } from '@/components/admin/ItemInstanceForm'
+import { PhotoThumbnail } from '@/components/shared/PhotoThumbnail'
 
 export default async function EditItemPage({
   params,
@@ -11,7 +12,12 @@ export default async function EditItemPage({
   const { id } = await params
 
   const [item, catalogModels, locations] = await Promise.all([
-    prisma.itemInstance.findUnique({ where: { id } }),
+    prisma.itemInstance.findUnique({
+      where: { id },
+      include: {
+        photos: { select: { url: true, type: true }, orderBy: { sortOrder: 'asc' } },
+      },
+    }),
     prisma.catalogModel.findMany({ orderBy: [{ brand: 'asc' }, { name: 'asc' }] }),
     prisma.storageLocation.findMany({ orderBy: { label: 'asc' } }),
   ])
@@ -26,6 +32,23 @@ export default async function EditItemPage({
         </Link>
         <h1 className="text-2xl font-bold text-gray-900 mt-2">Edit — {item.sku}</h1>
       </div>
+
+      {item.photos.length > 0 && (
+        <div className="mb-6 max-w-2xl">
+          <h2 className="text-sm font-semibold text-gray-700 mb-3">Photos</h2>
+          <div className="flex flex-wrap gap-3">
+            {item.photos.map((photo, i) => (
+              <div key={i} className="flex flex-col gap-1">
+                <div className="h-32 w-32 overflow-hidden rounded-md">
+                  <PhotoThumbnail photoUrl={photo.url} alt={`${photo.type} photo`} size="fill" />
+                </div>
+                <p className="text-xs text-gray-500 capitalize text-center">{photo.type}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <ItemInstanceForm item={item} catalogModels={catalogModels} locations={locations} />
     </>
   )
