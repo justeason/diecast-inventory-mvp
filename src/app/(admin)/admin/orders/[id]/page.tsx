@@ -43,9 +43,10 @@ export default async function AdminOrderDetailPage({
     include: {
       orderItems: {
         include: {
-          listing: { select: { title: true } },
+          listing: { select: { id: true, title: true } },
           item: {
             select: {
+              id: true,
               sku: true,
               cardedOrLoose: true,
               condition: true,
@@ -177,8 +178,22 @@ export default async function AdminOrderDetailPage({
                         size="sm"
                       />
                     </td>
-                    <td className="px-4 py-3 font-mono text-xs text-gray-600">{oi.item.sku}</td>
-                    <td className="px-4 py-3 text-gray-900">{oi.listing.title}</td>
+                    <td className="px-4 py-3 font-mono text-xs">
+                      <Link
+                        href={`/admin/items/${oi.item.id}/edit`}
+                        className="text-blue-600 hover:underline"
+                      >
+                        {oi.item.sku}
+                      </Link>
+                    </td>
+                    <td className="px-4 py-3 text-gray-900">
+                      <Link
+                        href={`/admin/listings/${oi.listing.id}/edit`}
+                        className="hover:underline"
+                      >
+                        {oi.listing.title}
+                      </Link>
+                    </td>
                     <td className="px-4 py-3 text-gray-700 text-xs">{catalogStr}</td>
                     <td className="px-4 py-3 text-gray-500">
                       {CONDITION_LABELS[oi.item.condition] ?? oi.item.condition}
@@ -229,7 +244,14 @@ export default async function AdminOrderDetailPage({
                   <td className="px-4 py-3 font-medium text-gray-700">
                     {oi.item.location?.label ?? <span className="text-gray-400">No location</span>}
                   </td>
-                  <td className="px-4 py-3 font-mono text-xs text-gray-600">{oi.item.sku}</td>
+                  <td className="px-4 py-3 font-mono text-xs">
+                    <Link
+                      href={`/admin/items/${oi.item.id}/edit`}
+                      className="text-blue-600 hover:underline"
+                    >
+                      {oi.item.sku}
+                    </Link>
+                  </td>
                   <td className="px-4 py-3 text-gray-700">
                     {oi.item.catalog.brand} {oi.item.catalog.name}
                     {oi.item.catalog.year ? ` (${oi.item.catalog.year})` : ''}

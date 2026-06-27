@@ -4,6 +4,7 @@ import fs from 'fs'
 import path from 'path'
 import Anthropic from '@anthropic-ai/sdk'
 import { z } from 'zod'
+import { Prisma } from '@prisma/client'
 import { redirect } from 'next/navigation'
 import { prisma } from '@/lib/prisma'
 
@@ -28,7 +29,12 @@ const DraftSchema = z.object({
   cardedOrLoose:   z.string().optional(),
   condition:       z.string().optional(),
   conditionNotes:  z.string().optional(),
-  listPrice:       z.string().optional(),
+  listPrice:       z.string().optional()
+    .refine(v => {
+      if (!v || !v.trim()) return true
+      const n = Number(v)
+      return Number.isFinite(n) && n >= 0
+    }, 'Draft list price must be a valid number and cannot be negative'),
   storageLocation: z.string().optional(),
   notes:           z.string().optional(),
 })
@@ -137,8 +143,8 @@ export async function convertDraft(
     if (!listingTitle) return { errors: { listingTitle: ['Listing title is required.'] } }
     const priceStr = (formData.get('listingPrice') as string)?.trim()
     if (!priceStr) return { errors: { listingPrice: ['Listing price is required.'] } }
-    listingPrice = parseFloat(priceStr)
-    if (isNaN(listingPrice) || listingPrice <= 0) {
+    listingPrice = Number(priceStr)
+    if (!Number.isFinite(listingPrice) || listingPrice <= 0) {
       return { errors: { listingPrice: ['Price must be a positive number greater than 0.'] } }
     }
   }
@@ -163,11 +169,12 @@ export async function convertDraft(
 
   // Check SKU uniqueness upfront for a clear user-facing error.
   const existing = await prisma.itemInstance.findUnique({ where: { sku } })
-  if (existing) return { errors: { sku: ['SKU is already taken.'] } }
+  if (existing) return { errors: { sku: ['SKU is already in use.'] } }
 
   let newItemId: string | undefined
   let newListingId: string | undefined
 
+  try {
   await prisma.$transaction(async (tx) => {
     // 1. Exact-match lookup on all identity fields; null matches null.
     let catalog = await tx.catalogModel.findFirst({
@@ -244,6 +251,12 @@ export async function convertDraft(
       data:  { status: 'converted', convertedItemId: item.id },
     })
   })
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      return { errors: { sku: ['SKU is already in use.'] } }
+    }
+    throw error
+  }
 
   if (newListingId) {
     redirect(`/admin/listings/${newListingId}/edit`)

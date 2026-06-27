@@ -23,7 +23,15 @@ export default async function EditListingPage({
         <Link href="/admin/listings" className="text-sm text-gray-500 hover:text-gray-900">
           ← Back to Listings
         </Link>
-        <h1 className="text-2xl font-bold text-gray-900 mt-2">Edit Listing</h1>
+        <div className="flex items-baseline gap-4 mt-2">
+          <h1 className="text-2xl font-bold text-gray-900">Edit Listing</h1>
+          <Link
+            href={`/admin/items/${listing.item.id}/edit`}
+            className="text-sm text-blue-600 hover:underline"
+          >
+            View Item →
+          </Link>
+        </div>
       </div>
       <EditListingForm listing={listing} />
     </>

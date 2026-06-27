@@ -1,8 +1,15 @@
 'use server'
 
 import { z } from 'zod'
+import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { redirect } from 'next/navigation'
+
+function isValidNonNegativePrice(v: string | undefined): boolean {
+  if (!v || !v.trim()) return true
+  const n = Number(v)
+  return Number.isFinite(n) && n >= 0
+}
 
 const ItemSchema = z.object({
   sku: z.string().min(1, 'SKU is required'),
@@ -13,8 +20,10 @@ const ItemSchema = z.object({
     error: 'Condition is required',
   }),
   conditionNotes: z.string().optional(),
-  purchasePrice: z.string().optional(),
-  listPrice: z.string().optional(),
+  purchasePrice: z.string().optional()
+    .refine(isValidNonNegativePrice, 'Purchase price must be a valid number and cannot be negative'),
+  listPrice: z.string().optional()
+    .refine(isValidNonNegativePrice, 'List price must be a valid number and cannot be negative'),
   status: z.enum(['draft', 'available', 'reserved', 'sold', 'not_for_sale'], {
     error: 'Status is required',
   }),
@@ -31,8 +40,8 @@ function toDbData(d: z.infer<typeof ItemSchema>) {
     cardedOrLoose: d.cardedOrLoose,
     condition: d.condition,
     conditionNotes: d.conditionNotes || undefined,
-    purchasePrice: d.purchasePrice ? parseFloat(d.purchasePrice) : undefined,
-    listPrice: d.listPrice ? parseFloat(d.listPrice) : undefined,
+    purchasePrice: d.purchasePrice?.trim() ? Number(d.purchasePrice.trim()) : undefined,
+    listPrice: d.listPrice?.trim() ? Number(d.listPrice.trim()) : undefined,
     status: d.status,
     notes: d.notes || undefined,
   }
@@ -45,7 +54,18 @@ export async function createItemInstance(
   const result = ItemSchema.safeParse(Object.fromEntries(formData))
   if (!result.success) return { errors: result.error.flatten().fieldErrors as Record<string, string[]> }
 
-  await prisma.itemInstance.create({ data: toDbData(result.data) })
+  const { sku } = result.data
+  const existing = await prisma.itemInstance.findUnique({ where: { sku } })
+  if (existing) return { errors: { sku: ['SKU is already in use.'] } }
+
+  try {
+    await prisma.itemInstance.create({ data: toDbData(result.data) })
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      return { errors: { sku: ['SKU is already in use.'] } }
+    }
+    throw error
+  }
   redirect('/admin/items')
 }
 
@@ -57,6 +77,17 @@ export async function updateItemInstance(
   const result = ItemSchema.safeParse(Object.fromEntries(formData))
   if (!result.success) return { errors: result.error.flatten().fieldErrors as Record<string, string[]> }
 
-  await prisma.itemInstance.update({ where: { id }, data: toDbData(result.data) })
+  const { sku } = result.data
+  const conflict = await prisma.itemInstance.findFirst({ where: { sku, NOT: { id } } })
+  if (conflict) return { errors: { sku: ['SKU is already in use.'] } }
+
+  try {
+    await prisma.itemInstance.update({ where: { id }, data: toDbData(result.data) })
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      return { errors: { sku: ['SKU is already in use.'] } }
+    }
+    throw error
+  }
   redirect('/admin/items')
 }

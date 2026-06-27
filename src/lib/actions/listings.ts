@@ -4,16 +4,23 @@ import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { redirect } from 'next/navigation'
 
+const isValidPositivePrice = (v: string) => {
+  const n = Number(v)
+  return Number.isFinite(n) && n > 0
+}
+
 const CreateListingSchema = z.object({
   itemId: z.string().min(1, 'Item is required'),
   title: z.string().min(1, 'Title is required'),
-  price: z.string().min(1, 'Price is required'),
+  price: z.string().min(1, 'Price is required')
+    .refine(isValidPositivePrice, 'Price must be a valid number greater than 0'),
   description: z.string().optional(),
 })
 
 const UpdateListingSchema = z.object({
   title: z.string().min(1, 'Title is required'),
-  price: z.string().min(1, 'Price is required'),
+  price: z.string().min(1, 'Price is required')
+    .refine(isValidPositivePrice, 'Price must be a valid number greater than 0'),
   description: z.string().optional(),
   status: z.enum(['active', 'sold', 'archived'], { error: 'Status is required' }),
 })
@@ -42,7 +49,7 @@ export async function createListing(
     data: {
       itemId,
       title,
-      price: parseFloat(price),
+      price: Number(price),
       description: description || undefined,
       status: 'active',
     },
@@ -70,7 +77,7 @@ export async function updateListing(
       await prisma.$transaction(async (tx) => {
         await tx.listing.update({
           where: { id },
-          data: { title, price: parseFloat(price), description: description || undefined, status },
+          data: { title, price: Number(price), description: description || undefined, status },
         })
         await tx.itemInstance.update({
           where: { id: existing.itemId },
@@ -81,7 +88,7 @@ export async function updateListing(
   } else {
     await prisma.listing.update({
       where: { id },
-      data: { title, price: parseFloat(price), description: description || undefined, status },
+      data: { title, price: Number(price), description: description || undefined, status },
     })
   }
 

@@ -26,9 +26,11 @@ export function OrderStatusForm({ orderId, currentStatus }: Props) {
 
   return (
     <div className="space-y-3">
-      <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
-        Cancelled and complete are terminal actions. Use carefully.
-      </p>
+      <div className="rounded-md bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800 space-y-1">
+        <p><strong>Paid / Picking / Shipped</strong> — updates order status only. No effect on items or listings.</p>
+        <p><strong>Cancelled</strong> — releases reserved items back to available. Listings remain active.</p>
+        <p><strong>Complete</strong> — marks reserved items as sold and closes their listings. Cannot be undone.</p>
+      </div>
       <form action={formAction} className="flex flex-wrap items-center gap-3">
         <select
           name="status"

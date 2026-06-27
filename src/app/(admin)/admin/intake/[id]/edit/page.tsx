@@ -79,7 +79,7 @@ export default async function EditIntakeDraftPage({
   const [draft, suggestedSku] = await Promise.all([
     prisma.intakeDraft.findUnique({
       where: { id },
-      include: { convertedItem: { select: { id: true, sku: true } } },
+      include: { convertedItem: { select: { id: true, sku: true, listing: { select: { id: true } } } } },
     }),
     getSkuSuggestion(),
   ])
@@ -131,6 +131,17 @@ export default async function EditIntakeDraftPage({
           >
             {draft.convertedItem.sku}
           </Link>
+          {draft.convertedItem.listing && (
+            <>
+              {' '}·{' '}
+              <Link
+                href={`/admin/listings/${draft.convertedItem.listing.id}/edit`}
+                className="font-medium underline hover:no-underline"
+              >
+                View Listing →
+              </Link>
+            </>
+          )}
           .
         </div>
       )}

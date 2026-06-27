@@ -16,6 +16,7 @@ export default async function EditItemPage({
       where: { id },
       include: {
         photos: { select: { url: true, type: true }, orderBy: { sortOrder: 'asc' } },
+        listing: { select: { id: true } },
       },
     }),
     prisma.catalogModel.findMany({ orderBy: [{ brand: 'asc' }, { name: 'asc' }] }),
@@ -30,7 +31,17 @@ export default async function EditItemPage({
         <Link href="/admin/items" className="text-sm text-gray-500 hover:text-gray-900">
           ← Back to Items
         </Link>
-        <h1 className="text-2xl font-bold text-gray-900 mt-2">Edit — {item.sku}</h1>
+        <div className="flex items-baseline gap-4 mt-2">
+          <h1 className="text-2xl font-bold text-gray-900">Edit — {item.sku}</h1>
+          {item.listing && (
+            <Link
+              href={`/admin/listings/${item.listing.id}/edit`}
+              className="text-sm text-blue-600 hover:underline"
+            >
+              View Listing →
+            </Link>
+          )}
+        </div>
       </div>
 
       {item.photos.length > 0 && (
