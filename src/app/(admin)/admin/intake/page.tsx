@@ -1,5 +1,7 @@
 import Link from 'next/link'
+import { type Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
+import { IntakeFilterBar } from '@/components/admin/IntakeFilterBar'
 
 const STATUS_LABELS: Record<string, string> = {
   draft: 'Draft',
@@ -24,10 +26,57 @@ const BADGE_COLORS: Record<string, string> = {
 
 const STATUS_ORDER = ['draft', 'reviewed', 'converted', 'rejected'] as const
 
-export default async function AdminIntakePage() {
+const VALID_FILTER_STATUSES = new Set(['draft', 'reviewed', 'converted', 'rejected'])
+const VALID_SORTS = new Set(['newest', 'oldest', 'status', 'brand'])
+
+export default async function AdminIntakePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string; status?: string; sort?: string }>
+}) {
+  const { q: rawQ, status: rawStatus, sort: rawSort } = await searchParams
+
+  const q = rawQ?.trim() ?? ''
+  const status =
+    rawStatus && VALID_FILTER_STATUSES.has(rawStatus) ? rawStatus : ''
+  const sort = rawSort && VALID_SORTS.has(rawSort) ? rawSort : 'newest'
+
+  // Build filtered where clause
+  const where: Prisma.IntakeDraftWhereInput = {}
+
+  if (q) {
+    const orConditions: Prisma.IntakeDraftWhereInput[] = [
+      { brand: { contains: q } },
+      { name: { contains: q } },
+      { series: { contains: q } },
+      { color: { contains: q } },
+      { convertedItem: { sku: { contains: q } } },
+    ]
+    const yearNum = parseInt(q, 10)
+    if (!isNaN(yearNum)) {
+      orConditions.push({ year: { equals: yearNum } })
+    }
+    where.OR = orConditions
+  }
+
+  if (status) {
+    where.status = status
+  }
+
+  // Build orderBy
+  const orderBy: Prisma.IntakeDraftOrderByWithRelationInput | Prisma.IntakeDraftOrderByWithRelationInput[] =
+    sort === 'oldest'
+      ? { createdAt: 'asc' }
+      : sort === 'status'
+        ? { status: 'asc' }
+        : sort === 'brand'
+          ? [{ brand: 'asc' }, { name: 'asc' }]
+          : { createdAt: 'desc' }
+
   const [drafts, countRows] = await Promise.all([
     prisma.intakeDraft.findMany({
-      orderBy: { createdAt: 'desc' },
+      where,
+      orderBy,
       select: {
         id: true,
         status: true,
@@ -38,8 +87,16 @@ export default async function AdminIntakePage() {
         condition: true,
         cardedOrLoose: true,
         createdAt: true,
+        convertedItem: {
+          select: {
+            id: true,
+            sku: true,
+            listing: { select: { id: true } },
+          },
+        },
       },
     }),
+    // Counts always reflect ALL drafts regardless of filters
     prisma.intakeDraft.groupBy({
       by: ['status'],
       _count: { _all: true },
@@ -50,6 +107,9 @@ export default async function AdminIntakePage() {
   for (const row of countRows) {
     if (row.status in counts) counts[row.status] = row._count._all
   }
+
+  const totalCount = Object.values(counts).reduce((sum, n) => sum + n, 0)
+  const isFiltered = q !== '' || status !== ''
 
   return (
     <>
@@ -63,7 +123,7 @@ export default async function AdminIntakePage() {
         </Link>
       </div>
 
-      {/* Status count badges */}
+      {/* Status count badges — always unfiltered totals */}
       <div className="flex flex-wrap gap-3 mb-6">
         {STATUS_ORDER.map((s) => (
           <div
@@ -76,8 +136,19 @@ export default async function AdminIntakePage() {
         ))}
       </div>
 
+      <IntakeFilterBar q={q} status={status} sort={sort} />
+
+      {isFiltered && (
+        <p className="text-sm text-gray-500 mb-4">
+          Showing {drafts.length} matching {drafts.length === 1 ? 'draft' : 'drafts'} out of{' '}
+          {totalCount} total {totalCount === 1 ? 'draft' : 'drafts'}.
+        </p>
+      )}
+
       {drafts.length === 0 ? (
-        <p className="text-gray-500 text-sm">No intake drafts yet.</p>
+        <p className="text-gray-500 text-sm">
+          {isFiltered ? 'No drafts match the current filters.' : 'No intake drafts yet.'}
+        </p>
       ) : (
         <div className="rounded-md border border-gray-200 overflow-hidden">
           <table className="w-full text-sm">
@@ -113,13 +184,31 @@ export default async function AdminIntakePage() {
                     <td className="px-4 py-3 text-gray-400 text-xs">
                       {d.createdAt.toLocaleDateString()}
                     </td>
-                    <td className="px-4 py-3 text-right">
-                      <Link
-                        href={`/admin/intake/${d.id}/edit`}
-                        className="text-sm text-gray-600 hover:text-gray-900"
-                      >
-                        {d.status === 'converted' || d.status === 'rejected' ? 'View' : 'Edit →'}
-                      </Link>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center justify-end gap-3">
+                        <Link
+                          href={`/admin/intake/${d.id}/edit`}
+                          className="text-sm text-gray-600 hover:text-gray-900"
+                        >
+                          {d.status === 'converted' || d.status === 'rejected' ? 'View' : 'Edit →'}
+                        </Link>
+                        {d.convertedItem && (
+                          <Link
+                            href={`/admin/items/${d.convertedItem.id}/edit`}
+                            className="text-xs text-green-700 hover:text-green-900 whitespace-nowrap"
+                          >
+                            Item →
+                          </Link>
+                        )}
+                        {d.convertedItem?.listing && (
+                          <Link
+                            href={`/admin/listings/${d.convertedItem.listing.id}/edit`}
+                            className="text-xs text-green-700 hover:text-green-900 whitespace-nowrap"
+                          >
+                            Listing →
+                          </Link>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 )
