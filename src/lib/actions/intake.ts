@@ -1,5 +1,6 @@
 'use server'
 
+import Anthropic from '@anthropic-ai/sdk'
 import { z } from 'zod'
 import { redirect } from 'next/navigation'
 import { prisma } from '@/lib/prisma'
@@ -213,4 +214,197 @@ export async function convertDraft(
   })
 
   redirect(`/admin/items/${newItemId!}/edit`)
+}
+
+// ─── AI Extraction ────────────────────────────────────────────────────────────
+//
+// ANTHROPIC_MODEL env var controls which model is used.
+// Recommended value: claude-haiku-4-5-20251001 (current Haiku 4.5 model ID).
+// See: https://docs.anthropic.com/en/docs/models-overview
+
+export type ExtractionActionState = { error: string } | null
+
+const EXTRACTION_TOOL: Anthropic.Messages.Tool = {
+  name: 'extract_intake_fields',
+  description:
+    'Extract diecast car model information from product photos. Return only fields you can identify with reasonable confidence. Leave others absent.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      brand: {
+        type: 'string',
+        description: 'Manufacturer brand name (e.g. Hot Wheels, Matchbox, Greenlight)',
+      },
+      name: {
+        type: 'string',
+        description: 'Model/casting name shown on the card or base (e.g. Ferrari 308 GTS)',
+      },
+      year: {
+        type: 'integer',
+        description: 'Production year visible on card or base (e.g. 1995)',
+      },
+      series: {
+        type: 'string',
+        description: 'Series or product line name (e.g. Treasure Hunt, Basic)',
+      },
+      color: {
+        type: 'string',
+        description: 'Primary color of the die-cast model body',
+      },
+      scale: {
+        type: 'string',
+        description: 'Scale ratio (e.g. 1:64, 1:18)',
+      },
+      cardedOrLoose: {
+        type: 'string',
+        enum: ['carded', 'loose'],
+        description: 'Whether the item is on its original card/blister (carded) or removed (loose)',
+      },
+      condition: {
+        type: 'string',
+        enum: ['mint', 'near_mint', 'good', 'fair', 'poor', 'damaged'],
+        description: 'Overall physical condition of the item',
+      },
+      conditionNotes: {
+        type: 'string',
+        description: 'Specific visible condition observations (scratches, card creases, paint chips)',
+      },
+      notes: {
+        type: 'string',
+        description: 'Any other relevant information visible in the photos',
+      },
+      extractionNotes: {
+        type: 'string',
+        description: 'Notes on extraction quality, ambiguities, or what could not be determined',
+      },
+      confidence: {
+        type: 'number',
+        description: 'Overall extraction confidence from 0.0 (very uncertain) to 1.0 (very confident)',
+      },
+    },
+    required: ['extractionNotes', 'confidence'],
+  },
+}
+
+export async function extractDraftFields(
+  id: string,
+  _prev: ExtractionActionState,
+  _formData: FormData
+): Promise<ExtractionActionState> {
+  const draft = await prisma.intakeDraft.findUnique({ where: { id } })
+  if (!draft) return { error: 'Draft not found.' }
+  if (draft.status === 'converted' || draft.status === 'rejected') {
+    return { error: 'Cannot extract fields for a converted or rejected draft.' }
+  }
+
+  const frontUrl = draft.frontPhotoUrl?.trim()
+  if (!frontUrl) return { error: 'A front photo URL is required for extraction.' }
+
+  const apiKey = process.env.ANTHROPIC_API_KEY
+  if (!apiKey) return { error: 'ANTHROPIC_API_KEY is not configured on the server.' }
+
+  // Model ID is set via ANTHROPIC_MODEL env var. Recommended: claude-haiku-4-5-20251001
+  const model = process.env.ANTHROPIC_MODEL ?? 'claude-haiku-4-5-20251001'
+
+  let rawResponse: string | null = null
+  let extractionError: string | null = null
+
+  try {
+    const client = new Anthropic({ apiKey })
+
+    const imageContent: Anthropic.Messages.MessageParam['content'] = [
+      { type: 'image', source: { type: 'url', url: frontUrl } },
+    ]
+    const backUrl = draft.backPhotoUrl?.trim()
+    if (backUrl) {
+      imageContent.push({ type: 'image', source: { type: 'url', url: backUrl } })
+    }
+    imageContent.push({
+      type: 'text',
+      text: 'Extract diecast car model information from the provided photo(s) using the extract_intake_fields tool.',
+    })
+
+    const response = await client.messages.create({
+      model,
+      max_tokens: 1024,
+      tools: [EXTRACTION_TOOL],
+      tool_choice: { type: 'tool', name: 'extract_intake_fields' },
+      messages: [{ role: 'user', content: imageContent }],
+    })
+
+    rawResponse = JSON.stringify(response)
+
+    const toolBlock = response.content.find(
+      (b): b is Anthropic.Messages.ToolUseBlock => b.type === 'tool_use'
+    )
+    if (!toolBlock) {
+      await prisma.intakeDraft.update({
+        where: { id },
+        data: {
+          aiExtractionRaw: rawResponse,
+          aiExtractionNotes: 'No tool use block found in AI response.',
+        },
+      })
+      return { error: 'AI returned an unexpected response. Raw output has been saved.' }
+    }
+
+    const extracted = toolBlock.input as Record<string, unknown>
+
+    // Build update: AI metadata always written; fields only filled if currently blank.
+    const updateData: Record<string, unknown> = {
+      aiExtractionRaw: rawResponse,
+      aiExtractionNotes:
+        typeof extracted.extractionNotes === 'string' ? extracted.extractionNotes : null,
+      aiExtractionConfidence:
+        typeof extracted.confidence === 'number'
+          ? Math.min(1, Math.max(0, extracted.confidence))
+          : null,
+    }
+
+    // String fields: only fill if currently blank
+    const stringFields = [
+      'brand', 'name', 'series', 'color', 'scale',
+      'cardedOrLoose', 'condition', 'conditionNotes', 'notes',
+    ] as const
+    for (const field of stringFields) {
+      const aiVal = extracted[field]
+      const existing = draft[field]
+      if (typeof aiVal === 'string' && aiVal.trim() && !existing) {
+        updateData[field] = aiVal.trim()
+      }
+    }
+
+    // Year: only fill if currently blank; validate range
+    if (extracted.year != null && draft.year == null) {
+      const yr =
+        typeof extracted.year === 'number'
+          ? Math.round(extracted.year)
+          : parseInt(String(extracted.year), 10)
+      if (!isNaN(yr) && yr >= 1950 && yr <= 2100) {
+        updateData.year = yr
+      }
+    }
+
+    await prisma.intakeDraft.update({ where: { id }, data: updateData })
+  } catch (err) {
+    // Attempt to save raw response for debugging even on failure
+    if (rawResponse) {
+      await prisma.intakeDraft
+        .update({
+          where: { id },
+          data: {
+            aiExtractionRaw: rawResponse,
+            aiExtractionNotes: 'Extraction failed during processing. See raw output.',
+          },
+        })
+        .catch(() => {})
+    }
+    extractionError = err instanceof Error ? err.message : 'Unknown error'
+  }
+
+  if (extractionError) {
+    return { error: `AI extraction failed: ${extractionError}` }
+  }
+
+  redirect(`/admin/intake/${id}/edit`)
 }

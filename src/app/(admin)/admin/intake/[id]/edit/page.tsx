@@ -3,11 +3,13 @@ import { notFound } from 'next/navigation'
 import { prisma } from '@/lib/prisma'
 import { IntakeDraftForm } from '@/components/admin/IntakeDraftForm'
 import { ConvertDraftForm } from '@/components/admin/ConvertDraftForm'
+import { ExtractPhotosButton } from '@/components/admin/ExtractPhotosButton'
 import {
   updateIntakeDraft,
   markDraftReviewed,
   rejectDraft,
   convertDraft,
+  extractDraftFields,
 } from '@/lib/actions/intake'
 
 const STATUS_LABELS: Record<string, string> = {
@@ -52,6 +54,7 @@ export default async function EditIntakeDraftPage({
   const reviewAction = markDraftReviewed.bind(null, id)
   const rejectAction = rejectDraft.bind(null, id)
   const convertAction = convertDraft.bind(null, id)
+  const extractAction = extractDraftFields.bind(null, id)
 
   return (
     <>
@@ -96,8 +99,8 @@ export default async function EditIntakeDraftPage({
 
       {/* Read-only summary for terminal drafts */}
       {isTerminal ? (
-        <div className="max-w-2xl space-y-3 text-sm text-gray-700">
-          <div className="grid grid-cols-2 gap-x-6 gap-y-2 rounded-md border border-gray-200 bg-gray-50 p-4">
+        <div className="max-w-2xl space-y-4">
+          <div className="grid grid-cols-2 gap-x-6 gap-y-2 rounded-md border border-gray-200 bg-gray-50 p-4 text-sm text-gray-700">
             <Field label="Brand" value={draft.brand} />
             <Field label="Name" value={draft.name} />
             <Field label="Year" value={draft.year?.toString()} />
@@ -105,18 +108,67 @@ export default async function EditIntakeDraftPage({
             <Field label="Color" value={draft.color} />
             <Field label="Scale" value={draft.scale} />
             <Field label="Type" value={draft.cardedOrLoose} />
-            <Field label="Condition" value={draft.condition ? CONDITION_LABELS[draft.condition] ?? draft.condition : null} />
+            <Field
+              label="Condition"
+              value={
+                draft.condition
+                  ? (CONDITION_LABELS[draft.condition] ?? draft.condition)
+                  : null
+              }
+            />
             <Field label="Condition Notes" value={draft.conditionNotes} />
-            <Field label="List Price" value={draft.listPrice != null ? `$${draft.listPrice.toFixed(2)}` : null} />
+            <Field
+              label="List Price"
+              value={draft.listPrice != null ? `$${draft.listPrice.toFixed(2)}` : null}
+            />
             <Field label="Storage Location" value={draft.storageLocation} />
             <Field label="Notes" value={draft.notes} />
             {draft.frontPhotoUrl && <Field label="Front Photo" value={draft.frontPhotoUrl} />}
             {draft.backPhotoUrl && <Field label="Back Photo" value={draft.backPhotoUrl} />}
           </div>
+
+          {/* AI extraction metadata for terminal drafts (read-only) */}
+          {draft.aiExtractionNotes && (
+            <details className="text-xs text-gray-500 rounded-md border border-gray-200 bg-gray-50 px-4 py-3">
+              <summary className="cursor-pointer font-medium text-gray-600">
+                AI extraction notes
+              </summary>
+              <p className="mt-2">{draft.aiExtractionNotes}</p>
+              {draft.aiExtractionConfidence != null && (
+                <p className="mt-1">
+                  Confidence: {(draft.aiExtractionConfidence * 100).toFixed(0)}%
+                </p>
+              )}
+            </details>
+          )}
         </div>
       ) : (
         /* Editable form for draft / reviewed */
-        <div className="max-w-2xl">
+        <div className="max-w-2xl space-y-6">
+          {/* AI extraction section — shown only when frontPhotoUrl is set */}
+          {draft.frontPhotoUrl ? (
+            <div className="space-y-2">
+              <ExtractPhotosButton action={extractAction} />
+              {draft.aiExtractionNotes && (
+                <details className="text-xs text-gray-500 rounded-md border border-gray-200 bg-gray-50 px-4 py-3">
+                  <summary className="cursor-pointer font-medium text-gray-600">
+                    Last AI extraction notes
+                  </summary>
+                  <p className="mt-2">{draft.aiExtractionNotes}</p>
+                  {draft.aiExtractionConfidence != null && (
+                    <p className="mt-1">
+                      Confidence: {(draft.aiExtractionConfidence * 100).toFixed(0)}%
+                    </p>
+                  )}
+                </details>
+              )}
+            </div>
+          ) : (
+            <p className="text-xs text-gray-400 italic">
+              Add a front photo URL above to enable AI field extraction.
+            </p>
+          )}
+
           <IntakeDraftForm
             action={updateAction}
             defaultValues={draft}
@@ -124,7 +176,7 @@ export default async function EditIntakeDraftPage({
           />
 
           {/* Action buttons */}
-          <div className="mt-8 pt-6 border-t border-gray-200 space-y-6">
+          <div className="pt-6 border-t border-gray-200 space-y-6">
             {/* Mark Reviewed — only when still draft */}
             {draft.status === 'draft' && (
               <div>

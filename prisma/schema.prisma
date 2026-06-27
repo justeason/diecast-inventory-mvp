@@ -122,6 +122,10 @@ model IntakeDraft {
   convertedItemId String?       @unique
   convertedItem   ItemInstance? @relation(fields: [convertedItemId], references: [id])
 
+  aiExtractionRaw        String?
+  aiExtractionNotes      String?
+  aiExtractionConfidence Float?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
