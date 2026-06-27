@@ -60,11 +60,17 @@ export async function createIntakeDraft(
   _prev: IntakeActionState,
   formData: FormData
 ): Promise<IntakeActionState> {
+  const createAnother = formData.get('_action') === 'create-another'
+
   const result = DraftSchema.safeParse(Object.fromEntries(formData))
   if (!result.success) {
     return { errors: result.error.flatten().fieldErrors as Record<string, string[]> }
   }
   const draft = await prisma.intakeDraft.create({ data: toDraftDbData(result.data) })
+
+  if (createAnother) {
+    redirect('/admin/intake/new?created=1')
+  }
   redirect(`/admin/intake/${draft.id}/edit`)
 }
 
@@ -122,6 +128,21 @@ export async function convertDraft(
   const sku = (formData.get('sku') as string)?.trim()
   if (!sku) return { errors: { sku: ['SKU is required.'] } }
 
+  // Optional listing creation fields — only validate when checkbox is on.
+  const createListing = formData.get('createListing') === 'on'
+  let listingTitle: string | null = null
+  let listingPrice: number | null = null
+  if (createListing) {
+    listingTitle = (formData.get('listingTitle') as string)?.trim() || null
+    if (!listingTitle) return { errors: { listingTitle: ['Listing title is required.'] } }
+    const priceStr = (formData.get('listingPrice') as string)?.trim()
+    if (!priceStr) return { errors: { listingPrice: ['Listing price is required.'] } }
+    listingPrice = parseFloat(priceStr)
+    if (isNaN(listingPrice) || listingPrice <= 0) {
+      return { errors: { listingPrice: ['Price must be a positive number greater than 0.'] } }
+    }
+  }
+
   const draft = await prisma.intakeDraft.findUnique({ where: { id } })
   if (!draft) return { errors: { form: ['Draft not found.'] } }
   if (draft.status === 'converted') {
@@ -140,11 +161,12 @@ export async function convertDraft(
     return { errors: { form: ['Condition and type (carded/loose) are required to convert.'] } }
   }
 
-  // Check SKU uniqueness upfront for a clear user-facing error
+  // Check SKU uniqueness upfront for a clear user-facing error.
   const existing = await prisma.itemInstance.findUnique({ where: { sku } })
   if (existing) return { errors: { sku: ['SKU is already taken.'] } }
 
   let newItemId: string | undefined
+  let newListingId: string | undefined
 
   await prisma.$transaction(async (tx) => {
     // 1. Exact-match lookup on all identity fields; null matches null.
@@ -186,14 +208,14 @@ export async function convertDraft(
     const item = await tx.itemInstance.create({
       data: {
         sku,
-        catalogId:     catalog.id,
+        catalogId:      catalog.id,
         locationId,
-        cardedOrLoose: draft.cardedOrLoose!,
-        condition:     draft.condition!,
+        cardedOrLoose:  draft.cardedOrLoose!,
+        condition:      draft.condition!,
         conditionNotes: trimOrNull(draft.conditionNotes) ?? undefined,
-        listPrice:     draft.listPrice   ?? undefined,
-        status:        'available',
-        notes:         trimOrNull(draft.notes) ?? undefined,
+        listPrice:      draft.listPrice ?? undefined,
+        status:         'available',
+        notes:          trimOrNull(draft.notes) ?? undefined,
       },
     })
     newItemId = item.id
@@ -208,13 +230,24 @@ export async function convertDraft(
       await tx.photo.create({ data: { itemId: item.id, url: back, type: 'back', sortOrder: 1 } })
     }
 
-    // 5. Lock the draft.
+    // 5. Optionally create Listing in the same transaction.
+    if (createListing && listingTitle && listingPrice) {
+      const listing = await tx.listing.create({
+        data: { itemId: item.id, title: listingTitle, price: listingPrice, status: 'active' },
+      })
+      newListingId = listing.id
+    }
+
+    // 6. Lock the draft.
     await tx.intakeDraft.update({
       where: { id },
       data:  { status: 'converted', convertedItemId: item.id },
     })
   })
 
+  if (newListingId) {
+    redirect(`/admin/listings/${newListingId}/edit`)
+  }
   redirect(`/admin/items/${newItemId!}/edit`)
 }
 

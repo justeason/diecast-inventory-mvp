@@ -15,21 +15,41 @@ const STATUS_COLORS: Record<string, string> = {
   rejected: 'bg-red-100 text-red-700',
 }
 
+const BADGE_COLORS: Record<string, string> = {
+  draft: 'bg-yellow-50 border-yellow-200 text-yellow-800',
+  reviewed: 'bg-blue-50 border-blue-200 text-blue-800',
+  converted: 'bg-green-50 border-green-200 text-green-800',
+  rejected: 'bg-red-50 border-red-200 text-red-800',
+}
+
+const STATUS_ORDER = ['draft', 'reviewed', 'converted', 'rejected'] as const
+
 export default async function AdminIntakePage() {
-  const drafts = await prisma.intakeDraft.findMany({
-    orderBy: { createdAt: 'desc' },
-    select: {
-      id: true,
-      status: true,
-      brand: true,
-      name: true,
-      year: true,
-      color: true,
-      condition: true,
-      cardedOrLoose: true,
-      createdAt: true,
-    },
-  })
+  const [drafts, countRows] = await Promise.all([
+    prisma.intakeDraft.findMany({
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        status: true,
+        brand: true,
+        name: true,
+        year: true,
+        color: true,
+        condition: true,
+        cardedOrLoose: true,
+        createdAt: true,
+      },
+    }),
+    prisma.intakeDraft.groupBy({
+      by: ['status'],
+      _count: { _all: true },
+    }),
+  ])
+
+  const counts: Record<string, number> = { draft: 0, reviewed: 0, converted: 0, rejected: 0 }
+  for (const row of countRows) {
+    if (row.status in counts) counts[row.status] = row._count._all
+  }
 
   return (
     <>
@@ -41,6 +61,19 @@ export default async function AdminIntakePage() {
         >
           New Draft
         </Link>
+      </div>
+
+      {/* Status count badges */}
+      <div className="flex flex-wrap gap-3 mb-6">
+        {STATUS_ORDER.map((s) => (
+          <div
+            key={s}
+            className={`flex items-center gap-2 rounded-md border px-3 py-2 text-sm ${BADGE_COLORS[s]}`}
+          >
+            <span className="font-medium">{STATUS_LABELS[s]}</span>
+            <span className="font-bold tabular-nums">{counts[s]}</span>
+          </div>
+        ))}
       </div>
 
       {drafts.length === 0 ? (
@@ -60,14 +93,16 @@ export default async function AdminIntakePage() {
             </thead>
             <tbody className="divide-y divide-gray-100">
               {drafts.map((d) => {
-                const modelStr = [d.brand, d.name, d.year?.toString(), d.color]
-                  .filter(Boolean)
-                  .join(' · ') || '(no model info)'
+                const modelStr =
+                  [d.brand, d.name, d.year?.toString(), d.color].filter(Boolean).join(' · ') ||
+                  '(no model info)'
                 return (
                   <tr key={d.id} className="hover:bg-gray-50">
                     <td className="px-4 py-3 text-gray-900">{modelStr}</td>
                     <td className="px-4 py-3 text-gray-500 capitalize">{d.condition ?? '—'}</td>
-                    <td className="px-4 py-3 text-gray-500 capitalize">{d.cardedOrLoose ?? '—'}</td>
+                    <td className="px-4 py-3 text-gray-500 capitalize">
+                      {d.cardedOrLoose ?? '—'}
+                    </td>
                     <td className="px-4 py-3">
                       <span
                         className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_COLORS[d.status] ?? 'bg-gray-100 text-gray-600'}`}

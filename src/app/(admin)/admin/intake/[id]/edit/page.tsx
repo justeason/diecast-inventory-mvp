@@ -37,6 +37,38 @@ const CONDITION_LABELS: Record<string, string> = {
   damaged: 'Damaged',
 }
 
+// Only counts SKUs matching exactly HW-#### (4 digits).
+const HW_SKU_RE = /^HW-(\d{4})$/
+
+async function getSkuSuggestion(): Promise<string> {
+  const items = await prisma.itemInstance.findMany({
+    where: { sku: { startsWith: 'HW-' } },
+    select: { sku: true },
+  })
+  const nums = items
+    .map((i) => {
+      const m = HW_SKU_RE.exec(i.sku)
+      return m ? parseInt(m[1], 10) : NaN
+    })
+    .filter((n): n is number => !isNaN(n))
+  const max = nums.length > 0 ? Math.max(...nums) : 0
+  return `HW-${String(max + 1).padStart(4, '0')}`
+}
+
+function buildListingTitle(draft: {
+  brand: string | null
+  name: string | null
+  year: number | null
+  color: string | null
+}): string {
+  const parts: string[] = []
+  if (draft.brand) parts.push(draft.brand)
+  if (draft.name) parts.push(draft.name)
+  if (draft.year) parts.push(`(${draft.year})`)
+  if (draft.color) parts.push(`— ${draft.color}`)
+  return parts.join(' ')
+}
+
 export default async function EditIntakeDraftPage({
   params,
 }: {
@@ -44,10 +76,13 @@ export default async function EditIntakeDraftPage({
 }) {
   const { id } = await params
 
-  const draft = await prisma.intakeDraft.findUnique({
-    where: { id },
-    include: { convertedItem: { select: { id: true, sku: true } } },
-  })
+  const [draft, suggestedSku] = await Promise.all([
+    prisma.intakeDraft.findUnique({
+      where: { id },
+      include: { convertedItem: { select: { id: true, sku: true } } },
+    }),
+    getSkuSuggestion(),
+  ])
   if (!draft) notFound()
 
   const isTerminal = draft.status === 'converted' || draft.status === 'rejected'
@@ -62,6 +97,9 @@ export default async function EditIntakeDraftPage({
 
   const frontUrl = draft.frontPhotoUrl ?? null
   const backUrl  = draft.backPhotoUrl  ?? null
+
+  const suggestedTitle = buildListingTitle(draft)
+  const suggestedPrice = draft.listPrice ?? null
 
   return (
     <>
@@ -249,9 +287,14 @@ export default async function EditIntakeDraftPage({
                 <h3 className="text-sm font-semibold text-gray-700 mb-2">Convert to Item</h3>
                 <p className="text-xs text-gray-500 mb-3">
                   Creates a CatalogModel (or reuses an existing match), a new ItemInstance, and
-                  Photo records. Enter a unique SKU to proceed.
+                  Photo records. Optionally creates an active Listing in the same transaction.
                 </p>
-                <ConvertDraftForm action={convertAction} />
+                <ConvertDraftForm
+                  action={convertAction}
+                  suggestedSku={suggestedSku}
+                  suggestedTitle={suggestedTitle || undefined}
+                  suggestedPrice={suggestedPrice}
+                />
               </div>
             )}
 

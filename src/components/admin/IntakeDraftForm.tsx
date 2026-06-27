@@ -41,22 +41,49 @@ type Props = {
   action: (prev: IntakeActionState, formData: FormData) => Promise<IntakeActionState>
   defaultValues?: DraftValues
   submitLabel?: string
+  showCreateAnother?: boolean
 }
 
-function SubmitButton({ label }: { label: string }) {
+function SubmitButtons({
+  primaryLabel,
+  showCreateAnother,
+}: {
+  primaryLabel: string
+  showCreateAnother?: boolean
+}) {
   const { pending } = useFormStatus()
   return (
-    <button
-      type="submit"
-      disabled={pending}
-      className="rounded-md bg-gray-900 px-5 py-2 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50 transition-colors"
-    >
-      {pending ? 'Saving…' : label}
-    </button>
+    <div className="flex flex-wrap gap-3">
+      <button
+        type="submit"
+        name="_action"
+        value="save"
+        disabled={pending}
+        className="rounded-md bg-gray-900 px-5 py-2 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50 transition-colors"
+      >
+        {pending ? 'Saving…' : primaryLabel}
+      </button>
+      {showCreateAnother && (
+        <button
+          type="submit"
+          name="_action"
+          value="create-another"
+          disabled={pending}
+          className="rounded-md border border-gray-300 bg-white px-5 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 transition-colors"
+        >
+          {pending ? 'Saving…' : 'Save and Create Another'}
+        </button>
+      )}
+    </div>
   )
 }
 
-export function IntakeDraftForm({ action, defaultValues, submitLabel = 'Save Draft' }: Props) {
+export function IntakeDraftForm({
+  action,
+  defaultValues,
+  submitLabel = 'Save Draft',
+  showCreateAnother,
+}: Props) {
   const [state, formAction] = useActionState<IntakeActionState, FormData>(action, null)
   const errors = state && 'errors' in state ? state.errors : {}
 
@@ -209,7 +236,7 @@ export function IntakeDraftForm({ action, defaultValues, submitLabel = 'Save Dra
       </div>
 
       <div className="pt-2">
-        <SubmitButton label={submitLabel} />
+        <SubmitButtons primaryLabel={submitLabel} showCreateAnother={showCreateAnother} />
       </div>
     </form>
   )
