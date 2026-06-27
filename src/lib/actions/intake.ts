@@ -1,5 +1,7 @@
 'use server'
 
+import fs from 'fs'
+import path from 'path'
 import Anthropic from '@anthropic-ai/sdk'
 import { z } from 'zod'
 import { redirect } from 'next/navigation'
@@ -407,4 +409,54 @@ export async function extractDraftFields(
   }
 
   redirect(`/admin/intake/${id}/edit`)
+}
+
+// ─── Photo Upload ─────────────────────────────────────────────────────────────
+
+export type UploadActionState = { error: string } | null
+
+const ALLOWED_MIME: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/png':  'png',
+  'image/webp': 'webp',
+}
+const MAX_FILE_SIZE = 5 * 1024 * 1024 // 5 MB
+
+export async function uploadIntakePhoto(
+  draftId: string,
+  field: 'front' | 'back',
+  _prev: UploadActionState,
+  formData: FormData
+): Promise<UploadActionState> {
+  const draft = await prisma.intakeDraft.findUnique({
+    where: { id: draftId },
+    select: { status: true },
+  })
+  if (!draft) return { error: 'Draft not found.' }
+  if (draft.status === 'converted' || draft.status === 'rejected') {
+    return { error: 'Cannot upload photos for a converted or rejected draft.' }
+  }
+
+  const file = formData.get('photo')
+  if (!(file instanceof File) || file.size === 0) {
+    return { error: 'No file selected.' }
+  }
+
+  const ext = ALLOWED_MIME[file.type]
+  if (!ext) return { error: 'Only JPEG, PNG, and WebP images are allowed.' }
+  if (file.size > MAX_FILE_SIZE) return { error: 'File must be 5 MB or smaller.' }
+
+  // Filename is generated server-side; the original filename is never used.
+  const filename = `${Date.now()}-${field}.${ext}`
+  const uploadDir = path.join(process.cwd(), 'public', 'uploads', 'intake', draftId)
+  await fs.promises.mkdir(uploadDir, { recursive: true })
+
+  const buffer = Buffer.from(await file.arrayBuffer())
+  await fs.promises.writeFile(path.join(uploadDir, filename), buffer)
+
+  const urlPath = `/uploads/intake/${draftId}/${filename}`
+  const dbField = field === 'front' ? 'frontPhotoUrl' : 'backPhotoUrl'
+  await prisma.intakeDraft.update({ where: { id: draftId }, data: { [dbField]: urlPath } })
+
+  redirect(`/admin/intake/${draftId}/edit`)
 }

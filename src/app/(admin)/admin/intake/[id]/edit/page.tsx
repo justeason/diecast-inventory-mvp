@@ -4,12 +4,14 @@ import { prisma } from '@/lib/prisma'
 import { IntakeDraftForm } from '@/components/admin/IntakeDraftForm'
 import { ConvertDraftForm } from '@/components/admin/ConvertDraftForm'
 import { ExtractPhotosButton } from '@/components/admin/ExtractPhotosButton'
+import { IntakePhotoUpload } from '@/components/admin/IntakePhotoUpload'
 import {
   updateIntakeDraft,
   markDraftReviewed,
   rejectDraft,
   convertDraft,
   extractDraftFields,
+  uploadIntakePhoto,
 } from '@/lib/actions/intake'
 
 const STATUS_LABELS: Record<string, string> = {
@@ -50,11 +52,16 @@ export default async function EditIntakeDraftPage({
 
   const isTerminal = draft.status === 'converted' || draft.status === 'rejected'
 
-  const updateAction = updateIntakeDraft.bind(null, id)
-  const reviewAction = markDraftReviewed.bind(null, id)
-  const rejectAction = rejectDraft.bind(null, id)
-  const convertAction = convertDraft.bind(null, id)
-  const extractAction = extractDraftFields.bind(null, id)
+  const updateAction      = updateIntakeDraft.bind(null, id)
+  const reviewAction      = markDraftReviewed.bind(null, id)
+  const rejectAction      = rejectDraft.bind(null, id)
+  const convertAction     = convertDraft.bind(null, id)
+  const extractAction     = extractDraftFields.bind(null, id)
+  const uploadFrontAction = uploadIntakePhoto.bind(null, id, 'front')
+  const uploadBackAction  = uploadIntakePhoto.bind(null, id, 'back')
+
+  const frontUrl = draft.frontPhotoUrl ?? null
+  const backUrl  = draft.backPhotoUrl  ?? null
 
   return (
     <>
@@ -76,7 +83,7 @@ export default async function EditIntakeDraftPage({
         </span>
       </div>
 
-      {/* Converted: show link to the created item */}
+      {/* Converted: link to created item */}
       {draft.status === 'converted' && draft.convertedItem && (
         <div className="mb-6 rounded-md bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-800">
           Converted to item{' '}
@@ -97,9 +104,38 @@ export default async function EditIntakeDraftPage({
         </div>
       )}
 
-      {/* Read-only summary for terminal drafts */}
       {isTerminal ? (
+        /* ── Terminal: read-only view ─────────────────────────────────────── */
         <div className="max-w-2xl space-y-4">
+          {/* Read-only photo previews */}
+          {(frontUrl || backUrl) && (
+            <div className="flex flex-wrap gap-4">
+              {frontUrl && (
+                <div className="flex flex-col gap-1">
+                  <p className="text-xs text-gray-500">Front</p>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={frontUrl}
+                    alt="Front photo"
+                    className="max-h-48 w-auto rounded-md border border-gray-200 object-contain bg-gray-50"
+                  />
+                </div>
+              )}
+              {backUrl && (
+                <div className="flex flex-col gap-1">
+                  <p className="text-xs text-gray-500">Back</p>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={backUrl}
+                    alt="Back photo"
+                    className="max-h-48 w-auto rounded-md border border-gray-200 object-contain bg-gray-50"
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Field grid */}
           <div className="grid grid-cols-2 gap-x-6 gap-y-2 rounded-md border border-gray-200 bg-gray-50 p-4 text-sm text-gray-700">
             <Field label="Brand" value={draft.brand} />
             <Field label="Name" value={draft.name} />
@@ -110,11 +146,7 @@ export default async function EditIntakeDraftPage({
             <Field label="Type" value={draft.cardedOrLoose} />
             <Field
               label="Condition"
-              value={
-                draft.condition
-                  ? (CONDITION_LABELS[draft.condition] ?? draft.condition)
-                  : null
-              }
+              value={draft.condition ? (CONDITION_LABELS[draft.condition] ?? draft.condition) : null}
             />
             <Field label="Condition Notes" value={draft.conditionNotes} />
             <Field
@@ -123,11 +155,9 @@ export default async function EditIntakeDraftPage({
             />
             <Field label="Storage Location" value={draft.storageLocation} />
             <Field label="Notes" value={draft.notes} />
-            {draft.frontPhotoUrl && <Field label="Front Photo" value={draft.frontPhotoUrl} />}
-            {draft.backPhotoUrl && <Field label="Back Photo" value={draft.backPhotoUrl} />}
           </div>
 
-          {/* AI extraction metadata for terminal drafts (read-only) */}
+          {/* AI extraction notes */}
           {draft.aiExtractionNotes && (
             <details className="text-xs text-gray-500 rounded-md border border-gray-200 bg-gray-50 px-4 py-3">
               <summary className="cursor-pointer font-medium text-gray-600">
@@ -143,41 +173,60 @@ export default async function EditIntakeDraftPage({
           )}
         </div>
       ) : (
-        /* Editable form for draft / reviewed */
-        <div className="max-w-2xl space-y-6">
-          {/* AI extraction section — shown only when frontPhotoUrl is set */}
-          {draft.frontPhotoUrl ? (
-            <div className="space-y-2">
-              <ExtractPhotosButton action={extractAction} />
-              {draft.aiExtractionNotes && (
-                <details className="text-xs text-gray-500 rounded-md border border-gray-200 bg-gray-50 px-4 py-3">
-                  <summary className="cursor-pointer font-medium text-gray-600">
-                    Last AI extraction notes
-                  </summary>
-                  <p className="mt-2">{draft.aiExtractionNotes}</p>
-                  {draft.aiExtractionConfidence != null && (
-                    <p className="mt-1">
-                      Confidence: {(draft.aiExtractionConfidence * 100).toFixed(0)}%
-                    </p>
-                  )}
-                </details>
-              )}
+        /* ── Editable: upload + form + actions ────────────────────────────── */
+        <div className="max-w-2xl space-y-8">
+          {/* Photo upload */}
+          <div>
+            <h2 className="text-sm font-semibold text-gray-700 mb-4">Photos</h2>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+              <IntakePhotoUpload
+                label="Front Photo"
+                currentUrl={frontUrl}
+                action={uploadFrontAction}
+              />
+              <IntakePhotoUpload
+                label="Back Photo"
+                currentUrl={backUrl}
+                action={uploadBackAction}
+              />
             </div>
-          ) : (
-            <p className="text-xs text-gray-400 italic">
-              Add a front photo URL above to enable AI field extraction.
-            </p>
-          )}
+          </div>
 
+          {/* AI extraction */}
+          <div>
+            {frontUrl ? (
+              <div className="space-y-2">
+                <ExtractPhotosButton action={extractAction} />
+                {draft.aiExtractionNotes && (
+                  <details className="text-xs text-gray-500 rounded-md border border-gray-200 bg-gray-50 px-4 py-3">
+                    <summary className="cursor-pointer font-medium text-gray-600">
+                      Last AI extraction notes
+                    </summary>
+                    <p className="mt-2">{draft.aiExtractionNotes}</p>
+                    {draft.aiExtractionConfidence != null && (
+                      <p className="mt-1">
+                        Confidence: {(draft.aiExtractionConfidence * 100).toFixed(0)}%
+                      </p>
+                    )}
+                  </details>
+                )}
+              </div>
+            ) : (
+              <p className="text-xs text-gray-400 italic">
+                Upload a front photo above to enable AI field extraction.
+              </p>
+            )}
+          </div>
+
+          {/* Draft fields form */}
           <IntakeDraftForm
             action={updateAction}
             defaultValues={draft}
             submitLabel="Save Changes"
           />
 
-          {/* Action buttons */}
+          {/* Status actions */}
           <div className="pt-6 border-t border-gray-200 space-y-6">
-            {/* Mark Reviewed — only when still draft */}
             {draft.status === 'draft' && (
               <div>
                 <h3 className="text-sm font-semibold text-gray-700 mb-2">Mark as Reviewed</h3>
@@ -195,7 +244,6 @@ export default async function EditIntakeDraftPage({
               </div>
             )}
 
-            {/* Convert — only when reviewed */}
             {draft.status === 'reviewed' && (
               <div>
                 <h3 className="text-sm font-semibold text-gray-700 mb-2">Convert to Item</h3>
@@ -207,7 +255,6 @@ export default async function EditIntakeDraftPage({
               </div>
             )}
 
-            {/* Reject */}
             <div>
               <h3 className="text-sm font-semibold text-gray-700 mb-2">Reject Draft</h3>
               <p className="text-xs text-gray-500 mb-3">
