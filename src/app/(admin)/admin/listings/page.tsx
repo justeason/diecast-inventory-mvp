@@ -1,5 +1,7 @@
 import Link from 'next/link'
+import { type Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
+import { ListingFilterBar } from '@/components/admin/ListingFilterBar'
 
 const STATUS_COLORS: Record<string, string> = {
   active: 'bg-green-100 text-green-700',
@@ -13,18 +15,63 @@ const STATUS_LABELS: Record<string, string> = {
   archived: 'Archived',
 }
 
-export default async function AdminListingsPage() {
-  const listings = await prisma.listing.findMany({
-    include: {
-      item: {
-        select: {
-          sku: true,
-          catalog: { select: { brand: true, name: true } },
+const VALID_STATUSES = new Set(['active', 'sold', 'archived'])
+const VALID_SORTS = new Set(['newest', 'oldest', 'price_asc', 'price_desc', 'status'])
+
+export default async function AdminListingsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string; status?: string; sort?: string }>
+}) {
+  const { q: rawQ, status: rawStatus, sort: rawSort } = await searchParams
+
+  const q = rawQ?.trim() ?? ''
+  const status = rawStatus && VALID_STATUSES.has(rawStatus) ? rawStatus : ''
+  const sort = rawSort && VALID_SORTS.has(rawSort) ? rawSort : 'newest'
+
+  // Build where clause
+  const where: Prisma.ListingWhereInput = {}
+
+  if (q) {
+    where.OR = [
+      { title: { contains: q } },
+      { item: { sku: { contains: q } } },
+      { item: { catalog: { brand: { contains: q } } } },
+      { item: { catalog: { name: { contains: q } } } },
+    ]
+  }
+
+  if (status) where.status = status
+
+  // Build orderBy
+  const orderBy: Prisma.ListingOrderByWithRelationInput =
+    sort === 'oldest'
+      ? { createdAt: 'asc' }
+      : sort === 'price_asc'
+        ? { price: 'asc' }
+        : sort === 'price_desc'
+          ? { price: 'desc' }
+          : sort === 'status'
+            ? { status: 'asc' }
+            : { createdAt: 'desc' } // default: newest
+
+  const isFiltered = q !== '' || status !== ''
+
+  const [listings, totalCount] = await Promise.all([
+    prisma.listing.findMany({
+      where,
+      orderBy,
+      include: {
+        item: {
+          select: {
+            sku: true,
+            catalog: { select: { brand: true, name: true } },
+          },
         },
       },
-    },
-    orderBy: { createdAt: 'desc' },
-  })
+    }),
+    prisma.listing.count(),
+  ])
 
   return (
     <>
@@ -38,8 +85,19 @@ export default async function AdminListingsPage() {
         </Link>
       </div>
 
+      <ListingFilterBar q={q} status={status} sort={sort} />
+
+      {isFiltered && (
+        <p className="text-sm text-gray-500 mb-4">
+          Showing {listings.length} matching {listings.length === 1 ? 'listing' : 'listings'} out of{' '}
+          {totalCount} total {totalCount === 1 ? 'listing' : 'listings'}.
+        </p>
+      )}
+
       {listings.length === 0 ? (
-        <p className="text-sm text-gray-500">No listings yet.</p>
+        <p className="text-sm text-gray-500">
+          {isFiltered ? 'No listings match the current filters.' : 'No listings yet.'}
+        </p>
       ) : (
         <div className="overflow-x-auto rounded-md border border-gray-200">
           <table className="w-full text-sm">
@@ -58,7 +116,7 @@ export default async function AdminListingsPage() {
                 <tr key={listing.id} className="hover:bg-gray-50">
                   <td className="px-4 py-3 font-medium">{listing.title}</td>
                   <td className="px-4 py-3 text-gray-500">
-                    <span className="font-mono text-xs">{listing.item.sku}</span>
+                    <span className="font-mono text-xs">{listing.item.sku ?? 'No SKU'}</span>
                     {' — '}
                     {listing.item.catalog.brand} {listing.item.catalog.name}
                   </td>

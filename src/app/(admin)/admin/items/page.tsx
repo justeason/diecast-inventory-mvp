@@ -1,6 +1,8 @@
 import Link from 'next/link'
+import { type Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { PhotoThumbnail } from '@/components/shared/PhotoThumbnail'
+import { ItemFilterBar } from '@/components/admin/ItemFilterBar'
 
 const CONDITION_LABELS: Record<string, string> = {
   mint: 'Mint',
@@ -39,16 +41,77 @@ const LISTING_STATUS_LABELS: Record<string, string> = {
   archived: 'Archived',
 }
 
-export default async function AdminItemsPage() {
-  const items = await prisma.itemInstance.findMany({
-    include: {
-      catalog: { select: { brand: true, name: true } },
-      location: { select: { label: true } },
-      listing: { select: { id: true, status: true } },
-      photos: { where: { type: 'front' }, take: 1, select: { url: true } },
-    },
-    orderBy: { sku: 'asc' },
-  })
+const VALID_STATUSES = new Set(['draft', 'available', 'reserved', 'sold', 'not_for_sale'])
+const VALID_CONDITIONS = new Set(['mint', 'near_mint', 'good', 'fair', 'poor', 'damaged'])
+const VALID_TYPES = new Set(['carded', 'loose'])
+const VALID_SORTS = new Set(['sku', 'newest', 'oldest', 'brand', 'status'])
+
+export default async function AdminItemsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string; status?: string; condition?: string; type?: string; sort?: string }>
+}) {
+  const { q: rawQ, status: rawStatus, condition: rawCondition, type: rawType, sort: rawSort } =
+    await searchParams
+
+  const q = rawQ?.trim() ?? ''
+  const status = rawStatus && VALID_STATUSES.has(rawStatus) ? rawStatus : ''
+  const condition = rawCondition && VALID_CONDITIONS.has(rawCondition) ? rawCondition : ''
+  const cardedOrLoose = rawType && VALID_TYPES.has(rawType) ? rawType : ''
+  const sort = rawSort && VALID_SORTS.has(rawSort) ? rawSort : 'sku'
+
+  // Build where clause
+  const where: Prisma.ItemInstanceWhereInput = {}
+
+  if (q) {
+    const orConditions: Prisma.ItemInstanceWhereInput[] = [
+      { sku: { contains: q } },
+      { catalog: { brand: { contains: q } } },
+      { catalog: { name: { contains: q } } },
+      { catalog: { series: { contains: q } } },
+      { catalog: { color: { contains: q } } },
+      { location: { label: { contains: q } } },
+    ]
+    const yearNum = parseInt(q, 10)
+    if (!isNaN(yearNum)) {
+      orConditions.push({ catalog: { year: { equals: yearNum } } })
+    }
+    where.OR = orConditions
+  }
+
+  if (status) where.status = status
+  if (condition) where.condition = condition
+  if (cardedOrLoose) where.cardedOrLoose = cardedOrLoose
+
+  // Build orderBy
+  const orderBy:
+    | Prisma.ItemInstanceOrderByWithRelationInput
+    | Prisma.ItemInstanceOrderByWithRelationInput[] =
+    sort === 'newest'
+      ? { createdAt: 'desc' }
+      : sort === 'oldest'
+        ? { createdAt: 'asc' }
+        : sort === 'brand'
+          ? [{ catalog: { brand: 'asc' } }, { catalog: { name: 'asc' } }]
+          : sort === 'status'
+            ? { status: 'asc' }
+            : { sku: 'asc' } // default: sku
+
+  const isFiltered = q !== '' || status !== '' || condition !== '' || cardedOrLoose !== ''
+
+  const [items, totalCount] = await Promise.all([
+    prisma.itemInstance.findMany({
+      where,
+      orderBy,
+      include: {
+        catalog: { select: { brand: true, name: true } },
+        location: { select: { label: true } },
+        listing: { select: { id: true, status: true } },
+        photos: { where: { type: 'front' }, take: 1, select: { url: true } },
+      },
+    }),
+    prisma.itemInstance.count(),
+  ])
 
   return (
     <>
@@ -62,8 +125,25 @@ export default async function AdminItemsPage() {
         </Link>
       </div>
 
+      <ItemFilterBar
+        q={q}
+        status={status}
+        condition={condition}
+        cardedOrLoose={cardedOrLoose}
+        sort={sort}
+      />
+
+      {isFiltered && (
+        <p className="text-sm text-gray-500 mb-4">
+          Showing {items.length} matching {items.length === 1 ? 'item' : 'items'} out of {totalCount}{' '}
+          total {totalCount === 1 ? 'item' : 'items'}.
+        </p>
+      )}
+
       {items.length === 0 ? (
-        <p className="text-sm text-gray-500">No items yet.</p>
+        <p className="text-sm text-gray-500">
+          {isFiltered ? 'No items match the current filters.' : 'No items yet.'}
+        </p>
       ) : (
         <div className="overflow-x-auto rounded-md border border-gray-200">
           <table className="w-full text-sm">
