@@ -35,3 +35,23 @@ The first version should help us receive bulk inventory, identify each physical 
 - Listing: public sale record
 - Order: buyer purchase
 - Order Item: item included in an order
+
+## Future Product Direction
+
+These are future milestones and should not be implemented now. The immediate next milestone remains photo-assisted inventory intake with human review.
+
+### 1. User Collection Tracker
+- Users can create accounts and record their own Hot Wheels/diecast collection.
+- User-owned collection items are separate from business-owned inventory items.
+- User inventory is private by default.
+- Users may opt in to show anonymous supply or indicate willingness to sell.
+
+### 2. Bid/Ask Marketplace
+- Buyers can place bids on catalog models.
+- Sellers can place asks.
+- Buy Now is based on the lowest active ask.
+- Sell Now is based on the highest active bid.
+- Start with manual matching/notifications before automatic matching.
+
+### 3. Market Intelligence
+- Model pages can show highest bid, lowest ask, last sale, number available, number wanted, number in user collections, top-selling models, and estimated portfolio value.

@@ -40,6 +40,7 @@ model ItemInstance {
   photos         Photo[]
   listing        Listing?
   orderItems     OrderItem[]
+  intakeDraft    IntakeDraft?
 }
 
 model Photo {
@@ -96,4 +97,31 @@ model OrderItem {
   listing   Listing      @relation(fields: [listingId], references: [id])
   price     Float
   createdAt DateTime     @default(now())
+}
+
+model IntakeDraft {
+  id              String @id @default(cuid())
+  status          String @default("draft")
+
+  frontPhotoUrl   String?
+  backPhotoUrl    String?
+
+  brand           String?
+  name            String?
+  year            Int?
+  series          String?
+  color           String?
+  scale           String?
+  cardedOrLoose   String?
+  condition       String?
+  conditionNotes  String?
+  listPrice       Float?
+  storageLocation String?
+  notes           String?
+
+  convertedItemId String?       @unique
+  convertedItem   ItemInstance? @relation(fields: [convertedItemId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }

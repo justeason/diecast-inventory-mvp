@@ -4,3 +4,4 @@ export type ItemStatus = 'draft' | 'available' | 'reserved' | 'sold' | 'not_for_
 export type PhotoType = 'front' | 'back' | 'detail' | 'damage'
 export type ListingStatus = 'active' | 'sold' | 'archived'
 export type OrderStatus = 'pending' | 'paid' | 'picking' | 'shipped' | 'complete' | 'cancelled'
+export type IntakeDraftStatus = 'draft' | 'reviewed' | 'converted' | 'rejected'
