@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { type Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { IntakeFilterBar } from '@/components/admin/IntakeFilterBar'
+import { Pagination } from '@/components/shared/Pagination'
 
 const STATUS_LABELS: Record<string, string> = {
   draft: 'Draft',
@@ -29,19 +30,21 @@ const STATUS_ORDER = ['draft', 'reviewed', 'converted', 'rejected'] as const
 const VALID_FILTER_STATUSES = new Set(['draft', 'reviewed', 'converted', 'rejected'])
 const VALID_SORTS = new Set(['newest', 'oldest', 'status', 'brand'])
 
+const PAGE_SIZE = 25
+
 export default async function AdminIntakePage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; status?: string; sort?: string }>
+  searchParams: Promise<{ q?: string; status?: string; sort?: string; page?: string }>
 }) {
-  const { q: rawQ, status: rawStatus, sort: rawSort } = await searchParams
+  const { q: rawQ, status: rawStatus, sort: rawSort, page: rawPage } = await searchParams
 
   const q = rawQ?.trim() ?? ''
-  const status =
-    rawStatus && VALID_FILTER_STATUSES.has(rawStatus) ? rawStatus : ''
+  const status = rawStatus && VALID_FILTER_STATUSES.has(rawStatus) ? rawStatus : ''
   const sort = rawSort && VALID_SORTS.has(rawSort) ? rawSort : 'newest'
+  const requestedPage = Math.max(1, parseInt(rawPage ?? '1') || 1)
 
-  // Build filtered where clause
+  // Build where clause
   const where: Prisma.IntakeDraftWhereInput = {}
 
   if (q) {
@@ -59,9 +62,7 @@ export default async function AdminIntakePage({
     where.OR = orConditions
   }
 
-  if (status) {
-    where.status = status
-  }
+  if (status) where.status = status
 
   // Build orderBy
   const orderBy: Prisma.IntakeDraftOrderByWithRelationInput | Prisma.IntakeDraftOrderByWithRelationInput[] =
@@ -73,43 +74,52 @@ export default async function AdminIntakePage({
           ? [{ brand: 'asc' }, { name: 'asc' }]
           : { createdAt: 'desc' }
 
-  const [drafts, countRows] = await Promise.all([
-    prisma.intakeDraft.findMany({
-      where,
-      orderBy,
-      select: {
-        id: true,
-        status: true,
-        brand: true,
-        name: true,
-        year: true,
-        color: true,
-        condition: true,
-        cardedOrLoose: true,
-        createdAt: true,
-        convertedItem: {
-          select: {
-            id: true,
-            sku: true,
-            listing: { select: { id: true } },
-          },
+  // Step 3: count filtered results + unfiltered badge counts in parallel
+  const [filteredCount, countRows] = await Promise.all([
+    prisma.intakeDraft.count({ where }),
+    prisma.intakeDraft.groupBy({ by: ['status'], _count: { _all: true } }),
+  ])
+
+  // Steps 4–6: compute pages, clamp, skip
+  const totalPages = Math.max(1, Math.ceil(filteredCount / PAGE_SIZE))
+  const page = Math.min(requestedPage, totalPages)
+  const skip = (page - 1) * PAGE_SIZE
+
+  // Step 7: fetch current page
+  const drafts = await prisma.intakeDraft.findMany({
+    where,
+    orderBy,
+    skip,
+    take: PAGE_SIZE,
+    select: {
+      id: true,
+      status: true,
+      brand: true,
+      name: true,
+      year: true,
+      color: true,
+      condition: true,
+      cardedOrLoose: true,
+      createdAt: true,
+      convertedItem: {
+        select: {
+          id: true,
+          sku: true,
+          listing: { select: { id: true } },
         },
       },
-    }),
-    // Counts always reflect ALL drafts regardless of filters
-    prisma.intakeDraft.groupBy({
-      by: ['status'],
-      _count: { _all: true },
-    }),
-  ])
+    },
+  })
 
   const counts: Record<string, number> = { draft: 0, reviewed: 0, converted: 0, rejected: 0 }
   for (const row of countRows) {
     if (row.status in counts) counts[row.status] = row._count._all
   }
 
-  const totalCount = Object.values(counts).reduce((sum, n) => sum + n, 0)
-  const isFiltered = q !== '' || status !== ''
+  const paginationParams: Record<string, string> = {}
+  if (q) paginationParams.q = q
+  if (status) paginationParams.status = status
+  if (sort !== 'newest') paginationParams.sort = sort
 
   return (
     <>
@@ -138,16 +148,11 @@ export default async function AdminIntakePage({
 
       <IntakeFilterBar q={q} status={status} sort={sort} />
 
-      {isFiltered && (
-        <p className="text-sm text-gray-500 mb-4">
-          Showing {drafts.length} matching {drafts.length === 1 ? 'draft' : 'drafts'} out of{' '}
-          {totalCount} total {totalCount === 1 ? 'draft' : 'drafts'}.
-        </p>
-      )}
-
       {drafts.length === 0 ? (
         <p className="text-gray-500 text-sm">
-          {isFiltered ? 'No drafts match the current filters.' : 'No intake drafts yet.'}
+          {filteredCount === 0 && (q || status)
+            ? 'No drafts match the current filters.'
+            : 'No intake drafts yet.'}
         </p>
       ) : (
         <div className="rounded-md border border-gray-200 overflow-hidden">
@@ -217,6 +222,15 @@ export default async function AdminIntakePage({
           </table>
         </div>
       )}
+
+      <Pagination
+        page={page}
+        totalPages={totalPages}
+        totalCount={filteredCount}
+        pageSize={PAGE_SIZE}
+        basePath="/admin/intake"
+        params={paginationParams}
+      />
     </>
   )
 }

@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { type Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { ListingFilterBar } from '@/components/admin/ListingFilterBar'
+import { Pagination } from '@/components/shared/Pagination'
 
 const STATUS_COLORS: Record<string, string> = {
   active: 'bg-green-100 text-green-700',
@@ -18,16 +19,19 @@ const STATUS_LABELS: Record<string, string> = {
 const VALID_STATUSES = new Set(['active', 'sold', 'archived'])
 const VALID_SORTS = new Set(['newest', 'oldest', 'price_asc', 'price_desc', 'status'])
 
+const PAGE_SIZE = 25
+
 export default async function AdminListingsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; status?: string; sort?: string }>
+  searchParams: Promise<{ q?: string; status?: string; sort?: string; page?: string }>
 }) {
-  const { q: rawQ, status: rawStatus, sort: rawSort } = await searchParams
+  const { q: rawQ, status: rawStatus, sort: rawSort, page: rawPage } = await searchParams
 
   const q = rawQ?.trim() ?? ''
   const status = rawStatus && VALID_STATUSES.has(rawStatus) ? rawStatus : ''
   const sort = rawSort && VALID_SORTS.has(rawSort) ? rawSort : 'newest'
+  const requestedPage = Math.max(1, parseInt(rawPage ?? '1') || 1)
 
   // Build where clause
   const where: Prisma.ListingWhereInput = {}
@@ -53,25 +57,36 @@ export default async function AdminListingsPage({
           ? { price: 'desc' }
           : sort === 'status'
             ? { status: 'asc' }
-            : { createdAt: 'desc' } // default: newest
+            : { createdAt: 'desc' }
 
-  const isFiltered = q !== '' || status !== ''
+  // Step 3: count filtered results
+  const filteredCount = await prisma.listing.count({ where })
 
-  const [listings, totalCount] = await Promise.all([
-    prisma.listing.findMany({
-      where,
-      orderBy,
-      include: {
-        item: {
-          select: {
-            sku: true,
-            catalog: { select: { brand: true, name: true } },
-          },
+  // Steps 4–6: compute pages, clamp, skip
+  const totalPages = Math.max(1, Math.ceil(filteredCount / PAGE_SIZE))
+  const page = Math.min(requestedPage, totalPages)
+  const skip = (page - 1) * PAGE_SIZE
+
+  // Step 7: fetch current page
+  const listings = await prisma.listing.findMany({
+    where,
+    orderBy,
+    skip,
+    take: PAGE_SIZE,
+    include: {
+      item: {
+        select: {
+          sku: true,
+          catalog: { select: { brand: true, name: true } },
         },
       },
-    }),
-    prisma.listing.count(),
-  ])
+    },
+  })
+
+  const paginationParams: Record<string, string> = {}
+  if (q) paginationParams.q = q
+  if (status) paginationParams.status = status
+  if (sort !== 'newest') paginationParams.sort = sort
 
   return (
     <>
@@ -87,16 +102,11 @@ export default async function AdminListingsPage({
 
       <ListingFilterBar q={q} status={status} sort={sort} />
 
-      {isFiltered && (
-        <p className="text-sm text-gray-500 mb-4">
-          Showing {listings.length} matching {listings.length === 1 ? 'listing' : 'listings'} out of{' '}
-          {totalCount} total {totalCount === 1 ? 'listing' : 'listings'}.
-        </p>
-      )}
-
       {listings.length === 0 ? (
         <p className="text-sm text-gray-500">
-          {isFiltered ? 'No listings match the current filters.' : 'No listings yet.'}
+          {filteredCount === 0 && (q || status)
+            ? 'No listings match the current filters.'
+            : 'No listings yet.'}
         </p>
       ) : (
         <div className="overflow-x-auto rounded-md border border-gray-200">
@@ -145,6 +155,15 @@ export default async function AdminListingsPage({
           </table>
         </div>
       )}
+
+      <Pagination
+        page={page}
+        totalPages={totalPages}
+        totalCount={filteredCount}
+        pageSize={PAGE_SIZE}
+        basePath="/admin/listings"
+        params={paginationParams}
+      />
     </>
   )
 }

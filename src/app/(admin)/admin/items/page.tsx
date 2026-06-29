@@ -3,6 +3,7 @@ import { type Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { PhotoThumbnail } from '@/components/shared/PhotoThumbnail'
 import { ItemFilterBar } from '@/components/admin/ItemFilterBar'
+import { Pagination } from '@/components/shared/Pagination'
 
 const CONDITION_LABELS: Record<string, string> = {
   mint: 'Mint',
@@ -46,12 +47,14 @@ const VALID_CONDITIONS = new Set(['mint', 'near_mint', 'good', 'fair', 'poor', '
 const VALID_TYPES = new Set(['carded', 'loose'])
 const VALID_SORTS = new Set(['sku', 'newest', 'oldest', 'brand', 'status'])
 
+const PAGE_SIZE = 25
+
 export default async function AdminItemsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; status?: string; condition?: string; type?: string; sort?: string }>
+  searchParams: Promise<{ q?: string; status?: string; condition?: string; type?: string; sort?: string; page?: string }>
 }) {
-  const { q: rawQ, status: rawStatus, condition: rawCondition, type: rawType, sort: rawSort } =
+  const { q: rawQ, status: rawStatus, condition: rawCondition, type: rawType, sort: rawSort, page: rawPage } =
     await searchParams
 
   const q = rawQ?.trim() ?? ''
@@ -59,6 +62,7 @@ export default async function AdminItemsPage({
   const condition = rawCondition && VALID_CONDITIONS.has(rawCondition) ? rawCondition : ''
   const cardedOrLoose = rawType && VALID_TYPES.has(rawType) ? rawType : ''
   const sort = rawSort && VALID_SORTS.has(rawSort) ? rawSort : 'sku'
+  const requestedPage = Math.max(1, parseInt(rawPage ?? '1') || 1)
 
   // Build where clause
   const where: Prisma.ItemInstanceWhereInput = {}
@@ -95,23 +99,36 @@ export default async function AdminItemsPage({
           ? [{ catalog: { brand: 'asc' } }, { catalog: { name: 'asc' } }]
           : sort === 'status'
             ? { status: 'asc' }
-            : { sku: 'asc' } // default: sku
+            : { sku: 'asc' }
 
-  const isFiltered = q !== '' || status !== '' || condition !== '' || cardedOrLoose !== ''
+  // Step 3: count filtered results
+  const filteredCount = await prisma.itemInstance.count({ where })
 
-  const [items, totalCount] = await Promise.all([
-    prisma.itemInstance.findMany({
-      where,
-      orderBy,
-      include: {
-        catalog: { select: { brand: true, name: true } },
-        location: { select: { label: true } },
-        listing: { select: { id: true, status: true } },
-        photos: { where: { type: 'front' }, take: 1, select: { url: true } },
-      },
-    }),
-    prisma.itemInstance.count(),
-  ])
+  // Steps 4–6: compute pages, clamp, skip
+  const totalPages = Math.max(1, Math.ceil(filteredCount / PAGE_SIZE))
+  const page = Math.min(requestedPage, totalPages)
+  const skip = (page - 1) * PAGE_SIZE
+
+  // Step 7: fetch current page
+  const items = await prisma.itemInstance.findMany({
+    where,
+    orderBy,
+    skip,
+    take: PAGE_SIZE,
+    include: {
+      catalog: { select: { brand: true, name: true } },
+      location: { select: { label: true } },
+      listing: { select: { id: true, status: true } },
+      photos: { where: { type: 'front' }, take: 1, select: { url: true } },
+    },
+  })
+
+  const paginationParams: Record<string, string> = {}
+  if (q) paginationParams.q = q
+  if (status) paginationParams.status = status
+  if (condition) paginationParams.condition = condition
+  if (cardedOrLoose) paginationParams.type = cardedOrLoose
+  if (sort !== 'sku') paginationParams.sort = sort
 
   return (
     <>
@@ -133,16 +150,11 @@ export default async function AdminItemsPage({
         sort={sort}
       />
 
-      {isFiltered && (
-        <p className="text-sm text-gray-500 mb-4">
-          Showing {items.length} matching {items.length === 1 ? 'item' : 'items'} out of {totalCount}{' '}
-          total {totalCount === 1 ? 'item' : 'items'}.
-        </p>
-      )}
-
       {items.length === 0 ? (
         <p className="text-sm text-gray-500">
-          {isFiltered ? 'No items match the current filters.' : 'No items yet.'}
+          {filteredCount === 0 && (q || status || condition || cardedOrLoose)
+            ? 'No items match the current filters.'
+            : 'No items yet.'}
         </p>
       ) : (
         <div className="overflow-x-auto rounded-md border border-gray-200">
@@ -220,6 +232,15 @@ export default async function AdminItemsPage({
           </table>
         </div>
       )}
+
+      <Pagination
+        page={page}
+        totalPages={totalPages}
+        totalCount={filteredCount}
+        pageSize={PAGE_SIZE}
+        basePath="/admin/items"
+        params={paginationParams}
+      />
     </>
   )
 }

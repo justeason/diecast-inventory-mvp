@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { type Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { OrderFilterBar } from '@/components/admin/OrderFilterBar'
+import { Pagination } from '@/components/shared/Pagination'
 
 const STATUS_LABELS: Record<string, string> = {
   pending: 'Pending',
@@ -24,16 +25,19 @@ const STATUS_COLORS: Record<string, string> = {
 const VALID_STATUSES = new Set(['pending', 'paid', 'picking', 'shipped', 'complete', 'cancelled'])
 const VALID_SORTS = new Set(['newest', 'oldest', 'status', 'total_desc', 'total_asc'])
 
+const PAGE_SIZE = 25
+
 export default async function AdminOrdersPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; status?: string; sort?: string }>
+  searchParams: Promise<{ q?: string; status?: string; sort?: string; page?: string }>
 }) {
-  const { q: rawQ, status: rawStatus, sort: rawSort } = await searchParams
+  const { q: rawQ, status: rawStatus, sort: rawSort, page: rawPage } = await searchParams
 
   const q = rawQ?.trim() ?? ''
   const status = rawStatus && VALID_STATUSES.has(rawStatus) ? rawStatus : ''
   const sort = rawSort && VALID_SORTS.has(rawSort) ? rawSort : 'newest'
+  const requestedPage = Math.max(1, parseInt(rawPage ?? '1') || 1)
 
   // Build where clause
   const where: Prisma.OrderWhereInput = {}
@@ -50,40 +54,65 @@ export default async function AdminOrdersPage({
 
   if (status) where.status = status
 
-  // Total sorts are handled in JS; use a stable createdAt fallback from Prisma
   const isTotalSort = sort === 'total_desc' || sort === 'total_asc'
+
+  // Prisma orderBy used for non-total sorts; total sorts are handled in JS after fetch
   const orderBy: Prisma.OrderOrderByWithRelationInput = isTotalSort
     ? { createdAt: 'desc' }
     : sort === 'oldest'
       ? { createdAt: 'asc' }
       : sort === 'status'
         ? { status: 'asc' }
-        : { createdAt: 'desc' } // newest (default)
+        : { createdAt: 'desc' }
 
-  const isFiltered = q !== '' || status !== ''
+  // Step 3: count filtered results
+  const filteredCount = await prisma.order.count({ where })
 
-  const [rawOrders, totalCount] = await Promise.all([
-    prisma.order.findMany({
+  // Steps 4–6: compute pages, clamp, skip
+  const totalPages = Math.max(1, Math.ceil(filteredCount / PAGE_SIZE))
+  const page = Math.min(requestedPage, totalPages)
+  const skip = (page - 1) * PAGE_SIZE
+
+  // Step 7: fetch — for total sorts, fetch all filtered then slice in JS
+  let orders: Array<{
+    id: string
+    buyerName: string
+    buyerEmail: string
+    buyerPhone: string | null
+    status: string
+    createdAt: Date
+    notes: string | null
+    orderItems: Array<{ price: number }>
+    total: number
+  }>
+
+  if (isTotalSort) {
+    const rawOrders = await prisma.order.findMany({
+      where,
+      include: { orderItems: { select: { price: true } } },
+    })
+    orders = rawOrders
+      .map((o) => ({ ...o, total: o.orderItems.reduce((sum, oi) => sum + oi.price, 0) }))
+      .sort((a, b) => (sort === 'total_desc' ? b.total - a.total : a.total - b.total))
+      .slice(skip, skip + PAGE_SIZE)
+  } else {
+    const rawOrders = await prisma.order.findMany({
       where,
       orderBy,
-      include: {
-        orderItems: { select: { price: true } },
-      },
-    }),
-    prisma.order.count(),
-  ])
-
-  // Attach pre-computed total to each order, then JS-sort for total sorts
-  const orders = rawOrders
-    .map((o) => ({
+      skip,
+      take: PAGE_SIZE,
+      include: { orderItems: { select: { price: true } } },
+    })
+    orders = rawOrders.map((o) => ({
       ...o,
       total: o.orderItems.reduce((sum, oi) => sum + oi.price, 0),
     }))
-    .sort((a, b) => {
-      if (sort === 'total_desc') return b.total - a.total
-      if (sort === 'total_asc') return a.total - b.total
-      return 0 // preserve Prisma orderBy for all other sorts
-    })
+  }
+
+  const paginationParams: Record<string, string> = {}
+  if (q) paginationParams.q = q
+  if (status) paginationParams.status = status
+  if (sort !== 'newest') paginationParams.sort = sort
 
   return (
     <>
@@ -93,16 +122,11 @@ export default async function AdminOrdersPage({
 
       <OrderFilterBar q={q} status={status} sort={sort} />
 
-      {isFiltered && (
-        <p className="text-sm text-gray-500 mb-4">
-          Showing {orders.length} matching {orders.length === 1 ? 'order' : 'orders'} out of{' '}
-          {totalCount} total {totalCount === 1 ? 'order' : 'orders'}.
-        </p>
-      )}
-
       {orders.length === 0 ? (
         <p className="text-sm text-gray-500">
-          {isFiltered ? 'No orders match the current filters.' : 'No orders yet.'}
+          {filteredCount === 0 && (q || status)
+            ? 'No orders match the current filters.'
+            : 'No orders yet.'}
         </p>
       ) : (
         <div className="overflow-x-auto rounded-md border border-gray-200">
@@ -151,6 +175,15 @@ export default async function AdminOrdersPage({
           </table>
         </div>
       )}
+
+      <Pagination
+        page={page}
+        totalPages={totalPages}
+        totalCount={filteredCount}
+        pageSize={PAGE_SIZE}
+        basePath="/admin/orders"
+        params={paginationParams}
+      />
     </>
   )
 }
