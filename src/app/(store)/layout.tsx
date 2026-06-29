@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import { CartCountBadge } from '@/components/store/CartCountBadge'
+import { CategoryNav } from '@/components/store/CategoryNav'
 
 export default function StoreLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -51,6 +52,7 @@ export default function StoreLayout({ children }: { children: React.ReactNode })
             </button>
           </div>
         </nav>
+        <CategoryNav />
       </header>
       <main className="mx-auto max-w-7xl px-6 py-8">{children}</main>
     </div>
