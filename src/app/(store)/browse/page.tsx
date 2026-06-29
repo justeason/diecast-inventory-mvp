@@ -6,14 +6,63 @@ import { Pagination } from '@/components/shared/Pagination'
 
 const PAGE_SIZE = 24
 
+const VALID_CONDITIONS = new Set(['mint', 'near_mint', 'good', 'fair', 'poor', 'damaged'])
+const VALID_TYPES = new Set(['carded', 'loose'])
+const VALID_SORTS = new Set(['newest', 'price_low', 'price_high', 'brand_name'])
+
+function parsePrice(v: string | undefined): number | null {
+  if (!v || !v.trim()) return null
+  const n = Number(v)
+  return Number.isFinite(n) && n >= 0 ? n : null
+}
+
 export default async function BrowsePage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; condition?: string; type?: string; page?: string }>
+  searchParams: Promise<{
+    q?: string
+    condition?: string
+    type?: string
+    brand?: string
+    minPrice?: string
+    maxPrice?: string
+    sort?: string
+    page?: string
+  }>
 }) {
-  const { q, condition, type, page: rawPage } = await searchParams
+  const {
+    q: rawQ,
+    condition: rawCondition,
+    type: rawType,
+    brand: rawBrand,
+    minPrice: rawMin,
+    maxPrice: rawMax,
+    sort: rawSort,
+    page: rawPage,
+  } = await searchParams
+
+  const q = rawQ?.trim() ?? ''
+  const condition = rawCondition && VALID_CONDITIONS.has(rawCondition) ? rawCondition : ''
+  const type = rawType && VALID_TYPES.has(rawType) ? rawType : ''
+  const brand = rawBrand?.trim() ?? ''
+  const minPrice = rawMin?.trim() ?? ''
+  const maxPrice = rawMax?.trim() ?? ''
+  const sort = rawSort && VALID_SORTS.has(rawSort) ? rawSort : 'newest'
   const requestedPage = Math.max(1, parseInt(rawPage ?? '1') || 1)
 
+  // Price parsing
+  const minPriceNum = parsePrice(minPrice)
+  const maxPriceNum = parsePrice(maxPrice)
+  // Ignore both when range is inverted
+  const priceRangeInvalid =
+    minPriceNum !== null && maxPriceNum !== null && minPriceNum > maxPriceNum
+  // Show warning when any non-empty price input was ignored
+  const showPriceWarning =
+    (minPrice !== '' && minPriceNum === null) ||
+    (maxPrice !== '' && maxPriceNum === null) ||
+    priceRangeInvalid
+
+  // Build where clause
   const conditions: Prisma.ListingWhereInput[] = [
     { status: 'active' },
     { item: { status: 'available' } },
@@ -21,24 +70,64 @@ export default async function BrowsePage({
 
   if (condition) conditions.push({ item: { condition } })
   if (type) conditions.push({ item: { cardedOrLoose: type } })
+  if (brand) conditions.push({ item: { catalog: { brand } } })
 
-  if (q) {
-    conditions.push({
-      OR: [
-        { title: { contains: q } },
-        { item: { sku: { contains: q } } },
-        { item: { catalog: { brand: { contains: q } } } },
-        { item: { catalog: { name: { contains: q } } } },
-        { item: { catalog: { series: { contains: q } } } },
-        { item: { catalog: { color: { contains: q } } } },
-      ],
-    })
+  if (!priceRangeInvalid) {
+    if (minPriceNum !== null) conditions.push({ price: { gte: minPriceNum } })
+    if (maxPriceNum !== null) conditions.push({ price: { lte: maxPriceNum } })
   }
 
-  const where = { AND: conditions }
+  if (q) {
+    const yearNum = parseInt(q, 10)
+    const orClauses: Prisma.ListingWhereInput[] = [
+      { title: { contains: q } },
+      { item: { sku: { contains: q } } },
+      { item: { catalog: { brand: { contains: q } } } },
+      { item: { catalog: { name: { contains: q } } } },
+      { item: { catalog: { series: { contains: q } } } },
+      { item: { catalog: { color: { contains: q } } } },
+    ]
+    // Only add year search when q is a clean integer
+    if (Number.isInteger(yearNum) && String(yearNum) === q.trim()) {
+      orClauses.push({ item: { catalog: { year: { equals: yearNum } } } })
+    }
+    conditions.push({ OR: orClauses })
+  }
 
-  // Step 3: count filtered results
-  const filteredCount = await prisma.listing.count({ where })
+  const where: Prisma.ListingWhereInput = { AND: conditions }
+
+  // Build orderBy
+  const orderBy: Prisma.ListingOrderByWithRelationInput | Prisma.ListingOrderByWithRelationInput[] =
+    sort === 'price_low'
+      ? { price: 'asc' }
+      : sort === 'price_high'
+        ? { price: 'desc' }
+        : sort === 'brand_name'
+          ? [
+              { item: { catalog: { brand: 'asc' } } },
+              { item: { catalog: { name: 'asc' } } },
+            ]
+          : { createdAt: 'desc' }
+
+  // Step 3: count + fetch brands in parallel
+  const [filteredCount, brandRows] = await Promise.all([
+    prisma.listing.count({ where }),
+    prisma.catalogModel.findMany({
+      distinct: ['brand'],
+      select: { brand: true },
+      orderBy: { brand: 'asc' },
+      where: {
+        items: {
+          some: {
+            status: 'available',
+            listing: { status: 'active' },
+          },
+        },
+      },
+    }),
+  ])
+
+  const brands = brandRows.map((r) => r.brand)
 
   // Steps 4–6: compute pages, clamp, skip
   const totalPages = Math.max(1, Math.ceil(filteredCount / PAGE_SIZE))
@@ -48,6 +137,7 @@ export default async function BrowsePage({
   // Step 7: fetch current page
   const listings = await prisma.listing.findMany({
     where,
+    orderBy,
     skip,
     take: PAGE_SIZE,
     include: {
@@ -63,13 +153,18 @@ export default async function BrowsePage({
         },
       },
     },
-    orderBy: { createdAt: 'desc' },
   })
 
   const paginationParams: Record<string, string> = {}
   if (q) paginationParams.q = q
   if (condition) paginationParams.condition = condition
   if (type) paginationParams.type = type
+  if (brand) paginationParams.brand = brand
+  if (minPrice) paginationParams.minPrice = minPrice
+  if (maxPrice) paginationParams.maxPrice = maxPrice
+  if (sort !== 'newest') paginationParams.sort = sort
+
+  const hasActiveFilters = !!(q || condition || type || brand || minPrice || maxPrice)
 
   return (
     <>
@@ -77,16 +172,31 @@ export default async function BrowsePage({
         <h1 className="text-2xl font-bold text-gray-900">Browse Listings</h1>
       </div>
 
-      <SearchFilterBar q={q} condition={condition} type={type} />
+      <SearchFilterBar
+        q={q}
+        condition={condition}
+        type={type}
+        brand={brand}
+        minPrice={minPrice}
+        maxPrice={maxPrice}
+        sort={sort}
+        brands={brands}
+      />
+
+      {showPriceWarning && (
+        <p className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+          Invalid price filter ignored. Please enter a valid price range.
+        </p>
+      )}
 
       {listings.length === 0 ? (
         <p className="text-sm text-gray-500">
-          {filteredCount === 0 && (q || condition || type)
+          {filteredCount === 0 && hasActiveFilters
             ? 'No listings found matching your search.'
             : 'No listings available.'}
         </p>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
           {listings.map((listing) => (
             <ListingCard
               key={listing.id}

@@ -9,80 +9,168 @@ const CONDITION_OPTIONS = [
   { value: 'damaged', label: 'Damaged' },
 ]
 
+const SORT_OPTIONS = [
+  { value: 'newest', label: 'Newest first' },
+  { value: 'price_low', label: 'Price: Low to High' },
+  { value: 'price_high', label: 'Price: High to Low' },
+  { value: 'brand_name', label: 'Brand / Name' },
+]
+
 type Props = {
   q?: string
   condition?: string
   type?: string
+  brand?: string
+  minPrice?: string
+  maxPrice?: string
+  sort: string
+  brands: string[]
 }
 
-export function SearchFilterBar({ q, condition, type }: Props) {
-  const hasFilters = q || condition || type
+export function SearchFilterBar({ q, condition, type, brand, minPrice, maxPrice, sort, brands }: Props) {
+  const isActive = !!(q || condition || type || brand || minPrice || maxPrice || sort !== 'newest')
+  const formKey = [q, condition, type, brand, minPrice, maxPrice, sort].join('|')
 
   return (
-    <form method="GET" action="/browse" className="mb-8">
-      <div className="flex flex-wrap gap-3 items-end">
-        <div className="flex-1 min-w-48">
-          <label htmlFor="q" className="block text-xs font-medium text-gray-600 mb-1">
-            Search
-          </label>
-          <input
-            id="q"
-            type="search"
-            name="q"
-            placeholder="Title, brand, model, series, color…"
-            defaultValue={q ?? ''}
-            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
-          />
-        </div>
+    <form key={formKey} method="GET" action="/browse" className="flex flex-wrap items-end gap-3 mb-8">
+      {/* Search — full-width row */}
+      <div className="w-full">
+        <label htmlFor="browse-q" className="block text-xs font-medium text-gray-600 mb-1">
+          Search
+        </label>
+        <input
+          id="browse-q"
+          type="text"
+          name="q"
+          placeholder="Title, brand, model, series, color, year…"
+          defaultValue={q ?? ''}
+          className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+        />
+      </div>
 
+      {/* Condition */}
+      <div>
+        <label htmlFor="browse-condition" className="block text-xs font-medium text-gray-600 mb-1">
+          Condition
+        </label>
+        <select
+          id="browse-condition"
+          name="condition"
+          defaultValue={condition ?? ''}
+          className="rounded-md border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-gray-900"
+        >
+          <option value="">All conditions</option>
+          {CONDITION_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {/* Type */}
+      <div>
+        <label htmlFor="browse-type" className="block text-xs font-medium text-gray-600 mb-1">
+          Type
+        </label>
+        <select
+          id="browse-type"
+          name="type"
+          defaultValue={type ?? ''}
+          className="rounded-md border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-gray-900"
+        >
+          <option value="">Carded &amp; Loose</option>
+          <option value="carded">Carded only</option>
+          <option value="loose">Loose only</option>
+        </select>
+      </div>
+
+      {/* Brand — only rendered when there are brands to show */}
+      {brands.length > 0 && (
         <div>
-          <label htmlFor="condition" className="block text-xs font-medium text-gray-600 mb-1">
-            Condition
+          <label htmlFor="browse-brand" className="block text-xs font-medium text-gray-600 mb-1">
+            Brand
           </label>
           <select
-            id="condition"
-            name="condition"
-            defaultValue={condition ?? ''}
+            id="browse-brand"
+            name="brand"
+            defaultValue={brand ?? ''}
             className="rounded-md border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-gray-900"
           >
-            <option value="">All conditions</option>
-            {CONDITION_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
+            <option value="">All brands</option>
+            {brands.map((b) => (
+              <option key={b} value={b}>
+                {b}
               </option>
             ))}
           </select>
         </div>
+      )}
 
-        <div>
-          <label htmlFor="type" className="block text-xs font-medium text-gray-600 mb-1">
-            Type
-          </label>
-          <select
-            id="type"
-            name="type"
-            defaultValue={type ?? ''}
-            className="rounded-md border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-gray-900"
-          >
-            <option value="">Carded &amp; Loose</option>
-            <option value="carded">Carded only</option>
-            <option value="loose">Loose only</option>
-          </select>
-        </div>
-
-        <button
-          type="submit"
-          className="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700"
-        >
-          Search
-        </button>
-
-        {hasFilters && (
-          <Link href="/browse" className="text-sm text-gray-500 hover:text-gray-900 underline py-2">
-            Clear filters
-          </Link>
-        )}
+      {/* Min price */}
+      <div>
+        <label htmlFor="browse-min" className="block text-xs font-medium text-gray-600 mb-1">
+          Min $
+        </label>
+        <input
+          id="browse-min"
+          type="text"
+          name="minPrice"
+          inputMode="decimal"
+          placeholder="0"
+          defaultValue={minPrice ?? ''}
+          className="w-24 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+        />
       </div>
+
+      {/* Max price */}
+      <div>
+        <label htmlFor="browse-max" className="block text-xs font-medium text-gray-600 mb-1">
+          Max $
+        </label>
+        <input
+          id="browse-max"
+          type="text"
+          name="maxPrice"
+          inputMode="decimal"
+          placeholder="Any"
+          defaultValue={maxPrice ?? ''}
+          className="w-24 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+        />
+      </div>
+
+      {/* Sort */}
+      <div>
+        <label htmlFor="browse-sort" className="block text-xs font-medium text-gray-600 mb-1">
+          Sort by
+        </label>
+        <select
+          id="browse-sort"
+          name="sort"
+          defaultValue={sort}
+          className="rounded-md border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-gray-900"
+        >
+          {SORT_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {/* Actions */}
+      <button
+        type="submit"
+        className="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700 transition-colors"
+      >
+        Search
+      </button>
+
+      {isActive && (
+        <Link href="/browse" className="py-2 text-sm text-gray-500 hover:text-gray-900 underline">
+          Clear
+        </Link>
+      )}
     </form>
   )
 }
