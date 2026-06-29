@@ -2,7 +2,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { prisma } from '@/lib/prisma'
 import { AddToCartButton } from '@/components/store/AddToCartButton'
-import { PhotoThumbnail } from '@/components/shared/PhotoThumbnail'
+import { PhotoGallery } from '@/components/store/PhotoGallery'
 import type { CartItem } from '@/lib/cart'
 
 const CONDITION_LABELS: Record<string, string> = {
@@ -57,7 +57,6 @@ export default async function ListingDetailPage({
   const photos = item.photos
 
   const mainPhotoUrl = photos.find((p) => p.type === 'front')?.url ?? photos[0]?.url ?? null
-  const secondaryPhotos = photos.filter((p) => p.url !== mainPhotoUrl)
 
   const cartItem: CartItem = {
     listingId: listing.id,
@@ -79,24 +78,7 @@ export default async function ListingDetailPage({
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
         {/* Photo gallery */}
-        <div className="space-y-2">
-          <div className="aspect-square rounded-lg overflow-hidden">
-            <PhotoThumbnail photoUrl={mainPhotoUrl} alt={listing.title} size="fill" />
-          </div>
-          {secondaryPhotos.length > 0 && (
-            <div className="grid grid-cols-4 gap-2">
-              {secondaryPhotos.map((p, i) => (
-                <div key={i} className="aspect-square rounded overflow-hidden">
-                  <PhotoThumbnail
-                    photoUrl={p.url}
-                    alt={`${listing.title} — ${p.type}`}
-                    size="fill"
-                  />
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+        <PhotoGallery photos={photos} title={listing.title} />
 
         <div>
           <h1 className="text-2xl font-bold text-gray-900 leading-snug">{listing.title}</h1>
