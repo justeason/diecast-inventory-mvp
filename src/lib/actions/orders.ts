@@ -12,7 +12,7 @@ const OrderSchema = z.object({
 })
 
 export type OrderActionState =
-  | { success: true }
+  | { success: true; orderId: string }
   | { errors: Record<string, string[]> }
   | null
 
@@ -55,7 +55,7 @@ export async function createOrder(
 
   const { buyerName, buyerEmail, buyerPhone, notes } = result.data
 
-  await prisma.$transaction(async (tx) => {
+  const { orderId } = await prisma.$transaction(async (tx) => {
     const order = await tx.order.create({
       data: {
         buyerName,
@@ -87,9 +87,11 @@ export async function createOrder(
       // Listing.status intentionally stays 'active'; ItemInstance.status = 'reserved' is the hold signal.
       // Browse filters out reserved items via the item.status = 'available' check.
     }
+
+    return { orderId: order.id }
   })
 
-  return { success: true }
+  return { success: true, orderId }
 }
 
 // ─── Order status management ────────────────────────────────────────────────

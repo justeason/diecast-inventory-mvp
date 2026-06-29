@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react'
 import { useActionState } from 'react'
+import Link from 'next/link'
 import { useCart } from '@/lib/use-cart'
 import { createOrder, type OrderActionState } from '@/lib/actions/orders'
 import { PhotoThumbnail } from '@/components/shared/PhotoThumbnail'
@@ -32,12 +33,26 @@ export function CartPage() {
   if (state && 'success' in state && state.success) {
     return (
       <div className="max-w-lg">
-        <h1 className="text-2xl font-bold text-gray-900 mb-6">Your Cart</h1>
-        <div className="rounded-lg border border-green-200 bg-green-50 p-6">
-          <h2 className="text-lg font-semibold text-green-900 mb-2">Order Request Submitted!</h2>
+        <h1 className="text-2xl font-bold text-gray-900 mb-6">Order Request Submitted</h1>
+        <div className="rounded-lg border border-green-200 bg-green-50 p-6 space-y-3">
+          <h2 className="text-lg font-semibold text-green-900">Thank you!</h2>
           <p className="text-sm text-green-800">
-            Thank you! We&apos;ll contact you by email to confirm availability and arrange payment.
+            Your order request has been received. This is{' '}
+            <strong>not a confirmed purchase</strong> — we&apos;ll contact you by email to
+            confirm availability and arrange payment.
           </p>
+          <p className="text-sm text-green-700">
+            Order reference:{' '}
+            <span className="font-mono text-xs break-all">{state.orderId}</span>
+          </p>
+        </div>
+        <div className="mt-6">
+          <Link
+            href="/browse"
+            className="text-sm font-medium text-gray-900 hover:underline underline-offset-2"
+          >
+            ← Continue browsing
+          </Link>
         </div>
       </div>
     )
@@ -51,7 +66,15 @@ export function CartPage() {
       <h1 className="text-2xl font-bold text-gray-900 mb-6">Your Cart</h1>
 
       {items.length === 0 ? (
-        <p className="text-sm text-gray-500">Your cart is empty.</p>
+        <div className="space-y-3">
+          <p className="text-sm text-gray-500">Your cart is empty.</p>
+          <Link
+            href="/browse"
+            className="inline-block text-sm font-medium text-gray-900 hover:underline underline-offset-2"
+          >
+            Browse listings →
+          </Link>
+        </div>
       ) : (
         <form action={formAction}>
           {items.map((item) => (
@@ -125,7 +148,13 @@ export function CartPage() {
           )}
 
           <div className="max-w-md space-y-4">
-            <h2 className="text-lg font-semibold text-gray-900">Contact Information</h2>
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900">Request this order</h2>
+              <p className="mt-1 text-sm text-gray-500">
+                This is an order request, not a payment checkout. We&apos;ll contact you to
+                confirm availability and arrange payment.
+              </p>
+            </div>
 
             <div>
               <label htmlFor="buyerName" className="block text-sm font-medium text-gray-700 mb-1">
