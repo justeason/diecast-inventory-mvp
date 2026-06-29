@@ -1,7 +1,6 @@
 'use server'
 
-import fs from 'fs'
-import path from 'path'
+import { put } from '@vercel/blob'
 import Anthropic from '@anthropic-ai/sdk'
 import { z } from 'zod'
 import { Prisma } from '@prisma/client'
@@ -492,17 +491,29 @@ export async function uploadIntakePhoto(
   if (!ext) return { error: 'Only JPEG, PNG, and WebP images are allowed.' }
   if (file.size > MAX_FILE_SIZE) return { error: 'File must be 5 MB or smaller.' }
 
-  // Filename is generated server-side; the original filename is never used.
-  const filename = `${Date.now()}-${field}.${ext}`
-  const uploadDir = path.join(process.cwd(), 'public', 'uploads', 'intake', draftId)
-  await fs.promises.mkdir(uploadDir, { recursive: true })
+  if (!process.env.BLOB_READ_WRITE_TOKEN) {
+    return { error: 'BLOB_READ_WRITE_TOKEN is not configured. Add it to .env.local.' }
+  }
 
-  const buffer = Buffer.from(await file.arrayBuffer())
-  await fs.promises.writeFile(path.join(uploadDir, filename), buffer)
+  // Pathname is generated server-side; the original filename is never used.
+  const pathname = `intake/${draftId}/${Date.now()}-${field}.${ext}`
 
-  const urlPath = `/uploads/intake/${draftId}/${filename}`
+  console.log('[uploadIntakePhoto] Uploading to Vercel Blob:', pathname)
+
+  let blob: Awaited<ReturnType<typeof put>>
+  try {
+    blob = await put(pathname, file, { access: 'public', contentType: file.type })
+  } catch (err) {
+    console.error('[uploadIntakePhoto] Blob upload failed:', err)
+    return {
+      error: `Upload failed: ${err instanceof Error ? err.message : String(err)}`,
+    }
+  }
+
+  console.log('[uploadIntakePhoto] blob.url:', blob.url)
+
   const dbField = field === 'front' ? 'frontPhotoUrl' : 'backPhotoUrl'
-  await prisma.intakeDraft.update({ where: { id: draftId }, data: { [dbField]: urlPath } })
+  await prisma.intakeDraft.update({ where: { id: draftId }, data: { [dbField]: blob.url } })
 
   redirect(`/admin/intake/${draftId}/edit`)
 }
