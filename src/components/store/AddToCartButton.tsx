@@ -13,7 +13,10 @@ export function AddToCartButton({ item }: Props) {
 
   return (
     <button
-      onClick={() => add(item)}
+      onClick={() => {
+          add(item)
+          window.dispatchEvent(new Event('cart-updated'))
+        }}
       disabled={inCart}
       className={
         inCart

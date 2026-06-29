@@ -25,6 +25,7 @@ export function CartPage() {
   useEffect(() => {
     if (state && 'success' in state && state.success) {
       clear()
+      window.dispatchEvent(new Event('cart-updated'))
     }
   }, [state, clear])
 
@@ -90,7 +91,10 @@ export function CartPage() {
                     <td className="px-4 py-3 text-right">
                       <button
                         type="button"
-                        onClick={() => remove(item.listingId)}
+                        onClick={() => {
+                          remove(item.listingId)
+                          window.dispatchEvent(new Event('cart-updated'))
+                        }}
                         className="text-sm text-red-600 hover:text-red-800"
                       >
                         Remove
