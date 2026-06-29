@@ -269,6 +269,41 @@ export default async function AdminOrderDetailPage({
         </div>
       </div>
 
+      {/* Manual follow-up checklist — hidden for terminal statuses */}
+      {!['complete', 'cancelled'].includes(order.status) && (
+        <div className="mb-8 rounded-md border border-blue-200 bg-blue-50 p-6">
+          <div className="flex items-start justify-between mb-1">
+            <h2 className="text-lg font-semibold text-gray-900">Manual Follow-up Checklist</h2>
+            <span className="text-xs text-blue-500 mt-1">Not saved — resets on page reload</span>
+          </div>
+          <p className="text-xs text-gray-500 mb-4">
+            Use this as a prompt while processing the order. Checks are not stored and will
+            reset when you reload the page.
+          </p>
+          <div className="space-y-2">
+            {[
+              'Confirm item availability',
+              'Contact buyer to confirm order',
+              'Arrange and receive payment',
+              'Pull / pick items from storage',
+              'Arrange shipping or in-person pickup',
+              'Update order status (Paid → Picking → Shipped → Complete)',
+            ].map((step) => (
+              <label
+                key={step}
+                className="flex items-center gap-3 text-sm text-gray-700 cursor-pointer select-none"
+              >
+                <input
+                  type="checkbox"
+                  className="rounded border-gray-300 text-gray-900 focus:ring-gray-900"
+                />
+                {step}
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Status update */}
       <div className="border-t border-gray-200 pt-6">
         <h2 className="text-lg font-semibold text-gray-900 mb-4">Update Status</h2>

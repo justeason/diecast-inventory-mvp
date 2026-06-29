@@ -46,10 +46,16 @@ export function CartPage() {
             <span className="font-mono text-xs break-all">{state.orderId}</span>
           </p>
         </div>
-        <div className="mt-6">
+        <div className="mt-6 flex flex-wrap items-center gap-4">
+          <Link
+            href={`/order-confirmation/${state.orderId}`}
+            className="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700 transition-colors"
+          >
+            View order confirmation →
+          </Link>
           <Link
             href="/browse"
-            className="text-sm font-medium text-gray-900 hover:underline underline-offset-2"
+            className="text-sm font-medium text-gray-500 hover:text-gray-900 hover:underline underline-offset-2"
           >
             ← Continue browsing
           </Link>

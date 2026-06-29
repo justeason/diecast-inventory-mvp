@@ -26,10 +26,17 @@ export function OrderStatusForm({ orderId, currentStatus }: Props) {
 
   return (
     <div className="space-y-3">
+      <div className="rounded-md border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-700 space-y-1.5">
+        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Status meanings</p>
+        <p><strong className="text-gray-900">Pending</strong> — Order request received. Awaiting your confirmation; no payment yet.</p>
+        <p><strong className="text-gray-900">Paid</strong> — Payment confirmed manually. Items remain reserved.</p>
+        <p><strong className="text-gray-900">Picking</strong> — Preparing and pulling items from storage.</p>
+        <p><strong className="text-gray-900">Shipped</strong> — Shipped or handed off to buyer.</p>
+      </div>
       <div className="rounded-md bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800 space-y-1">
-        <p><strong>Paid / Picking / Shipped</strong> — updates order status only. No effect on items or listings.</p>
-        <p><strong>Cancelled</strong> — releases reserved items back to available. Listings remain active.</p>
-        <p><strong>Complete</strong> — marks reserved items as sold and closes their listings. Cannot be undone.</p>
+        <p className="text-xs font-medium text-amber-600 uppercase tracking-wide mb-2">Irreversible actions</p>
+        <p><strong>Complete</strong> — Marks reserved items as sold and closes their listings. Cannot be undone.</p>
+        <p><strong>Cancelled</strong> — Releases reserved items back to available. Listings remain active.</p>
       </div>
       <form action={formAction} className="flex flex-wrap items-center gap-3">
         <select
