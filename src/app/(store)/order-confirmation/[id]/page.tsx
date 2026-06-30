@@ -166,7 +166,10 @@ export default async function OrderConfirmationPage({
               We will contact you at <strong>{order.buyerEmail}</strong> to confirm the
               order and arrange payment.
             </li>
-            <li>Once payment is received, we will arrange shipping or in-person pickup.</li>
+            <li>
+              Once we agree on payment and shipping details, we&apos;ll get your items on their
+              way.
+            </li>
           </ol>
         </div>
 

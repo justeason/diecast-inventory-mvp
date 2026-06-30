@@ -86,6 +86,10 @@ export default async function ListingDetailPage({
 
           <div className="mt-4">
             <AddToCartButton item={cartItem} />
+            <p className="mt-3 text-xs text-gray-500 leading-relaxed">
+              Adding to cart starts an order request — no payment is taken now. We&apos;ll follow
+              up by email to confirm availability and arrange combined shipping.
+            </p>
           </div>
 
           {listing.description && (

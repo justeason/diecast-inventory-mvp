@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { SearchFilterBar } from '@/components/store/SearchFilterBar'
@@ -190,11 +191,27 @@ export default async function BrowsePage({
       )}
 
       {listings.length === 0 ? (
-        <p className="text-sm text-gray-500">
-          {filteredCount === 0 && hasActiveFilters
-            ? 'No listings found matching your search.'
-            : 'No listings available.'}
-        </p>
+        <div className="py-12 text-center">
+          {filteredCount === 0 && hasActiveFilters ? (
+            <div className="space-y-2">
+              <p className="text-sm text-gray-500">No listings match your search.</p>
+              <p className="text-sm text-gray-400">
+                Try removing a filter or{' '}
+                <Link href="/browse" className="text-gray-700 underline underline-offset-2">
+                  browse all listings
+                </Link>
+                .
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-sm text-gray-500">No listings yet — check back soon.</p>
+              <Link href="/" className="text-sm text-gray-400 hover:text-gray-700">
+                ← Back to home
+              </Link>
+            </div>
+          )}
+        </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
           {listings.map((listing) => (

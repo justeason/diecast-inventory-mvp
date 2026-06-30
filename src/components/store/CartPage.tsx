@@ -145,6 +145,11 @@ export function CartPage() {
                   </td>
                   <td />
                 </tr>
+                <tr>
+                  <td colSpan={7} className="px-4 pb-3 text-right text-xs text-gray-400">
+                    Shipping not included — we&apos;ll calculate and confirm when we follow up.
+                  </td>
+                </tr>
               </tfoot>
             </table>
           </div>
@@ -157,8 +162,8 @@ export function CartPage() {
             <div>
               <h2 className="text-lg font-semibold text-gray-900">Request this order</h2>
               <p className="mt-1 text-sm text-gray-500">
-                This is an order request, not a payment checkout. We&apos;ll contact you to
-                confirm availability and arrange payment.
+                This is an order request — no payment is taken now. We&apos;ll contact you to
+                confirm availability, calculate combined shipping, and arrange payment.
               </p>
             </div>
 

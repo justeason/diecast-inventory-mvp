@@ -15,41 +15,9 @@ export default function StoreLayout({ children }: { children: React.ReactNode })
             Browse
           </Link>
 
-          {/* Right: cart + auth placeholders */}
-          <div className="ml-auto flex items-center gap-1">
+          {/* Right: cart */}
+          <div className="ml-auto flex items-center">
             <CartCountBadge />
-
-            <button
-              type="button"
-              disabled
-              title="Coming soon"
-              className="rounded-md px-3 py-1.5 text-sm font-medium text-gray-400 cursor-not-allowed select-none"
-            >
-              Sign In
-            </button>
-
-            <button
-              type="button"
-              disabled
-              title="Coming soon"
-              aria-label="Profile (coming soon)"
-              className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-100 text-gray-400 cursor-not-allowed"
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                className="h-4 w-4"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-                <circle cx="12" cy="7" r="4" />
-              </svg>
-            </button>
           </div>
         </nav>
         <CategoryNav />
