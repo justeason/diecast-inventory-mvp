@@ -87,6 +87,8 @@ export default async function AdminDashboardPage() {
     listingCountRows,
     orderCountRows,
     draftCountRows,
+    catalogCount,
+    locationCount,
     recentDrafts,
     recentOrders,
     recentListings,
@@ -95,6 +97,8 @@ export default async function AdminDashboardPage() {
     prisma.listing.groupBy({ by: ['status'], _count: { _all: true } }),
     prisma.order.groupBy({ by: ['status'], _count: { _all: true } }),
     prisma.intakeDraft.groupBy({ by: ['status'], _count: { _all: true } }),
+    prisma.catalogModel.count(),
+    prisma.storageLocation.count(),
     prisma.intakeDraft.findMany({
       orderBy: { createdAt: 'desc' },
       take: 5,
@@ -140,10 +144,82 @@ export default async function AdminDashboardPage() {
   const draftCounts = toCounts(draftCountRows)
 
   const totalItems = Object.values(itemCounts).reduce((sum, n) => sum + n, 0)
+  const activeListings = listingCounts['active'] ?? 0
+
+  const setupSteps = [
+    {
+      label: 'Create a storage location',
+      href: '/admin/locations/new',
+      done: locationCount >= 1,
+      count: locationCount,
+    },
+    {
+      label: 'Create a catalog model',
+      href: '/admin/catalog/new',
+      done: catalogCount >= 1,
+      count: catalogCount,
+    },
+    {
+      label: 'Create your first item',
+      href: '/admin/items/new',
+      done: totalItems >= 1,
+      count: totalItems,
+    },
+    {
+      label: 'Create your first listing',
+      href: '/admin/listings/new',
+      done: activeListings >= 1,
+      count: activeListings,
+    },
+  ]
+
+  const showSetup =
+    locationCount === 0 || catalogCount === 0 || totalItems === 0 || activeListings === 0
 
   return (
     <>
       <h1 className="text-2xl font-bold text-gray-900 mb-6">Dashboard</h1>
+
+      {/* Production Setup */}
+      {showSetup && (
+        <section className="mb-8 rounded-md border border-amber-200 bg-amber-50 p-5">
+          <h2 className="text-sm font-semibold text-amber-900 mb-1">Production Setup</h2>
+          <p className="text-sm text-amber-700 mb-4">
+            This is your production database. All data created here is real and permanent. Complete
+            the steps below to initialize your store.
+          </p>
+          <ol className="space-y-2 mb-5">
+            {setupSteps.map((step) => (
+              <li key={step.href} className="flex items-center gap-3 text-sm">
+                {step.done ? (
+                  <>
+                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-green-500 text-white text-xs font-bold shrink-0">
+                      ✓
+                    </span>
+                    <span className="text-gray-500 line-through">{step.label}</span>
+                    <span className="text-xs text-gray-400">({step.count})</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="flex h-5 w-5 items-center justify-center rounded-full border-2 border-gray-300 shrink-0" />
+                    <Link href={step.href} className="text-gray-900 font-medium hover:underline">
+                      {step.label} →
+                    </Link>
+                  </>
+                )}
+              </li>
+            ))}
+          </ol>
+          <div className="border-t border-amber-200 pt-4 flex flex-wrap gap-4">
+            <Link href="/browse" className="text-sm text-gray-600 hover:text-gray-900">
+              Test buyer browse page →
+            </Link>
+            <Link href="/browse" className="text-sm text-gray-600 hover:text-gray-900">
+              Test an order request →
+            </Link>
+          </div>
+        </section>
+      )}
 
       {/* Quick Actions */}
       <section className="mb-8">
