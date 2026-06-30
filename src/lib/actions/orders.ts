@@ -94,6 +94,42 @@ export async function createOrder(
   return { success: true, orderId }
 }
 
+// ─── Order review fields ─────────────────────────────────────────────────────
+
+export type OrderReviewActionState =
+  | { success: true }
+  | { errors: Record<string, string[]> }
+  | null
+
+export async function updateOrderReviewFields(
+  id: string,
+  _prev: OrderReviewActionState,
+  formData: FormData
+): Promise<OrderReviewActionState> {
+  const rawShipping = (formData.get('estimatedShipping') as string).trim()
+  const adminNotes = (formData.get('adminNotes') as string).trim() || null
+  const followUpNotes = (formData.get('followUpNotes') as string).trim() || null
+
+  let estimatedShipping: number | null = null
+  if (rawShipping !== '') {
+    const parsed = parseFloat(rawShipping)
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      return { errors: { estimatedShipping: ['Enter a valid non-negative amount.'] } }
+    }
+    estimatedShipping = parsed
+  }
+
+  const order = await prisma.order.findUnique({ where: { id }, select: { id: true } })
+  if (!order) return { errors: { form: ['Order not found.'] } }
+
+  await prisma.order.update({
+    where: { id },
+    data: { estimatedShipping, adminNotes, followUpNotes },
+  })
+
+  redirect(`/admin/orders/${id}`)
+}
+
 // ─── Order status management ────────────────────────────────────────────────
 
 const VALID_ORDER_STATUSES = ['pending', 'paid', 'picking', 'shipped', 'complete', 'cancelled']

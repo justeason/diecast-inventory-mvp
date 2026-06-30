@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { prisma } from '@/lib/prisma'
 import { OrderStatusForm } from '@/components/admin/OrderStatusForm'
+import { OrderReviewForm } from '@/components/admin/OrderReviewForm'
 import { PhotoThumbnail } from '@/components/shared/PhotoThumbnail'
 
 const CONDITION_LABELS: Record<string, string> = {
@@ -122,22 +123,47 @@ export default async function AdminOrderDetailPage({
         <div className="space-y-2 text-sm">
           <h2 className="font-semibold text-gray-900 mb-3">Summary</h2>
           <p>
-            <span className="text-gray-500 w-20 inline-block">Items</span>
+            <span className="text-gray-500 w-24 inline-block">Items</span>
             <span className="text-gray-900">{order.orderItems.length}</span>
           </p>
           <p>
-            <span className="text-gray-500 w-20 inline-block">Subtotal</span>
+            <span className="text-gray-500 w-24 inline-block">Subtotal</span>
             <span className="font-medium text-gray-900">${subtotal.toFixed(2)}</span>
           </p>
+          {order.estimatedShipping != null && (
+            <>
+              <p>
+                <span className="text-gray-500 w-24 inline-block">Est. Shipping</span>
+                <span className="text-gray-900">${order.estimatedShipping.toFixed(2)}</span>
+              </p>
+              <p>
+                <span className="text-gray-500 w-24 inline-block">Est. Total</span>
+                <span className="font-semibold text-gray-900">
+                  ${(subtotal + order.estimatedShipping).toFixed(2)}
+                </span>
+              </p>
+            </>
+          )}
           <p>
-            <span className="text-gray-500 w-20 inline-block">Status</span>
+            <span className="text-gray-500 w-24 inline-block">Status</span>
             <span className="text-gray-900">{STATUS_LABELS[order.status] ?? order.status}</span>
           </p>
           <p>
-            <span className="text-gray-500 w-20 inline-block">Created</span>
+            <span className="text-gray-500 w-24 inline-block">Created</span>
             <span className="text-gray-900">{order.createdAt.toLocaleDateString()}</span>
           </p>
         </div>
+      </div>
+
+      {/* Admin Review */}
+      <div className="mb-8 rounded-md border border-gray-200 bg-white p-6">
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">Admin Review</h2>
+        <OrderReviewForm
+          orderId={order.id}
+          estimatedShipping={order.estimatedShipping}
+          adminNotes={order.adminNotes}
+          followUpNotes={order.followUpNotes}
+        />
       </div>
 
       {/* Order items */}

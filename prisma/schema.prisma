@@ -77,15 +77,18 @@ model Listing {
 }
 
 model Order {
-  id         String      @id @default(cuid())
-  buyerName  String
-  buyerEmail String
-  buyerPhone String?
-  status     String      @default("pending")
-  notes      String?
-  createdAt  DateTime    @default(now())
-  updatedAt  DateTime    @updatedAt
-  orderItems OrderItem[]
+  id                String      @id @default(cuid())
+  buyerName         String
+  buyerEmail        String
+  buyerPhone        String?
+  status            String      @default("pending")
+  notes             String?
+  estimatedShipping Float?
+  adminNotes        String?
+  followUpNotes     String?
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+  orderItems        OrderItem[]
 }
 
 model OrderItem {
