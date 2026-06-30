@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { logoutAdmin } from '@/lib/actions/auth'
 
 const navLinks = [
   { href: '/admin', label: 'Dashboard' },
@@ -25,6 +26,14 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
               {link.label}
             </Link>
           ))}
+          <form action={logoutAdmin} className="ml-auto">
+            <button
+              type="submit"
+              className="text-sm text-gray-500 hover:text-gray-900 transition-colors"
+            >
+              Logout
+            </button>
+          </form>
         </nav>
       </header>
       <main className="mx-auto max-w-7xl px-6 py-8">{children}</main>
