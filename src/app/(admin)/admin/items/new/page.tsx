@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import { prisma } from '@/lib/prisma'
+import { getNextHwSku } from '@/lib/sku'
 import { ItemInstanceForm } from '@/components/admin/ItemInstanceForm'
 
 export default async function NewItemPage({
@@ -9,10 +10,11 @@ export default async function NewItemPage({
 }) {
   const { from } = await searchParams
 
-  const [catalogModels, locations, sourceItem] = await Promise.all([
+  const [catalogModels, locations, sourceItem, suggestedSku] = await Promise.all([
     prisma.catalogModel.findMany({ orderBy: [{ brand: 'asc' }, { name: 'asc' }] }),
     prisma.storageLocation.findMany({ orderBy: { label: 'asc' } }),
     from ? prisma.itemInstance.findUnique({ where: { id: from } }) : Promise.resolve(null),
+    getNextHwSku(),
   ])
 
   return (
@@ -34,6 +36,7 @@ export default async function NewItemPage({
         catalogModels={catalogModels}
         locations={locations}
         prefill={sourceItem ?? undefined}
+        suggestedSku={suggestedSku}
       />
     </>
   )

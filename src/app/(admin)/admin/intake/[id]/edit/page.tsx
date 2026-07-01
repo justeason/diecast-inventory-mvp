@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import type { CatalogModel } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
+import { getNextHwSku } from '@/lib/sku'
 import { IntakeDraftForm } from '@/components/admin/IntakeDraftForm'
 import { ConvertDraftForm } from '@/components/admin/ConvertDraftForm'
 import { ExtractPhotosButton } from '@/components/admin/ExtractPhotosButton'
@@ -38,23 +39,6 @@ const CONDITION_LABELS: Record<string, string> = {
   damaged: 'Damaged',
 }
 
-// Only counts SKUs matching exactly HW-#### (4 digits).
-const HW_SKU_RE = /^HW-(\d{4})$/
-
-async function getSkuSuggestion(): Promise<string> {
-  const items = await prisma.itemInstance.findMany({
-    where: { sku: { startsWith: 'HW-' } },
-    select: { sku: true },
-  })
-  const nums = items
-    .map((i) => {
-      const m = HW_SKU_RE.exec(i.sku)
-      return m ? parseInt(m[1], 10) : NaN
-    })
-    .filter((n): n is number => !isNaN(n))
-  const max = nums.length > 0 ? Math.max(...nums) : 0
-  return `HW-${String(max + 1).padStart(4, '0')}`
-}
 
 function buildListingTitle(draft: {
   brand: string | null
@@ -82,7 +66,7 @@ export default async function EditIntakeDraftPage({
       where: { id },
       include: { convertedItem: { select: { id: true, sku: true, listing: { select: { id: true } } } } },
     }),
-    getSkuSuggestion(),
+    getNextHwSku(),
   ])
   if (!draft) notFound()
 

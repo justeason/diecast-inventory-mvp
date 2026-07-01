@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import { useActionState } from 'react'
 import Link from 'next/link'
 import { CatalogModel, ItemInstance, StorageLocation } from '@prisma/client'
@@ -13,6 +14,7 @@ type Props = {
   catalogModels: CatalogModel[]
   locations: StorageLocation[]
   prefill?: ItemInstance
+  suggestedSku?: string
 }
 
 const CONDITION_OPTIONS = [
@@ -37,12 +39,15 @@ const CARDED_OPTIONS = [
   { value: 'loose', label: 'Loose' },
 ]
 
-export function ItemInstanceForm({ item, catalogModels, locations, prefill }: Props) {
+export function ItemInstanceForm({ item, catalogModels, locations, prefill, suggestedSku }: Props) {
   const action = item ? updateItemInstance.bind(null, item.id) : createItemInstance
   const [state, formAction, isPending] = useActionState<ItemActionState, FormData>(action, null)
 
   const isCreate = !item
   const src = prefill ?? item
+
+  // Controlled SKU state in create mode so we can offer a clickable suggestion.
+  const [sku, setSku] = useState(prefill ? '' : (item?.sku ?? ''))
 
   const catalogOptions = catalogModels.map((m) => ({
     value: m.id,
@@ -59,15 +64,30 @@ export function ItemInstanceForm({ item, catalogModels, locations, prefill }: Pr
 
   return (
     <form action={formAction} className="space-y-4 max-w-lg">
-      {/* SKU is always blank when duplicating so the user must enter a unique one */}
-      <Input
-        label="SKU"
-        name="sku"
-        required
-        defaultValue={prefill ? '' : (item?.sku ?? '')}
-        autoFocus={!!prefill}
-        error={state?.errors?.sku?.[0]}
-      />
+      <div className="flex flex-col gap-1">
+        {isCreate && suggestedSku && (
+          <p className="text-xs text-gray-500">
+            Suggested:{' '}
+            <button
+              type="button"
+              onClick={() => setSku(suggestedSku)}
+              className="font-mono text-indigo-600 hover:underline focus:outline-none"
+            >
+              {suggestedSku}
+            </button>
+            <span className="ml-1 text-gray-400">(click to use)</span>
+          </p>
+        )}
+        <Input
+          label="SKU"
+          name="sku"
+          required
+          value={sku}
+          onChange={(e) => setSku(e.target.value)}
+          autoFocus={!!prefill}
+          error={state?.errors?.sku?.[0]}
+        />
+      </div>
 
       <Select
         label="Catalog Model"
