@@ -66,6 +66,7 @@ export async function createItemInstance(
     }
     throw error
   }
+  if (formData.get('_redirect') === 'another') redirect('/admin/items/new')
   redirect('/admin/items')
 }
 

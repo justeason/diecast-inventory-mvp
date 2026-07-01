@@ -12,6 +12,7 @@ type Props = {
   item?: ItemInstance
   catalogModels: CatalogModel[]
   locations: StorageLocation[]
+  prefill?: ItemInstance
 }
 
 const CONDITION_OPTIONS = [
@@ -36,9 +37,12 @@ const CARDED_OPTIONS = [
   { value: 'loose', label: 'Loose' },
 ]
 
-export function ItemInstanceForm({ item, catalogModels, locations }: Props) {
+export function ItemInstanceForm({ item, catalogModels, locations, prefill }: Props) {
   const action = item ? updateItemInstance.bind(null, item.id) : createItemInstance
   const [state, formAction, isPending] = useActionState<ItemActionState, FormData>(action, null)
+
+  const isCreate = !item
+  const src = prefill ?? item
 
   const catalogOptions = catalogModels.map((m) => ({
     value: m.id,
@@ -50,16 +54,27 @@ export function ItemInstanceForm({ item, catalogModels, locations }: Props) {
     ...locations.map((l) => ({ value: l.id, label: l.label })),
   ]
 
+  // Status default: always 'available' when duplicating, otherwise use item value or 'draft'
+  const defaultStatus = prefill ? 'available' : (item?.status ?? 'draft')
+
   return (
     <form action={formAction} className="space-y-4 max-w-lg">
-      <Input label="SKU" name="sku" required defaultValue={item?.sku ?? ''} error={state?.errors?.sku?.[0]} />
+      {/* SKU is always blank when duplicating so the user must enter a unique one */}
+      <Input
+        label="SKU"
+        name="sku"
+        required
+        defaultValue={prefill ? '' : (item?.sku ?? '')}
+        autoFocus={!!prefill}
+        error={state?.errors?.sku?.[0]}
+      />
 
       <Select
         label="Catalog Model"
         name="catalogId"
         required
         options={catalogOptions}
-        defaultValue={item?.catalogId ?? ''}
+        defaultValue={src?.catalogId ?? ''}
         placeholder="Select a model…"
         error={state?.errors?.catalogId?.[0]}
       />
@@ -68,7 +83,7 @@ export function ItemInstanceForm({ item, catalogModels, locations }: Props) {
         label="Storage Location"
         name="locationId"
         options={locationOptions}
-        defaultValue={item?.locationId ?? ''}
+        defaultValue={src?.locationId ?? ''}
         error={state?.errors?.locationId?.[0]}
       />
 
@@ -77,7 +92,7 @@ export function ItemInstanceForm({ item, catalogModels, locations }: Props) {
         name="cardedOrLoose"
         required
         options={CARDED_OPTIONS}
-        defaultValue={item?.cardedOrLoose ?? ''}
+        defaultValue={src?.cardedOrLoose ?? ''}
         placeholder="Select…"
         error={state?.errors?.cardedOrLoose?.[0]}
       />
@@ -87,7 +102,7 @@ export function ItemInstanceForm({ item, catalogModels, locations }: Props) {
         name="condition"
         required
         options={CONDITION_OPTIONS}
-        defaultValue={item?.condition ?? ''}
+        defaultValue={src?.condition ?? ''}
         placeholder="Select…"
         error={state?.errors?.condition?.[0]}
       />
@@ -95,7 +110,7 @@ export function ItemInstanceForm({ item, catalogModels, locations }: Props) {
       <Input
         label="Condition Notes"
         name="conditionNotes"
-        defaultValue={item?.conditionNotes ?? ''}
+        defaultValue={src?.conditionNotes ?? ''}
         error={state?.errors?.conditionNotes?.[0]}
       />
 
@@ -105,7 +120,7 @@ export function ItemInstanceForm({ item, catalogModels, locations }: Props) {
         type="number"
         step="0.01"
         min="0"
-        defaultValue={item?.purchasePrice ?? ''}
+        defaultValue={src?.purchasePrice ?? ''}
         error={state?.errors?.purchasePrice?.[0]}
       />
 
@@ -115,7 +130,7 @@ export function ItemInstanceForm({ item, catalogModels, locations }: Props) {
         type="number"
         step="0.01"
         min="0"
-        defaultValue={item?.listPrice ?? ''}
+        defaultValue={src?.listPrice ?? ''}
         error={state?.errors?.listPrice?.[0]}
       />
 
@@ -124,16 +139,32 @@ export function ItemInstanceForm({ item, catalogModels, locations }: Props) {
         name="status"
         required
         options={STATUS_OPTIONS}
-        defaultValue={item?.status ?? 'draft'}
+        defaultValue={defaultStatus}
         error={state?.errors?.status?.[0]}
       />
 
-      <Input label="Notes" name="notes" defaultValue={item?.notes ?? ''} error={state?.errors?.notes?.[0]} />
+      <Input
+        label="Notes"
+        name="notes"
+        defaultValue={src?.notes ?? ''}
+        error={state?.errors?.notes?.[0]}
+      />
 
-      <div className="flex gap-3 pt-2">
+      <div className="flex flex-wrap gap-3 pt-2">
         <Button type="submit" disabled={isPending}>
           {isPending ? 'Saving…' : item ? 'Update Item' : 'Create Item'}
         </Button>
+        {isCreate && (
+          <Button
+            type="submit"
+            name="_redirect"
+            value="another"
+            variant="secondary"
+            disabled={isPending}
+          >
+            Save and create another
+          </Button>
+        )}
         <Link href="/admin/items">
           <Button type="button" variant="secondary">Cancel</Button>
         </Link>

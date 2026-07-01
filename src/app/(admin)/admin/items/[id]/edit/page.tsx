@@ -31,16 +31,29 @@ export default async function EditItemPage({
         <Link href="/admin/items" className="text-sm text-gray-500 hover:text-gray-900">
           ← Back to Items
         </Link>
-        <div className="flex items-baseline gap-4 mt-2">
+        <div className="flex items-baseline gap-4 mt-2 flex-wrap">
           <h1 className="text-2xl font-bold text-gray-900">Edit — {item.sku}</h1>
-          {item.listing && (
+          {item.listing ? (
             <Link
               href={`/admin/listings/${item.listing.id}/edit`}
               className="text-sm text-blue-600 hover:underline"
             >
               View Listing →
             </Link>
+          ) : (
+            <Link
+              href={`/admin/listings/new?itemId=${item.id}`}
+              className="text-sm text-green-700 hover:underline"
+            >
+              Create Listing →
+            </Link>
           )}
+          <Link
+            href={`/admin/items/new?from=${item.id}`}
+            className="text-sm text-gray-500 hover:underline"
+          >
+            Duplicate →
+          </Link>
         </div>
       </div>
 
