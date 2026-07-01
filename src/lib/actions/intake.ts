@@ -170,33 +170,51 @@ export async function convertDraft(
   const existing = await prisma.itemInstance.findUnique({ where: { sku } })
   if (existing) return { errors: { sku: ['SKU is already in use.'] } }
 
+  // Validate manually selected catalog model (if admin chose an override).
+  const selectedCatalogId = (formData.get('catalogModelId') as string)?.trim() || null
+  if (selectedCatalogId) {
+    const found = await prisma.catalogModel.findUnique({
+      where: { id: selectedCatalogId },
+      select: { id: true },
+    })
+    if (!found) {
+      return { errors: { form: ['Selected catalog model no longer exists. Please refresh and try again.'] } }
+    }
+  }
+
   let newItemId: string | undefined
   let newListingId: string | undefined
 
   try {
   await prisma.$transaction(async (tx) => {
-    // 1. Exact-match lookup on all identity fields; null matches null.
-    let catalog = await tx.catalogModel.findFirst({
-      where: {
-        brand,
-        name,
-        year:   draft.year   ?? null,
-        series: trimOrNull(draft.series),
-        color:  trimOrNull(draft.color),
-        scale:  trimOrNull(draft.scale),
-      },
-    })
-    if (!catalog) {
-      catalog = await tx.catalogModel.create({
-        data: {
+    // 1. Resolve catalog model — use admin override if provided, else exact-match or create.
+    let catalog: { id: string }
+    if (selectedCatalogId) {
+      catalog = { id: selectedCatalogId }
+    } else {
+      let found = await tx.catalogModel.findFirst({
+        where: {
           brand,
           name,
-          year:   draft.year            ?? undefined,
-          series: trimOrNull(draft.series) ?? undefined,
-          color:  trimOrNull(draft.color)  ?? undefined,
-          scale:  trimOrNull(draft.scale)  ?? undefined,
+          year:   draft.year   ?? null,
+          series: trimOrNull(draft.series),
+          color:  trimOrNull(draft.color),
+          scale:  trimOrNull(draft.scale),
         },
       })
+      if (!found) {
+        found = await tx.catalogModel.create({
+          data: {
+            brand,
+            name,
+            year:   draft.year            ?? undefined,
+            series: trimOrNull(draft.series) ?? undefined,
+            color:  trimOrNull(draft.color)  ?? undefined,
+            scale:  trimOrNull(draft.scale)  ?? undefined,
+          },
+        })
+      }
+      catalog = found
     }
 
     // 2. Look up or create StorageLocation by trimmed label.

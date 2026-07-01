@@ -5,11 +5,29 @@ import { useActionState } from 'react'
 import { useFormStatus } from 'react-dom'
 import type { ConvertActionState } from '@/lib/actions/intake'
 
+type CatalogModelSummary = {
+  id: string
+  brand: string
+  name: string
+  year: number | null
+  series: string | null
+  color: string | null
+  scale: string | null
+}
+
 type Props = {
   action: (prev: ConvertActionState, formData: FormData) => Promise<ConvertActionState>
   suggestedSku?: string
   suggestedTitle?: string
   suggestedPrice?: number | null
+  exactCatalogMatch?: CatalogModelSummary | null
+  similarCatalogModels?: CatalogModelSummary[]
+}
+
+function formatModel(m: CatalogModelSummary): string {
+  return [m.brand, m.name, m.year?.toString(), m.series, m.color, m.scale]
+    .filter(Boolean)
+    .join(' · ')
 }
 
 function ConvertButton({ label }: { label: string }) {
@@ -25,7 +43,14 @@ function ConvertButton({ label }: { label: string }) {
   )
 }
 
-export function ConvertDraftForm({ action, suggestedSku, suggestedTitle, suggestedPrice }: Props) {
+export function ConvertDraftForm({
+  action,
+  suggestedSku,
+  suggestedTitle,
+  suggestedPrice,
+  exactCatalogMatch,
+  similarCatalogModels = [],
+}: Props) {
   const [state, formAction] = useActionState<ConvertActionState, FormData>(action, null)
   const errors = state && 'errors' in state ? state.errors : {}
 
@@ -38,6 +63,52 @@ export function ConvertDraftForm({ action, suggestedSku, suggestedTitle, suggest
         <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-md px-3 py-2">
           {errors.form[0]}
         </p>
+      )}
+
+      {/* Catalog model match status */}
+      {exactCatalogMatch ? (
+        /* Case A: exact match — will reuse, no choice needed */
+        <div className="rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm">
+          <p className="font-medium text-green-800 mb-0.5">✓ Will reuse existing catalog model</p>
+          <p className="text-green-700 font-mono text-xs">{formatModel(exactCatalogMatch)}</p>
+          <input type="hidden" name="catalogModelId" value={exactCatalogMatch.id} />
+        </div>
+      ) : similarCatalogModels.length > 0 ? (
+        /* Case B: no exact match but similar models exist — let admin choose */
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm space-y-3">
+          <p className="font-medium text-amber-800">
+            ⚠ No exact match — will create a new catalog model unless you select one below.
+          </p>
+          <div className="space-y-2">
+            {similarCatalogModels.map((m) => (
+              <label key={m.id} className="flex items-start gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name="catalogModelId"
+                  value={m.id}
+                  className="mt-0.5 accent-amber-700"
+                />
+                <span className="text-amber-900 font-mono text-xs">{formatModel(m)}</span>
+              </label>
+            ))}
+            <label className="flex items-start gap-2 cursor-pointer">
+              <input
+                type="radio"
+                name="catalogModelId"
+                value=""
+                defaultChecked
+                className="mt-0.5 accent-amber-700"
+              />
+              <span className="text-amber-900 font-medium">Create a new catalog model</span>
+            </label>
+          </div>
+        </div>
+      ) : (
+        /* Case C: no match, no similar — will create new */
+        <div className="rounded-md border border-gray-200 bg-gray-50 px-4 py-3 text-sm">
+          <p className="text-gray-500">○ No existing catalog model found — a new one will be created.</p>
+          <input type="hidden" name="catalogModelId" value="" />
+        </div>
       )}
 
       {/* SKU input with suggestion */}
