@@ -569,10 +569,6 @@ export async function uploadIntakePhoto(
   if (!ALLOWED_MIME[file.type]) return { error: 'Only JPEG, PNG, and WebP images are allowed.' }
   if (file.size > MAX_FILE_SIZE) return { error: 'File must be 5 MB or smaller.' }
 
-  if (!process.env.BLOB_READ_WRITE_TOKEN) {
-    return { error: 'BLOB_READ_WRITE_TOKEN is not configured. Add it to .env.local.' }
-  }
-
   const url = await uploadPhotoToBlob(draftId, field, file)
   if (!url) return { error: 'Upload failed. Please try again.' }
 
