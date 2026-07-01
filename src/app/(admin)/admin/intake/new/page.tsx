@@ -16,10 +16,7 @@ export default async function NewIntakeDraftPage({
           ← Back to Intake
         </Link>
       </div>
-      <h1 className="text-2xl font-bold text-gray-900 mb-2">New Intake Draft</h1>
-      <p className="text-sm text-gray-500 mb-6">
-        Fill in what you know now and save. You can upload photos and use AI extraction on the next page.
-      </p>
+      <h1 className="text-2xl font-bold text-gray-900 mb-6">New Intake Draft</h1>
 
       {created === '1' && (
         <div className="mb-6 rounded-md bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-800">
@@ -32,6 +29,7 @@ export default async function NewIntakeDraftPage({
           action={createIntakeDraft}
           submitLabel="Create Draft"
           showCreateAnother
+          showPhotoInputs
         />
       </div>
     </>

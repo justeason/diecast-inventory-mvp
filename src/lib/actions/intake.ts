@@ -71,10 +71,51 @@ export async function createIntakeDraft(
   if (!result.success) {
     return { errors: result.error.flatten().fieldErrors as Record<string, string[]> }
   }
+
+  // Validate any selected photo files before creating the draft — keeps the
+  // draft unborn if the user picks a bad file.
+  const frontRaw  = formData.get('photo_front')
+  const backRaw   = formData.get('photo_back')
+  const frontPhoto = frontRaw instanceof File && frontRaw.size > 0 ? frontRaw : null
+  const backPhoto  = backRaw  instanceof File && backRaw.size  > 0 ? backRaw  : null
+
+  if (frontPhoto) {
+    if (!ALLOWED_MIME[frontPhoto.type]) return { errors: { photo_front: ['Only JPEG, PNG, and WebP images are allowed.'] } }
+    if (frontPhoto.size > MAX_FILE_SIZE) return { errors: { photo_front: ['File must be 5 MB or smaller.'] } }
+  }
+  if (backPhoto) {
+    if (!ALLOWED_MIME[backPhoto.type]) return { errors: { photo_back: ['Only JPEG, PNG, and WebP images are allowed.'] } }
+    if (backPhoto.size > MAX_FILE_SIZE) return { errors: { photo_back: ['File must be 5 MB or smaller.'] } }
+  }
+
+  // Create the draft.
   const draft = await prisma.intakeDraft.create({ data: toDraftDbData(result.data) })
+
+  // Upload photos in parallel (draft must exist first so the ID is available for the Blob path).
+  let photoUploadFailed = false
+  if (frontPhoto || backPhoto) {
+    const [frontUrl, backUrl] = await Promise.all([
+      frontPhoto ? uploadPhotoToBlob(draft.id, 'front', frontPhoto) : Promise.resolve(null),
+      backPhoto  ? uploadPhotoToBlob(draft.id, 'back',  backPhoto)  : Promise.resolve(null),
+    ])
+
+    const updates: { frontPhotoUrl?: string; backPhotoUrl?: string } = {}
+    if (frontUrl) updates.frontPhotoUrl = frontUrl
+    if (backUrl)  updates.backPhotoUrl  = backUrl
+    if (Object.keys(updates).length > 0) {
+      await prisma.intakeDraft.update({ where: { id: draft.id }, data: updates })
+    }
+
+    if ((frontPhoto && !frontUrl) || (backPhoto && !backUrl)) {
+      photoUploadFailed = true
+    }
+  }
 
   if (createAnother) {
     redirect('/admin/intake/new?created=1')
+  }
+  if (photoUploadFailed) {
+    redirect(`/admin/intake/${draft.id}/edit?photoError=1`)
   }
   redirect(`/admin/intake/${draft.id}/edit`)
 }
@@ -485,6 +526,26 @@ const ALLOWED_MIME: Record<string, string> = {
 }
 const MAX_FILE_SIZE = 5 * 1024 * 1024 // 5 MB
 
+// Uploads a validated File to Vercel Blob and returns the public URL, or null on failure.
+// Callers are responsible for validating file type/size before calling.
+async function uploadPhotoToBlob(
+  draftId: string,
+  field: 'front' | 'back',
+  file: File
+): Promise<string | null> {
+  const ext = ALLOWED_MIME[file.type]
+  const pathname = `intake/${draftId}/${Date.now()}-${field}.${ext}`
+  try {
+    console.log('[uploadPhotoToBlob] Uploading to Vercel Blob:', pathname)
+    const blob = await put(pathname, file, { access: 'public', contentType: file.type })
+    console.log('[uploadPhotoToBlob] blob.url:', blob.url)
+    return blob.url
+  } catch (err) {
+    console.error(`[uploadPhotoToBlob] Failed to upload ${field} photo for draft ${draftId}:`, err)
+    return null
+  }
+}
+
 export async function uploadIntakePhoto(
   draftId: string,
   field: 'front' | 'back',
@@ -505,33 +566,18 @@ export async function uploadIntakePhoto(
     return { error: 'No file selected.' }
   }
 
-  const ext = ALLOWED_MIME[file.type]
-  if (!ext) return { error: 'Only JPEG, PNG, and WebP images are allowed.' }
+  if (!ALLOWED_MIME[file.type]) return { error: 'Only JPEG, PNG, and WebP images are allowed.' }
   if (file.size > MAX_FILE_SIZE) return { error: 'File must be 5 MB or smaller.' }
 
   if (!process.env.BLOB_READ_WRITE_TOKEN) {
     return { error: 'BLOB_READ_WRITE_TOKEN is not configured. Add it to .env.local.' }
   }
 
-  // Pathname is generated server-side; the original filename is never used.
-  const pathname = `intake/${draftId}/${Date.now()}-${field}.${ext}`
-
-  console.log('[uploadIntakePhoto] Uploading to Vercel Blob:', pathname)
-
-  let blob: Awaited<ReturnType<typeof put>>
-  try {
-    blob = await put(pathname, file, { access: 'public', contentType: file.type })
-  } catch (err) {
-    console.error('[uploadIntakePhoto] Blob upload failed:', err)
-    return {
-      error: `Upload failed: ${err instanceof Error ? err.message : String(err)}`,
-    }
-  }
-
-  console.log('[uploadIntakePhoto] blob.url:', blob.url)
+  const url = await uploadPhotoToBlob(draftId, field, file)
+  if (!url) return { error: 'Upload failed. Please try again.' }
 
   const dbField = field === 'front' ? 'frontPhotoUrl' : 'backPhotoUrl'
-  await prisma.intakeDraft.update({ where: { id: draftId }, data: { [dbField]: blob.url } })
+  await prisma.intakeDraft.update({ where: { id: draftId }, data: { [dbField]: url } })
 
   redirect(`/admin/intake/${draftId}/edit`)
 }

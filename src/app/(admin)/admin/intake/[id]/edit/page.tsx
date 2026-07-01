@@ -56,10 +56,13 @@ function buildListingTitle(draft: {
 
 export default async function EditIntakeDraftPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>
+  searchParams: Promise<{ photoError?: string }>
 }) {
   const { id } = await params
+  const { photoError } = await searchParams
 
   const [draft, suggestedSku] = await Promise.all([
     prisma.intakeDraft.findUnique({
@@ -164,6 +167,13 @@ export default async function EditIntakeDraftPage({
       {draft.status === 'rejected' && (
         <div className="mb-6 rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-800">
           This draft has been rejected and cannot be edited or converted.
+        </div>
+      )}
+
+      {/* Photo upload error — shown when draft was just created but one or more photos failed to upload */}
+      {photoError === '1' && (
+        <div className="mb-6 rounded-md bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800">
+          Draft created, but one or more photos failed to upload. You can upload them below.
         </div>
       )}
 

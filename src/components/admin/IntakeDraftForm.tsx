@@ -42,6 +42,7 @@ type Props = {
   defaultValues?: DraftValues
   submitLabel?: string
   showCreateAnother?: boolean
+  showPhotoInputs?: boolean
 }
 
 function SubmitButtons({
@@ -83,6 +84,7 @@ export function IntakeDraftForm({
   defaultValues,
   submitLabel = 'Save Draft',
   showCreateAnother,
+  showPhotoInputs,
 }: Props) {
   const [state, formAction] = useActionState<IntakeActionState, FormData>(action, null)
   const errors = state && 'errors' in state ? state.errors : {}
@@ -95,28 +97,61 @@ export function IntakeDraftForm({
         </p>
       )}
 
-      {/* Photo URLs */}
-      <div>
-        <h3 className="text-sm font-semibold text-gray-700 mb-3">Photos (URLs)</h3>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Input
-            label="Front Photo URL"
-            name="frontPhotoUrl"
-            type="url"
-            defaultValue={defaultValues?.frontPhotoUrl ?? ''}
-            placeholder="https://..."
-            error={errors.frontPhotoUrl?.[0]}
-          />
-          <Input
-            label="Back Photo URL"
-            name="backPhotoUrl"
-            type="url"
-            defaultValue={defaultValues?.backPhotoUrl ?? ''}
-            placeholder="https://..."
-            error={errors.backPhotoUrl?.[0]}
-          />
+      {/* Photos — file inputs in create mode, URL fields in edit mode */}
+      {showPhotoInputs ? (
+        <div>
+          <h3 className="text-sm font-semibold text-gray-700 mb-1">Photos</h3>
+          <p className="text-xs text-gray-500 mb-3">Optional — JPEG, PNG, or WebP, max 5 MB each.</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="flex flex-col gap-1">
+              <label className="text-sm font-medium text-gray-700">Front Photo</label>
+              <input
+                type="file"
+                name="photo_front"
+                accept="image/jpeg,image/png,image/webp"
+                className="text-sm text-gray-600 file:mr-2 file:rounded-md file:border-0 file:bg-gray-100 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-gray-700 hover:file:bg-gray-200 cursor-pointer"
+              />
+              {errors.photo_front && (
+                <p className="mt-0.5 text-xs text-red-600">{errors.photo_front[0]}</p>
+              )}
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-sm font-medium text-gray-700">Back Photo</label>
+              <input
+                type="file"
+                name="photo_back"
+                accept="image/jpeg,image/png,image/webp"
+                className="text-sm text-gray-600 file:mr-2 file:rounded-md file:border-0 file:bg-gray-100 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-gray-700 hover:file:bg-gray-200 cursor-pointer"
+              />
+              {errors.photo_back && (
+                <p className="mt-0.5 text-xs text-red-600">{errors.photo_back[0]}</p>
+              )}
+            </div>
+          </div>
         </div>
-      </div>
+      ) : (
+        <div>
+          <h3 className="text-sm font-semibold text-gray-700 mb-3">Photos (URLs)</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <Input
+              label="Front Photo URL"
+              name="frontPhotoUrl"
+              type="url"
+              defaultValue={defaultValues?.frontPhotoUrl ?? ''}
+              placeholder="https://..."
+              error={errors.frontPhotoUrl?.[0]}
+            />
+            <Input
+              label="Back Photo URL"
+              name="backPhotoUrl"
+              type="url"
+              defaultValue={defaultValues?.backPhotoUrl ?? ''}
+              placeholder="https://..."
+              error={errors.backPhotoUrl?.[0]}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Model info */}
       <div>
