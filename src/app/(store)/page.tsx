@@ -1,4 +1,11 @@
+import type { Metadata } from 'next'
 import Link from 'next/link'
+
+export const metadata: Metadata = {
+  title: 'CollectNTrades | Die-Cast Cars, Collectibles & Trading Cards',
+  description:
+    'Shop collectible die-cast cars, Hot Wheels, Matchbox, Pokémon cards, and more from CollectNTrades.',
+}
 
 export default function HomePage() {
   return (

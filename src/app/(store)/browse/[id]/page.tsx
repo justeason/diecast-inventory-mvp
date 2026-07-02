@@ -1,3 +1,4 @@
+import type { Metadata } from 'next'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { prisma } from '@/lib/prisma'
@@ -12,6 +13,55 @@ const CONDITION_LABELS: Record<string, string> = {
   fair: 'Fair',
   poor: 'Poor',
   damaged: 'Damaged',
+}
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ id: string }>
+}): Promise<Metadata> {
+  const { id } = await params
+
+  const listing = await prisma.listing.findUnique({
+    where: { id },
+    select: {
+      title: true,
+      price: true,
+      status: true,
+      item: {
+        select: {
+          status: true,
+          condition: true,
+          cardedOrLoose: true,
+          catalog: { select: { brand: true, name: true } },
+          photos: { where: { type: 'front' }, take: 1, select: { url: true } },
+        },
+      },
+    },
+  })
+
+  if (!listing || listing.status !== 'active' || listing.item.status !== 'available') {
+    return { title: 'CollectNTrades' }
+  }
+
+  const { item } = listing
+  const parts: string[] = [`${item.catalog.brand} ${item.catalog.name}`]
+  if (item.condition) parts.push(CONDITION_LABELS[item.condition] ?? item.condition)
+  if (item.cardedOrLoose) parts.push(item.cardedOrLoose === 'carded' ? 'carded' : 'loose')
+  const description = `${parts.join(', ')}. $${listing.price.toFixed(2)}. Available at CollectNTrades.`
+  const title = `${listing.title} | CollectNTrades`
+  const photoUrl = item.photos[0]?.url ?? null
+
+  return {
+    title,
+    description,
+    openGraph: {
+      title,
+      description,
+      type: 'website',
+      ...(photoUrl ? { images: [{ url: photoUrl }] } : {}),
+    },
+  }
 }
 
 export default async function ListingDetailPage({

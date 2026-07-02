@@ -1,7 +1,13 @@
+import type { Metadata } from 'next'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { prisma } from '@/lib/prisma'
 import { PhotoThumbnail } from '@/components/shared/PhotoThumbnail'
+
+export const metadata: Metadata = {
+  title: 'Order Confirmation | CollectNTrades',
+  robots: { index: false, follow: false },
+}
 
 const STATUS_LABELS: Record<string, string> = {
   pending: 'Pending',

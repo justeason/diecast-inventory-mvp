@@ -1,5 +1,11 @@
+import type { Metadata } from 'next'
 import Link from 'next/link'
 import { Prisma } from '@prisma/client'
+
+export const metadata: Metadata = {
+  title: 'Browse Collectibles | CollectNTrades',
+  description: 'Browse available die-cast cars, collectibles, and trading cards.',
+}
 import { prisma } from '@/lib/prisma'
 import { SearchFilterBar } from '@/components/store/SearchFilterBar'
 import { ListingCard } from '@/components/store/ListingCard'

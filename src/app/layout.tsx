@@ -5,8 +5,13 @@ import './globals.css'
 const geist = Geist({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: 'Diecast Inventory',
-  description: 'Internal inventory and marketplace for diecast cars',
+  metadataBase: new URL(process.env.APP_URL ?? 'https://collectntrades.com'),
+  title: {
+    default: 'CollectNTrades | Die-Cast Cars, Collectibles & Trading Cards',
+    template: '%s',
+  },
+  description:
+    'Shop collectible die-cast cars, Hot Wheels, Matchbox, Pokémon cards, and more from CollectNTrades.',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
