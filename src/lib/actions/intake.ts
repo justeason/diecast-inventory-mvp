@@ -1,6 +1,6 @@
 'use server'
 
-import { put } from '@vercel/blob'
+import { put, del } from '@vercel/blob'
 import Anthropic from '@anthropic-ai/sdk'
 import { z } from 'zod'
 import { Prisma } from '@prisma/client'
@@ -554,7 +554,7 @@ export async function uploadIntakePhoto(
 ): Promise<UploadActionState> {
   const draft = await prisma.intakeDraft.findUnique({
     where: { id: draftId },
-    select: { status: true },
+    select: { status: true, frontPhotoUrl: true, backPhotoUrl: true },
   })
   if (!draft) return { error: 'Draft not found.' }
   if (draft.status === 'converted' || draft.status === 'rejected') {
@@ -573,7 +573,16 @@ export async function uploadIntakePhoto(
   if (!url) return { error: 'Upload failed. Please try again.' }
 
   const dbField = field === 'front' ? 'frontPhotoUrl' : 'backPhotoUrl'
+  const oldUrl = draft[dbField]
   await prisma.intakeDraft.update({ where: { id: draftId }, data: { [dbField]: url } })
+
+  if (oldUrl) {
+    try {
+      await del(oldUrl)
+    } catch (err) {
+      console.error(`[uploadIntakePhoto] Failed to delete old blob for draft ${draftId} (${field}):`, err)
+    }
+  }
 
   redirect(`/admin/intake/${draftId}/edit`)
 }
