@@ -4,6 +4,8 @@ import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { redirect } from 'next/navigation'
 
+export type MergeActionState = { errors: Record<string, string[]> } | null
+
 const CatalogSchema = z.object({
   brand: z.string().min(1, 'Brand is required'),
   name: z.string().min(1, 'Name is required'),
@@ -49,4 +51,55 @@ export async function updateCatalogModel(
 
   await prisma.catalogModel.update({ where: { id }, data: toDbData(result.data) })
   redirect('/admin/catalog')
+}
+
+export async function mergeCatalogModels(
+  _prev: MergeActionState,
+  formData: FormData
+): Promise<MergeActionState> {
+  const canonicalId   = (formData.get('canonicalId') as string)?.trim() || ''
+  const duplicateIds  = formData.getAll('duplicateId')
+    .map((v) => (v as string).trim())
+    .filter(Boolean)
+
+  if (!canonicalId)         return { errors: { form: ['No canonical model selected.'] } }
+  if (duplicateIds.length === 0) return { errors: { form: ['No duplicate models selected.'] } }
+  if (duplicateIds.includes(canonicalId))
+    return { errors: { form: ['The canonical model cannot also be in the merge list.'] } }
+
+  // Load all involved models — validates they exist and share the same normalized brand+name.
+  const allIds = [canonicalId, ...duplicateIds]
+  const models = await prisma.catalogModel.findMany({
+    where: { id: { in: allIds } },
+    select: { id: true, brand: true, name: true },
+  })
+
+  if (models.length !== allIds.length)
+    return { errors: { form: ['One or more selected models no longer exist. Please refresh and try again.'] } }
+
+  const canonical = models.find((m) => m.id === canonicalId)!
+  const targetBrand = canonical.brand.trim().toLowerCase()
+  const targetName  = canonical.name.trim().toLowerCase()
+
+  for (const m of models) {
+    if (m.brand.trim().toLowerCase() !== targetBrand || m.name.trim().toLowerCase() !== targetName)
+      return { errors: { form: ['All selected models must share the same brand and name.'] } }
+  }
+
+  // Move items then delete duplicates — all in one transaction.
+  try {
+    await prisma.$transaction(async (tx) => {
+      for (const dupeId of duplicateIds) {
+        await tx.itemInstance.updateMany({
+          where: { catalogId: dupeId },
+          data:  { catalogId: canonicalId },
+        })
+        await tx.catalogModel.delete({ where: { id: dupeId } })
+      }
+    })
+  } catch {
+    return { errors: { form: ['Merge failed. Please try again.'] } }
+  }
+
+  redirect('/admin/catalog/duplicates')
 }

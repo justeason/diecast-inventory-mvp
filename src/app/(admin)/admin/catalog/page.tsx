@@ -11,12 +11,17 @@ export default async function AdminCatalogPage() {
     <>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Catalog Models</h1>
-        <Link
-          href="/admin/catalog/new"
-          className="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700"
-        >
-          New Model
-        </Link>
+        <div className="flex items-center gap-4">
+          <Link href="/admin/catalog/duplicates" className="text-sm text-gray-600 hover:text-gray-900">
+            Find Duplicates →
+          </Link>
+          <Link
+            href="/admin/catalog/new"
+            className="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700"
+          >
+            New Model
+          </Link>
+        </div>
       </div>
 
       {models.length === 0 ? (
