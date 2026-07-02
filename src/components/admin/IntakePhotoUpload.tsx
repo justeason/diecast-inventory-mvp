@@ -51,6 +51,7 @@ export function IntakePhotoUpload({ label, currentUrl, action }: Props) {
           type="file"
           name="photo"
           accept="image/jpeg,image/png,image/webp"
+          capture="environment"
           className="text-sm text-gray-600 file:mr-2 file:rounded-md file:border-0 file:bg-gray-100 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-gray-700 hover:file:bg-gray-200 cursor-pointer"
         />
         <UploadButton />
