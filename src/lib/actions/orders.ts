@@ -130,6 +130,57 @@ export async function updateOrderReviewFields(
   redirect(`/admin/orders/${id}`)
 }
 
+// ─── Order payment fields ─────────────────────────────────────────────────────
+
+const VALID_PAYMENT_STATUSES = ['unpaid', 'requested', 'paid'] as const
+
+export type OrderPaymentActionState =
+  | { success: true }
+  | { errors: Record<string, string[]> }
+  | null
+
+export async function updateOrderPayment(
+  id: string,
+  _prev: OrderPaymentActionState,
+  formData: FormData
+): Promise<OrderPaymentActionState> {
+  const paymentStatus = (formData.get('paymentStatus') as string).trim()
+  if (!VALID_PAYMENT_STATUSES.includes(paymentStatus as typeof VALID_PAYMENT_STATUSES[number])) {
+    return { errors: { paymentStatus: ['Invalid payment status.'] } }
+  }
+
+  const paymentMethod    = (formData.get('paymentMethod')    as string).trim() || null
+  const paymentReference = (formData.get('paymentReference') as string).trim() || null
+  const paymentLink      = (formData.get('paymentLink')      as string).trim() || null
+
+  const rawRequestedAt = (formData.get('paymentRequestedAt') as string).trim()
+  const rawPaidAt      = (formData.get('paidAt')             as string).trim()
+
+  let paymentRequestedAt: Date | null = null
+  if (rawRequestedAt) {
+    const d = new Date(rawRequestedAt)
+    if (isNaN(d.getTime())) return { errors: { paymentRequestedAt: ['Invalid date.'] } }
+    paymentRequestedAt = d
+  }
+
+  let paidAt: Date | null = null
+  if (rawPaidAt) {
+    const d = new Date(rawPaidAt)
+    if (isNaN(d.getTime())) return { errors: { paidAt: ['Invalid date.'] } }
+    paidAt = d
+  }
+
+  const order = await prisma.order.findUnique({ where: { id }, select: { id: true } })
+  if (!order) return { errors: { form: ['Order not found.'] } }
+
+  await prisma.order.update({
+    where: { id },
+    data: { paymentStatus, paymentMethod, paymentReference, paymentLink, paymentRequestedAt, paidAt },
+  })
+
+  redirect(`/admin/orders/${id}`)
+}
+
 // ─── Order status management ────────────────────────────────────────────────
 
 const VALID_ORDER_STATUSES = ['pending', 'paid', 'picking', 'shipped', 'complete', 'cancelled']

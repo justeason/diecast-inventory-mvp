@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation'
 import { prisma } from '@/lib/prisma'
 import { OrderStatusForm } from '@/components/admin/OrderStatusForm'
 import { OrderReviewForm } from '@/components/admin/OrderReviewForm'
+import { OrderPaymentForm } from '@/components/admin/OrderPaymentForm'
 import { PhotoThumbnail } from '@/components/shared/PhotoThumbnail'
 
 const CONDITION_LABELS: Record<string, string> = {
@@ -163,6 +164,23 @@ export default async function AdminOrderDetailPage({
           estimatedShipping={order.estimatedShipping}
           adminNotes={order.adminNotes}
           followUpNotes={order.followUpNotes}
+        />
+      </div>
+
+      {/* Payment */}
+      <div className="mb-8 rounded-md border border-gray-200 bg-white p-6">
+        <h2 className="text-lg font-semibold text-gray-900 mb-1">Payment</h2>
+        <p className="text-xs text-gray-500 mb-4">
+          Track payment details manually. This does not automatically update order status.
+        </p>
+        <OrderPaymentForm
+          orderId={order.id}
+          paymentStatus={order.paymentStatus}
+          paymentMethod={order.paymentMethod}
+          paymentReference={order.paymentReference}
+          paymentLink={order.paymentLink}
+          paymentRequestedAt={order.paymentRequestedAt}
+          paidAt={order.paidAt}
         />
       </div>
 
