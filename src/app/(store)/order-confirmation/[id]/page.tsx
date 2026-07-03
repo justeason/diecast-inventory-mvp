@@ -85,10 +85,17 @@ export default async function OrderConfirmationPage({
           you to confirm availability and arrange payment and shipping.
         </div>
 
-        {/* Order reference */}
+        {/* Order ID */}
         <div className="rounded-md border border-gray-200 bg-gray-50 px-4 py-3 text-sm mb-6">
-          <span className="text-gray-500">Order reference: </span>
-          <span className="font-mono text-xs break-all text-gray-900">{order.id}</span>
+          <p className="text-gray-500 mb-1">Order ID</p>
+          <p className="font-mono text-xs break-all text-gray-900 mb-2">{order.id}</p>
+          <p className="text-xs text-gray-400">
+            Save this order ID. You can use it with your email to check your order status at{' '}
+            <a href="/order-status" className="underline hover:text-gray-600">
+              collectntrades.com/order-status
+            </a>
+            .
+          </p>
         </div>
 
         {/* Items */}

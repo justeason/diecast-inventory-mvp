@@ -89,6 +89,7 @@ export default async function AdminOrderDetailPage({
           <p className="text-sm text-gray-500 mt-1">
             Submitted {order.createdAt.toLocaleDateString()}
           </p>
+          <p className="text-xs text-gray-400 font-mono mt-1 break-all">ID: {order.id}</p>
         </div>
         <span
           className={`inline-flex items-center rounded-full px-3 py-1 text-sm font-medium ${STATUS_COLORS[order.status] ?? 'bg-gray-100 text-gray-600'}`}
