@@ -9,6 +9,7 @@ const navLinks = [
   { href: '/admin/listings', label: 'Listings' },
   { href: '/admin/orders', label: 'Orders' },
   { href: '/admin/intake', label: 'Intake' },
+  { href: '/admin/analytics', label: 'Analytics' },
 ]
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
