@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { OrderStatusForm } from '@/components/admin/OrderStatusForm'
 import { OrderReviewForm } from '@/components/admin/OrderReviewForm'
 import { OrderPaymentForm } from '@/components/admin/OrderPaymentForm'
+import { StripePaymentPanel } from '@/components/admin/StripePaymentPanel'
 import { PhotoThumbnail } from '@/components/shared/PhotoThumbnail'
 
 const CONDITION_LABELS: Record<string, string> = {
@@ -168,11 +169,33 @@ export default async function AdminOrderDetailPage({
         />
       </div>
 
-      {/* Payment */}
+      {/* Stripe Payment */}
       <div className="mb-8 rounded-md border border-gray-200 bg-white p-6">
-        <h2 className="text-lg font-semibold text-gray-900 mb-1">Payment</h2>
+        <h2 className="text-lg font-semibold text-gray-900 mb-1">Stripe Payment</h2>
         <p className="text-xs text-gray-500 mb-4">
-          Track payment details manually. This does not automatically update order status.
+          Generate a Stripe Checkout link and email it to the buyer. Requires shipping amount above.
+        </p>
+        <StripePaymentPanel
+          orderId={order.id}
+          orderStatus={order.status}
+          estimatedShipping={order.estimatedShipping}
+          paymentStatus={order.paymentStatus}
+          paymentMethod={order.paymentMethod}
+          paymentLink={order.paymentLink}
+          stripeSessionId={order.stripeSessionId}
+          stripeSessionExpiresAt={order.stripeSessionExpiresAt}
+          stripePaymentIntentId={order.stripePaymentIntentId}
+          paidAt={order.paidAt}
+          buyerEmail={order.buyerEmail}
+          subtotal={subtotal}
+        />
+      </div>
+
+      {/* Manual Payment Override */}
+      <div className="mb-8 rounded-md border border-gray-200 bg-white p-6">
+        <h2 className="text-lg font-semibold text-gray-900 mb-1">Manual Payment Override</h2>
+        <p className="text-xs text-gray-500 mb-4">
+          For Venmo, Zelle, cash, or other non-Stripe payments. Not needed when using Stripe above.
         </p>
         <OrderPaymentForm
           orderId={order.id}

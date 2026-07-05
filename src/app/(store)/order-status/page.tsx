@@ -98,6 +98,8 @@ export default async function OrderStatusPage({
     notes: string | null
     estimatedShipping: number | null
     createdAt: Date
+    paymentStatus: string
+    paymentMethod: string | null
     orderItems: Array<{ price: number; listing: { title: string } }>
   } | null = null
 
@@ -108,11 +110,13 @@ export default async function OrderStatusPage({
         buyerEmail: { equals: email, mode: 'insensitive' },
       },
       select: {
-        buyerName:        true,
-        status:           true,
-        notes:            true,
+        buyerName:         true,
+        status:            true,
+        notes:             true,
         estimatedShipping: true,
-        createdAt:        true,
+        createdAt:         true,
+        paymentStatus:     true,
+        paymentMethod:     true,
         orderItems: {
           select: {
             price:   true,
@@ -162,6 +166,12 @@ export default async function OrderStatusPage({
               {STATUS_LABELS[order.status] ?? order.status}
             </span>
           </div>
+
+          {order.paymentStatus === 'paid' && order.paymentMethod === 'stripe' && (
+            <p className="text-sm text-green-700 font-medium">
+              Payment confirmed via Stripe.
+            </p>
+          )}
 
           {STATUS_DESCRIPTIONS[order.status] && (
             <p className="text-sm text-gray-700">

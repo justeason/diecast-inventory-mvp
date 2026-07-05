@@ -3,6 +3,7 @@
 import { z } from 'zod'
 import { redirect } from 'next/navigation'
 import { prisma } from '@/lib/prisma'
+import { stripe } from '@/lib/stripe'
 
 const OrderSchema = z.object({
   buyerName: z.string().min(1, 'Name is required'),
@@ -202,7 +203,8 @@ export async function updateOrderStatus(
 
   const order = await prisma.order.findUnique({
     where: { id },
-    include: {
+    select: {
+      stripeSessionId: true,
       orderItems: { select: { itemId: true, listingId: true } },
     },
   })
@@ -227,6 +229,15 @@ export async function updateOrderStatus(
       })
       // Listings remain active so items can be re-listed if the order is cancelled.
     })
+
+    // After DB transaction: expire any active Stripe session (fire-and-forget)
+    if (order.stripeSessionId) {
+      try {
+        await stripe.checkout.sessions.expire(order.stripeSessionId)
+      } catch {
+        // Session may already be expired — not a blocking failure
+      }
+    }
   } else if (status === 'complete') {
     await prisma.$transaction(async (tx) => {
       await tx.order.update({ where: { id }, data: { status: 'complete' } })

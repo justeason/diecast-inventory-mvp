@@ -90,9 +90,12 @@ model Order {
   paymentMethod      String?
   paymentReference   String?
   paymentLink        String?
-  paymentRequestedAt DateTime?
-  paidAt             DateTime?
-  createdAt          DateTime    @default(now())
+  paymentRequestedAt     DateTime?
+  paidAt                 DateTime?
+  stripeSessionId        String?
+  stripeSessionExpiresAt DateTime?
+  stripePaymentIntentId  String?
+  createdAt              DateTime    @default(now())
   updatedAt          DateTime    @updatedAt
   orderItems         OrderItem[]
 }

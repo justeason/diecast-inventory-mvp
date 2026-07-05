@@ -29,16 +29,30 @@ const STATUS_COLORS: Record<string, string> = {
 
 export default async function OrderConfirmationPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>
+  searchParams: Promise<{ payment?: string }>
 }) {
   const { id } = await params
+  const { payment } = await searchParams
 
   const order = await prisma.order.findUnique({
     where: { id },
-    include: {
+    select: {
+      id: true,
+      buyerName: true,
+      buyerEmail: true,
+      buyerPhone: true,
+      status: true,
+      notes: true,
+      createdAt: true,
+      paymentStatus: true,
+      paymentMethod: true,
       orderItems: {
-        include: {
+        select: {
+          id: true,
+          price: true,
           listing: { select: { title: true } },
           item: {
             select: {
@@ -54,6 +68,10 @@ export default async function OrderConfirmationPage({
   if (!order) notFound()
 
   const subtotal = order.orderItems.reduce((sum, oi) => sum + oi.price, 0)
+  const paymentConfirmed =
+    payment === 'success' &&
+    order.paymentStatus === 'paid' &&
+    order.paymentMethod === 'stripe'
 
   return (
     <>
@@ -79,11 +97,17 @@ export default async function OrderConfirmationPage({
           </span>
         </div>
 
-        {/* Request notice */}
-        <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 mb-6">
-          <strong>This is an order request, not a confirmed purchase.</strong> We will contact
-          you to confirm availability and arrange payment and shipping.
-        </div>
+        {/* Notice */}
+        {paymentConfirmed ? (
+          <div className="rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800 mb-6">
+            <strong>Payment received.</strong> Your items are confirmed. We will contact you to arrange shipping.
+          </div>
+        ) : (
+          <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 mb-6">
+            <strong>This is an order request, not a confirmed purchase.</strong> We will contact
+            you to confirm availability and arrange payment and shipping.
+          </div>
+        )}
 
         {/* Order ID */}
         <div className="rounded-md border border-gray-200 bg-gray-50 px-4 py-3 text-sm mb-6">
