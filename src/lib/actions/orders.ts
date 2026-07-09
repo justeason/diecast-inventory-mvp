@@ -3,7 +3,7 @@
 import { z } from 'zod'
 import { redirect } from 'next/navigation'
 import { prisma } from '@/lib/prisma'
-import { stripe } from '@/lib/stripe'
+import { getStripe } from '@/lib/stripe'
 
 const OrderSchema = z.object({
   buyerName: z.string().min(1, 'Name is required'),
@@ -233,9 +233,10 @@ export async function updateOrderStatus(
     // After DB transaction: expire any active Stripe session (fire-and-forget)
     if (order.stripeSessionId) {
       try {
+        const stripe = getStripe()
         await stripe.checkout.sessions.expire(order.stripeSessionId)
       } catch {
-        // Session may already be expired — not a blocking failure
+        // Session may already be expired or key not configured — not a blocking failure
       }
     }
   } else if (status === 'complete') {

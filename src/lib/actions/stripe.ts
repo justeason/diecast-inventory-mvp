@@ -3,7 +3,7 @@
 import type Stripe from 'stripe'
 import { redirect } from 'next/navigation'
 import { Resend } from 'resend'
-import { stripe } from '@/lib/stripe'
+import { getStripe } from '@/lib/stripe'
 import { prisma } from '@/lib/prisma'
 import { buildPaymentLinkEmail } from '@/lib/email/paymentLinkEmail'
 
@@ -66,6 +66,8 @@ export async function createAndSendStripeCheckoutSession(
       return { errors: { form: [`Server configuration error: ${v} is not set.`] } }
     }
   }
+
+  const stripe = getStripe()
 
   // 4. Calculate amounts server-side — never trust client input
   const subtotal = order.orderItems.reduce((sum, oi) => sum + oi.price, 0)
@@ -233,6 +235,7 @@ export async function expireStripeSession(
 
   // Expire in Stripe (may already be expired — that's fine)
   try {
+    const stripe = getStripe()
     await stripe.checkout.sessions.expire(order.stripeSessionId)
   } catch {
     // Session may already be expired; proceed with DB clear
