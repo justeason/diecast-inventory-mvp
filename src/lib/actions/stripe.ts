@@ -106,6 +106,11 @@ export async function createAndSendStripeCheckoutSession(
     return { errors: { form: [`Invalid shipping amount: ${shipping}. Must be a positive value with at most 2 decimal places.`] } }
   }
 
+  const totalCents = subtotalCents + (shipping > 0 ? shippingCents : 0)
+  if (totalCents < 50) {
+    return { errors: { form: ['Stripe requires the total payment amount to be at least $0.50.'] } }
+  }
+
   const expiresAt = Math.floor(Date.now() / 1000) + STRIPE_CHECKOUT_EXPIRY_HOURS * 60 * 60
 
   // 7. Build line items
@@ -209,6 +214,85 @@ export async function createAndSendStripeCheckoutSession(
   }
 
   redirect(`/admin/orders/${orderId}`)
+}
+
+// ─── Resend buyer payment email (no new session created) ─────────────────────
+
+export async function resendStripePaymentEmail(
+  orderId: string,
+  _prev: StripeActionState,
+  _formData: FormData
+): Promise<StripeActionState> {
+  const order = await prisma.order.findUnique({
+    where: { id: orderId },
+    select: {
+      id: true,
+      buyerName: true,
+      buyerEmail: true,
+      estimatedShipping: true,
+      paymentStatus: true,
+      paymentLink: true,
+      stripeSessionId: true,
+      stripeSessionExpiresAt: true,
+      orderItems: {
+        select: {
+          price: true,
+          listing: { select: { title: true } },
+        },
+      },
+    },
+  })
+
+  if (!order) {
+    return { errors: { form: ['Order not found.'] } }
+  }
+  if (!order.stripeSessionId || !order.paymentLink) {
+    return { errors: { form: ['No active payment session. Generate a new payment link first.'] } }
+  }
+  if (order.paymentStatus === 'paid') {
+    return { errors: { form: ['This order is already paid.'] } }
+  }
+  if (order.estimatedShipping === null) {
+    return { errors: { form: ['Order is missing a shipping amount.'] } }
+  }
+  // Do not resend an expired link — admin should expire and regenerate instead
+  if (order.stripeSessionExpiresAt && order.stripeSessionExpiresAt < new Date()) {
+    return { errors: { form: ['This payment link has expired. Please expire it and generate a new one.'] } }
+  }
+
+  for (const v of ['RESEND_API_KEY', 'ORDER_DIGEST_FROM_EMAIL', 'APP_URL']) {
+    if (!process.env[v]) {
+      return { errors: { form: [`Server configuration error: ${v} is not set.`] } }
+    }
+  }
+
+  const appUrl = process.env.APP_URL!.replace(/\/$/, '')
+
+  try {
+    const resend = new Resend(process.env.RESEND_API_KEY)
+    const { subject, html, text } = buildPaymentLinkEmail(
+      { ...order, estimatedShipping: order.estimatedShipping },
+      order.paymentLink,
+      appUrl
+    )
+    const { error } = await resend.emails.send({
+      from: process.env.ORDER_DIGEST_FROM_EMAIL!,
+      to:   order.buyerEmail,
+      subject,
+      html,
+      text,
+    })
+    if (error) {
+      console.error('[stripe] Resend error resending payment email:', error.name)
+      return { errors: { form: ['Failed to send email. Copy the payment link above and send it manually.'] } }
+    }
+  } catch (err) {
+    const name = err instanceof Error ? err.name : 'UnknownError'
+    console.error('[stripe] Unexpected error resending payment email:', name)
+    return { errors: { form: ['Unexpected error. Copy the payment link above and send it manually.'] } }
+  }
+
+  return { success: true }
 }
 
 // ─── Expire active session ────────────────────────────────────────────────────

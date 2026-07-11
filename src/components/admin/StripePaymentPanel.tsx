@@ -5,6 +5,7 @@ import { useFormStatus } from 'react-dom'
 import {
   createAndSendStripeCheckoutSession,
   expireStripeSession,
+  resendStripePaymentEmail,
   type StripeActionState,
 } from '@/lib/actions/stripe'
 
@@ -39,7 +40,21 @@ function ExpireButton() {
       className="rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-sm font-medium
                  text-red-700 hover:bg-red-100 disabled:opacity-50 transition-colors"
     >
-      {pending ? 'Expiring…' : 'Expire Session'}
+      {pending ? 'Expiring…' : 'Expire current payment link'}
+    </button>
+  )
+}
+
+function ResendButton() {
+  const { pending } = useFormStatus()
+  return (
+    <button
+      type="submit"
+      disabled={pending}
+      className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium
+                 text-gray-700 hover:bg-gray-50 disabled:opacity-50 transition-colors"
+    >
+      {pending ? 'Sending…' : 'Resend payment email'}
     </button>
   )
 }
@@ -105,23 +120,22 @@ export function StripePaymentPanel({
   subtotal,
 }: Props) {
   const generateAction = createAndSendStripeCheckoutSession.bind(null, orderId)
-  const expireAction = expireStripeSession.bind(null, orderId)
+  const expireAction   = expireStripeSession.bind(null, orderId)
+  const resendAction   = resendStripePaymentEmail.bind(null, orderId)
 
-  const [generateState, generateFormAction] = useActionState<StripeActionState, FormData>(
-    generateAction,
-    null
-  )
-  const [expireState, expireFormAction] = useActionState<StripeActionState, FormData>(
-    expireAction,
-    null
-  )
+  const [generateState, generateFormAction] = useActionState<StripeActionState, FormData>(generateAction, null)
+  const [expireState,   expireFormAction]   = useActionState<StripeActionState, FormData>(expireAction,   null)
+  const [resendState,   resendFormAction]   = useActionState<StripeActionState, FormData>(resendAction,   null)
 
   const generateErrors = generateState && 'errors' in generateState ? generateState.errors : {}
-  const expireErrors = expireState && 'errors' in expireState ? expireState.errors : {}
+  const expireErrors   = expireState   && 'errors' in expireState   ? expireState.errors   : {}
+  const resendErrors   = resendState   && 'errors' in resendState   ? resendState.errors   : {}
+  const resendSuccess  = resendState   && 'success' in resendState
 
   const isTerminal = orderStatus === 'complete' || orderStatus === 'cancelled'
   const shipping = estimatedShipping ?? null
   const total = shipping !== null ? subtotal + shipping : null
+  const isExpired = stripeSessionExpiresAt !== null && stripeSessionExpiresAt < new Date()
 
   // ── State C: Paid via Stripe ────────────────────────────────────────────────
   if (paymentStatus === 'paid' && paymentMethod === 'stripe') {
@@ -149,33 +163,61 @@ export function StripePaymentPanel({
     )
   }
 
-  // ── State B: Active session ─────────────────────────────────────────────────
+  // ── State B: Active session (possibly expired) ──────────────────────────────
   if (stripeSessionId && paymentLink) {
     return (
       <div className="space-y-3">
-        <div className="rounded-md border border-blue-200 bg-blue-50 px-4 py-4">
-          <p className="text-sm font-medium text-blue-900 mb-1">
-            Payment link sent to {buyerEmail}
-          </p>
-          {stripeSessionExpiresAt && (
-            <p className="text-xs text-blue-700 mb-3">
-              Expires: {stripeSessionExpiresAt.toLocaleDateString()} at{' '}
-              {stripeSessionExpiresAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+        {/* Expired warning replaces the blue info box */}
+        {isExpired ? (
+          <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-4">
+            <p className="text-sm font-medium text-amber-800 mb-1">Payment link appears expired</p>
+            <p className="text-xs text-amber-700">
+              This payment link appears to be expired. You can expire/clear it manually below and generate a new payment link if needed.
             </p>
-          )}
-          <div className="flex items-center gap-2">
-            <a
-              href={paymentLink}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-xs text-blue-700 underline truncate max-w-xs"
-            >
-              {paymentLink}
-            </a>
-            <CopyButton text={paymentLink} />
+            <div className="flex items-center gap-2 mt-3">
+              <span className="text-xs text-amber-600 truncate max-w-xs">{paymentLink}</span>
+              <CopyButton text={paymentLink} />
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="rounded-md border border-blue-200 bg-blue-50 px-4 py-4">
+            <p className="text-sm font-medium text-blue-900 mb-1">
+              Payment link sent to {buyerEmail}
+            </p>
+            {stripeSessionExpiresAt && (
+              <p className="text-xs text-blue-700 mb-3">
+                Expires: {stripeSessionExpiresAt.toLocaleDateString()} at{' '}
+                {stripeSessionExpiresAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              </p>
+            )}
+            <div className="flex items-center gap-2">
+              <a
+                href={paymentLink}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-blue-700 underline truncate max-w-xs"
+              >
+                {paymentLink}
+              </a>
+              <CopyButton text={paymentLink} />
+            </div>
+          </div>
+        )}
 
+        {/* Resend email — only show when session is not expired */}
+        {!isExpired && (
+          <form action={resendFormAction}>
+            <ResendButton />
+            {resendErrors.form && (
+              <p className="mt-1 text-xs text-red-600">{resendErrors.form[0]}</p>
+            )}
+            {resendSuccess && (
+              <p className="mt-1 text-xs text-green-700">Email resent to {buyerEmail}.</p>
+            )}
+          </form>
+        )}
+
+        {/* Expire */}
         <form action={expireFormAction}>
           <ExpireButton />
           {expireErrors.form && (
@@ -188,7 +230,6 @@ export function StripePaymentPanel({
 
   // ── State A: No active session ──────────────────────────────────────────────
 
-  // Don't show generate button for terminal or already-paid orders
   if (isTerminal || paymentStatus === 'paid') {
     return null
   }

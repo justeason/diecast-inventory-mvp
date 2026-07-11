@@ -1,3 +1,8 @@
+// PRODUCTION WEBHOOK URL: https://www.collectntrades.com/api/webhooks/stripe
+// Use the www subdomain when registering in the Stripe Dashboard.
+// The non-www domain (collectntrades.com) redirects with HTTP 308, which Stripe
+// does not follow — webhook delivery will fail silently if registered without www.
+
 import type Stripe from 'stripe'
 import { getStripe } from '@/lib/stripe'
 import { prisma } from '@/lib/prisma'

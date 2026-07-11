@@ -191,6 +191,62 @@ export default async function AdminOrderDetailPage({
         />
       </div>
 
+      {/* Payment Timeline */}
+      <div className="mb-8 rounded-md border border-gray-200 bg-white p-6">
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">Payment Timeline</h2>
+        <dl className="space-y-2 text-sm">
+          <div className="flex gap-3">
+            <dt className="text-gray-500 w-36 shrink-0">Payment Status</dt>
+            <dd>
+              <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                order.paymentStatus === 'paid'      ? 'bg-green-100 text-green-700' :
+                order.paymentStatus === 'requested' ? 'bg-blue-100 text-blue-700'  :
+                                                      'bg-yellow-100 text-yellow-700'
+              }`}>
+                {order.paymentStatus === 'paid'      ? 'Paid' :
+                 order.paymentStatus === 'requested' ? 'Payment Requested' :
+                                                       'Unpaid'}
+              </span>
+            </dd>
+          </div>
+          <div className="flex gap-3">
+            <dt className="text-gray-500 w-36 shrink-0">Payment Method</dt>
+            <dd className="text-gray-900">{order.paymentMethod ?? '—'}</dd>
+          </div>
+          <div className="flex gap-3">
+            <dt className="text-gray-500 w-36 shrink-0">Requested</dt>
+            <dd className="text-gray-900">
+              {order.paymentRequestedAt
+                ? `${order.paymentRequestedAt.toLocaleDateString()} at ${order.paymentRequestedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+                : '—'}
+            </dd>
+          </div>
+          <div className="flex gap-3">
+            <dt className="text-gray-500 w-36 shrink-0">Paid</dt>
+            <dd className="text-gray-900">
+              {order.paidAt
+                ? `${order.paidAt.toLocaleDateString()} at ${order.paidAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+                : '—'}
+            </dd>
+          </div>
+          {order.stripeSessionExpiresAt && (
+            <div className="flex gap-3">
+              <dt className="text-gray-500 w-36 shrink-0">Link Expires</dt>
+              <dd className="text-gray-900">
+                {order.stripeSessionExpiresAt.toLocaleDateString()} at{' '}
+                {order.stripeSessionExpiresAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              </dd>
+            </div>
+          )}
+          {order.paymentReference && (
+            <div className="flex gap-3">
+              <dt className="text-gray-500 w-36 shrink-0">Reference</dt>
+              <dd className="font-mono text-xs text-gray-900 break-all">{order.paymentReference}</dd>
+            </div>
+          )}
+        </dl>
+      </div>
+
       {/* Manual Payment Override */}
       <div className="mb-8 rounded-md border border-gray-200 bg-white p-6">
         <h2 className="text-lg font-semibold text-gray-900 mb-1">Manual Payment Override</h2>
