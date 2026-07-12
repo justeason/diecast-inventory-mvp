@@ -3,6 +3,7 @@ export const dynamic = 'force-dynamic'
 import type { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { toCsv } from '@/lib/csv'
+import { isAdminAuthenticated } from '@/lib/adminAuth'
 
 function csvResponse(filename: string, csv: string) {
   return new Response(csv, {
@@ -17,6 +18,10 @@ export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ type: string }> }
 ) {
+  if (!await isAdminAuthenticated()) {
+    return new Response('Unauthorized', { status: 401 })
+  }
+
   const { type } = await params
 
   switch (type) {
