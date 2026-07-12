@@ -121,6 +121,14 @@ export default async function AdminOrderDetailPage({
               <span className="text-gray-900">{order.notes}</span>
             </p>
           )}
+          {order.customerProfileId && (
+            <p>
+              <span className="text-gray-500 w-16 inline-block">Profile</span>
+              <Link href={`/admin/customers/${order.customerProfileId}`} className="text-blue-600 hover:underline text-sm">
+                View customer profile →
+              </Link>
+            </p>
+          )}
         </div>
 
         <div className="space-y-2 text-sm">

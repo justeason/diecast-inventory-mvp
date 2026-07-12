@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { redirect } from 'next/navigation'
 import { prisma } from '@/lib/prisma'
 import { getStripe } from '@/lib/stripe'
+import { normalizeEmail } from '@/lib/normalizeEmail'
 
 const OrderSchema = z.object({
   buyerName: z.string().min(1, 'Name is required'),
@@ -56,6 +57,21 @@ export async function createOrder(
 
   const { buyerName, buyerEmail, buyerPhone, notes } = result.data
 
+  // Find or create CustomerProfile — non-blocking, order proceeds even if upsert fails
+  let profileId: string | null = null
+  try {
+    const normalizedEmail = normalizeEmail(buyerEmail)
+    const profile = await prisma.customerProfile.upsert({
+      where:  { email: normalizedEmail },
+      update: { name: buyerName, phone: buyerPhone ?? null },
+      create: { email: normalizedEmail, name: buyerName, phone: buyerPhone ?? null },
+      select: { id: true },
+    })
+    profileId = profile.id
+  } catch (err) {
+    console.error('[createOrder] customerProfile upsert failed:', err instanceof Error ? err.name : 'UnknownError')
+  }
+
   const { orderId } = await prisma.$transaction(async (tx) => {
     const order = await tx.order.create({
       data: {
@@ -64,6 +80,7 @@ export async function createOrder(
         buyerPhone: buyerPhone ?? null,
         notes: notes ?? null,
         status: 'pending',
+        customerProfileId: profileId,
       },
     })
 

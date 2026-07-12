@@ -234,6 +234,7 @@ export default async function AdminDashboardPage() {
             { label: 'New Item', href: '/admin/items/new' },
             { label: 'New Listing', href: '/admin/listings/new' },
             { label: 'Orders', href: '/admin/orders' },
+            { label: 'Customers', href: '/admin/customers' },
             { label: 'Analytics', href: '/admin/analytics' },
           ].map((a) => (
             <Link

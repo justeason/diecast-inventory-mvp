@@ -76,17 +76,28 @@ model Listing {
   orderItems  OrderItem[]
 }
 
+model CustomerProfile {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  phone     String?
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  orders    Order[]
+}
+
 model Order {
-  id                 String      @id @default(cuid())
+  id                 String           @id @default(cuid())
   buyerName          String
   buyerEmail         String
   buyerPhone         String?
-  status             String      @default("pending")
+  status             String           @default("pending")
   notes              String?
   estimatedShipping  Float?
   adminNotes         String?
   followUpNotes      String?
-  paymentStatus      String      @default("unpaid")
+  paymentStatus      String           @default("unpaid")
   paymentMethod      String?
   paymentReference   String?
   paymentLink        String?
@@ -95,9 +106,11 @@ model Order {
   stripeSessionId        String?
   stripeSessionExpiresAt DateTime?
   stripePaymentIntentId  String?
-  createdAt              DateTime    @default(now())
-  updatedAt          DateTime    @updatedAt
-  orderItems         OrderItem[]
+  customerProfileId      String?
+  customerProfile        CustomerProfile? @relation(fields: [customerProfileId], references: [id])
+  createdAt              DateTime         @default(now())
+  updatedAt              DateTime         @updatedAt
+  orderItems             OrderItem[]
 }
 
 model OrderItem {

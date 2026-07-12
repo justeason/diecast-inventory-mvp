@@ -8,6 +8,7 @@ const navLinks = [
   { href: '/admin/locations', label: 'Locations' },
   { href: '/admin/listings', label: 'Listings' },
   { href: '/admin/orders', label: 'Orders' },
+  { href: '/admin/customers', label: 'Customers' },
   { href: '/admin/intake', label: 'Intake' },
   { href: '/admin/analytics', label: 'Analytics' },
 ]
