@@ -77,14 +77,40 @@ model Listing {
 }
 
 model CustomerProfile {
-  id        String   @id @default(cuid())
-  email     String   @unique
+  id        String            @id @default(cuid())
+  email     String            @unique
   name      String?
   phone     String?
   notes     String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
   orders    Order[]
+  sessions  CustomerSession[]
+}
+
+model CustomerLoginToken {
+  id        String    @id @default(cuid())
+  email     String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([email])
+  @@index([expiresAt])
+}
+
+model CustomerSession {
+  id          String          @id @default(cuid())
+  profileId   String
+  sessionHash String          @unique
+  expiresAt   DateTime
+  createdAt   DateTime        @default(now())
+
+  profile CustomerProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@index([profileId])
+  @@index([expiresAt])
 }
 
 model Order {
