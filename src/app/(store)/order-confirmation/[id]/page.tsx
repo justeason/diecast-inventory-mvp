@@ -211,12 +211,20 @@ export default async function OrderConfirmationPage({
         </div>
 
         {/* CTA */}
-        <Link
-          href="/browse"
-          className="text-sm font-medium text-gray-900 hover:underline underline-offset-2"
-        >
-          ← Continue browsing
-        </Link>
+        <div className="space-y-3">
+          <p className="text-sm text-gray-500">
+            Want to see all your orders later?{' '}
+            <Link href="/account/orders" className="text-gray-700 font-medium hover:underline underline-offset-2">
+              Visit My Orders.
+            </Link>
+          </p>
+          <Link
+            href="/browse"
+            className="inline-block text-sm font-medium text-gray-900 hover:underline underline-offset-2"
+          >
+            ← Continue browsing
+          </Link>
+        </div>
       </div>
     </>
   )

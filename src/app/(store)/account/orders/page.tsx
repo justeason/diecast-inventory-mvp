@@ -1,4 +1,5 @@
 import type { Metadata } from 'next'
+import Link from 'next/link'
 import { getBuyerSession } from '@/lib/buyerSession'
 import { signOutBuyer } from '@/lib/actions/buyerAuth'
 import { prisma } from '@/lib/prisma'
@@ -53,6 +54,12 @@ export default async function BuyerOrdersPage() {
           Enter your email address to receive a sign-in link and view your order history.
         </p>
         <BuyerOrderAccessForm />
+        <p className="mt-6 text-sm text-gray-400">
+          Have an order ID?{' '}
+          <Link href="/order-status" className="text-gray-500 hover:text-gray-900 underline underline-offset-2">
+            Check a single order status.
+          </Link>
+        </p>
       </div>
     )
   }
@@ -111,7 +118,6 @@ export default async function BuyerOrdersPage() {
         {orders.map((order) => {
           const subtotal = order.orderItems.reduce((sum, oi) => sum + oi.price, 0)
           const hasShipping = order.estimatedShipping != null
-          const total = subtotal + (order.estimatedShipping ?? 0)
 
           return (
             <div key={order.id} className="rounded-md border border-gray-200 bg-white overflow-hidden">
@@ -162,19 +168,27 @@ export default async function BuyerOrdersPage() {
                   <span className="text-gray-500">Subtotal</span>
                   <span className="text-gray-700 tabular-nums">${subtotal.toFixed(2)}</span>
                 </div>
-                {hasShipping && (
-                  <div className="flex justify-between">
-                    <span className="text-gray-500">Est. Shipping</span>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Est. Shipping</span>
+                  {hasShipping ? (
                     <span className="text-gray-700 tabular-nums">
                       ${order.estimatedShipping!.toFixed(2)}
                     </span>
-                  </div>
-                )}
-                {hasShipping && (
+                  ) : (
+                    <span className="text-gray-400 italic">Pending review</span>
+                  )}
+                </div>
+                {hasShipping ? (
                   <div className="flex justify-between font-semibold border-t border-gray-200 pt-1">
                     <span className="text-gray-900">Est. Total</span>
-                    <span className="text-gray-900 tabular-nums">${total.toFixed(2)}</span>
+                    <span className="text-gray-900 tabular-nums">
+                      ${(subtotal + order.estimatedShipping!).toFixed(2)}
+                    </span>
                   </div>
+                ) : (
+                  <p className="text-xs text-gray-400 pt-1">
+                    Shipping will be added after order review.
+                  </p>
                 )}
               </div>
 
