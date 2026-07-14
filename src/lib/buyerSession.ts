@@ -1,13 +1,10 @@
 import crypto from 'crypto'
 import { cookies } from 'next/headers'
 import { prisma } from '@/lib/prisma'
+import { hashToken } from '@/lib/hashToken'
 
 const COOKIE_NAME = 'buyer_session'
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7 // 7 days
-
-export function hashToken(token: string): string {
-  return crypto.createHash('sha256').update(token).digest('hex')
-}
 
 function cookieOptions(maxAge: number) {
   return {

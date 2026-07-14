@@ -5,7 +5,8 @@ import { redirect } from 'next/navigation'
 import { Resend } from 'resend'
 import { prisma } from '@/lib/prisma'
 import { normalizeEmail } from '@/lib/normalizeEmail'
-import { hashToken, createBuyerSession, clearBuyerSession } from '@/lib/buyerSession'
+import { hashToken } from '@/lib/hashToken'
+import { createBuyerSession, clearBuyerSession } from '@/lib/buyerSession'
 import { buildMagicLinkEmail } from '@/lib/email/magicLinkEmail'
 
 const TOKEN_TTL_MS        = 15 * 60 * 1000  // 15 minutes
