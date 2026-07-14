@@ -42,3 +42,6 @@ next-env.d.ts
 
 # uploaded files
 /public/uploads/
+
+# Keep safe env template tracked
+!.env.example
