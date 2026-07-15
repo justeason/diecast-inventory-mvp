@@ -1,14 +1,10 @@
 'use client'
 
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback } from 'react'
 import { type CartItem, getCart, addToCart, removeFromCart, clearCart } from './cart'
 
 export function useCart() {
-  const [items, setItems] = useState<CartItem[]>([])
-
-  useEffect(() => {
-    setItems(getCart())
-  }, [])
+  const [items, setItems] = useState<CartItem[]>(getCart)
 
   const add = useCallback((item: CartItem) => {
     setItems(addToCart(item))

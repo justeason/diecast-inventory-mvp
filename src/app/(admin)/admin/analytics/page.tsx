@@ -80,7 +80,7 @@ function SectionHeader({ title, note }: { title: string; note?: string }) {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default async function AdminAnalyticsPage() {
-  const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000)
+  const twentyFourHoursAgo = new Date(new Date().getTime() - 24 * 60 * 60 * 1000)
 
   const [
     completedOrders,

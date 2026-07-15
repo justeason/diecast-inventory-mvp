@@ -155,7 +155,7 @@ export function CatalogMergeForm({ action, models }: Props) {
         <span className="inline-block w-3 h-3 rounded-sm bg-green-100 border border-green-300 mr-1 align-middle" />
         Green = kept (canonical).{' '}
         <span className="inline-block w-3 h-3 rounded-sm bg-red-100 border border-red-300 mr-1 align-middle" />
-        Red = will be merged and deleted. Only the canonical model's fields are preserved —
+        Red = will be merged and deleted. Only the canonical model&apos;s fields are preserved —
         copy any useful notes from duplicate rows before merging.
       </p>
 
