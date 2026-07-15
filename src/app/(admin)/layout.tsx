@@ -9,6 +9,7 @@ const navLinks = [
   { href: '/admin/listings', label: 'Listings' },
   { href: '/admin/orders', label: 'Orders' },
   { href: '/admin/customers', label: 'Customers' },
+  { href: '/admin/seller-profiles', label: 'Sellers' },
   { href: '/admin/intake', label: 'Intake' },
   { href: '/admin/analytics', label: 'Analytics' },
 ]

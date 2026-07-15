@@ -50,6 +50,7 @@ export default async function AdminCustomerDetailPage({
       phone: true,
       notes: true,
       createdAt: true,
+      sellerProfile: { select: { id: true, status: true, displayName: true } },
       orders: {
         orderBy: { createdAt: 'desc' },
         select: {
@@ -115,6 +116,48 @@ export default async function AdminCustomerDetailPage({
           )}
         </dl>
       </div>
+
+      {/* Seller profile — shown when exists; create link when absent */}
+      {profile.sellerProfile ? (
+        <div className="mb-8 rounded-md border border-gray-200 bg-gray-50 p-5 flex items-center justify-between">
+          <div>
+            <p className="text-sm font-semibold text-gray-900 mb-0.5">Seller Profile</p>
+            <p className="text-sm text-gray-600">
+              {profile.sellerProfile.displayName
+                ? `${profile.sellerProfile.displayName} · `
+                : ''}
+              <span
+                className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
+                  profile.sellerProfile.status === 'active'
+                    ? 'bg-green-100 text-green-700'
+                    : profile.sellerProfile.status === 'suspended'
+                      ? 'bg-red-100 text-red-700'
+                      : 'bg-yellow-100 text-yellow-700'
+                }`}
+              >
+                {profile.sellerProfile.status.charAt(0).toUpperCase() +
+                  profile.sellerProfile.status.slice(1)}
+              </span>
+            </p>
+          </div>
+          <Link
+            href={`/admin/seller-profiles/${profile.sellerProfile.id}`}
+            className="text-sm text-gray-600 hover:text-gray-900"
+          >
+            View seller profile →
+          </Link>
+        </div>
+      ) : (
+        <div className="mb-8 rounded-md border border-dashed border-gray-300 px-5 py-4 flex items-center justify-between">
+          <p className="text-sm text-gray-500">No seller profile.</p>
+          <Link
+            href={`/admin/seller-profiles/new`}
+            className="text-sm text-gray-600 hover:text-gray-900"
+          >
+            Create seller profile →
+          </Link>
+        </div>
+      )}
 
       {/* Stats */}
       <div className="mb-8 grid grid-cols-2 sm:grid-cols-4 gap-4">
