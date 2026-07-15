@@ -99,13 +99,26 @@ export function ItemInstanceForm({ item, catalogModels, locations, prefill, sugg
         error={state?.errors?.catalogId?.[0]}
       />
 
-      <Select
-        label="Storage Location"
-        name="locationId"
-        options={locationOptions}
-        defaultValue={src?.locationId ?? ''}
-        error={state?.errors?.locationId?.[0]}
-      />
+      {isCreate && locations.length === 0 ? (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm">
+          <p className="font-medium text-amber-800 mb-1">No storage locations defined.</p>
+          <p className="text-amber-700">
+            <a href="/admin/locations/new" className="underline hover:no-underline">
+              Create one
+            </a>{' '}
+            before adding inventory.
+          </p>
+        </div>
+      ) : (
+        <Select
+          label="Storage Location"
+          name="locationId"
+          required={isCreate}
+          options={locationOptions}
+          defaultValue={src?.locationId ?? ''}
+          error={state?.errors?.locationId?.[0]}
+        />
+      )}
 
       <Select
         label="Carded or Loose"

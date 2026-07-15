@@ -54,6 +54,10 @@ export async function createItemInstance(
   const result = ItemSchema.safeParse(Object.fromEntries(formData))
   if (!result.success) return { errors: result.error.flatten().fieldErrors as Record<string, string[]> }
 
+  if (!result.data.locationId) {
+    return { errors: { locationId: ['Storage location is required.'] } }
+  }
+
   const { sku } = result.data
   const existing = await prisma.itemInstance.findUnique({ where: { sku } })
   if (existing) return { errors: { sku: ['SKU is already in use.'] } }

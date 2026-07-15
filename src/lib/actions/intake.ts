@@ -174,6 +174,10 @@ export async function convertDraft(
   const sku = (formData.get('sku') as string)?.trim()
   if (!sku) return { errors: { sku: ['SKU is required.'] } }
 
+  // Storage location — required; must reference an existing StorageLocation record.
+  const locationId = (formData.get('locationId') as string)?.trim() || null
+  if (!locationId) return { errors: { locationId: ['Storage location is required.'] } }
+
   // Optional listing creation fields — only validate when checkbox is on.
   const createListing = formData.get('createListing') === 'on'
   let listingTitle: string | null = null
@@ -206,6 +210,13 @@ export async function convertDraft(
   if (!draft.condition || !draft.cardedOrLoose) {
     return { errors: { form: ['Condition and type (carded/loose) are required to convert.'] } }
   }
+
+  // Verify the selected storage location exists.
+  const locationRecord = await prisma.storageLocation.findUnique({
+    where: { id: locationId },
+    select: { id: true },
+  })
+  if (!locationRecord) return { errors: { locationId: ['Selected location not found.'] } }
 
   // Check SKU uniqueness upfront for a clear user-facing error.
   const existing = await prisma.itemInstance.findUnique({ where: { sku } })
@@ -258,18 +269,7 @@ export async function convertDraft(
       catalog = found
     }
 
-    // 2. Look up or create StorageLocation by trimmed label.
-    let locationId: string | null = null
-    const locationLabel = draft.storageLocation?.trim()
-    if (locationLabel) {
-      let location = await tx.storageLocation.findFirst({ where: { label: locationLabel } })
-      if (!location) {
-        location = await tx.storageLocation.create({ data: { label: locationLabel } })
-      }
-      locationId = location.id
-    }
-
-    // 3. Create ItemInstance.
+    // 2. Create ItemInstance.
     const item = await tx.itemInstance.create({
       data: {
         sku,
@@ -285,7 +285,7 @@ export async function convertDraft(
     })
     newItemId = item.id
 
-    // 4. Create Photo records only for non-blank URLs.
+    // 3. Create Photo records only for non-blank URLs.
     const front = draft.frontPhotoUrl?.trim()
     if (front) {
       await tx.photo.create({ data: { itemId: item.id, url: front, type: 'front', sortOrder: 0 } })
@@ -295,7 +295,7 @@ export async function convertDraft(
       await tx.photo.create({ data: { itemId: item.id, url: back, type: 'back', sortOrder: 1 } })
     }
 
-    // 5. Optionally create Listing in the same transaction.
+    // 4. Optionally create Listing in the same transaction.
     if (createListing && listingTitle && listingPrice) {
       const listing = await tx.listing.create({
         data: { itemId: item.id, title: listingTitle, price: listingPrice, status: 'active' },
@@ -303,7 +303,7 @@ export async function convertDraft(
       newListingId = listing.id
     }
 
-    // 6. Lock the draft.
+    // 5. Lock the draft.
     await tx.intakeDraft.update({
       where: { id },
       data:  { status: 'converted', convertedItemId: item.id },

@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
-import type { CatalogModel } from '@prisma/client'
+import type { CatalogModel, StorageLocation } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { getNextHwSku } from '@/lib/sku'
 import { IntakeDraftForm } from '@/components/admin/IntakeDraftForm'
@@ -73,29 +73,39 @@ export default async function EditIntakeDraftPage({
   ])
   if (!draft) notFound()
 
-  // For the conversion panel: fetch catalog match info when the draft is reviewed and has brand+name.
+  // For the conversion panel: fetch locations + catalog match info when draft is reviewed.
   let exactCatalogMatch: CatalogModel | null = null
   let similarCatalogModels: CatalogModel[] = []
-  if (draft.status === 'reviewed' && draft.brand?.trim() && draft.name?.trim()) {
-    const brand = draft.brand.trim()
-    const name = draft.name.trim()
-    const [exactMatch, allSimilar] = await Promise.all([
-      prisma.catalogModel.findFirst({
-        where: {
-          brand,
-          name,
-          year:   draft.year          ?? null,
-          series: draft.series?.trim() || null,
-          color:  draft.color?.trim()  || null,
-          scale:  draft.scale?.trim()  || null,
-        },
-      }),
-      prisma.catalogModel.findMany({
-        where: { brand, name },
-        orderBy: [{ year: 'desc' }, { color: 'asc' }],
-        take: 10,
-      }),
+  let locations: StorageLocation[] = []
+
+  if (draft.status === 'reviewed') {
+    const brand = draft.brand?.trim() ?? ''
+    const name  = draft.name?.trim()  ?? ''
+
+    const [locationsResult, exactMatch, allSimilar] = await Promise.all([
+      prisma.storageLocation.findMany({ orderBy: { label: 'asc' } }),
+      brand && name
+        ? prisma.catalogModel.findFirst({
+            where: {
+              brand,
+              name,
+              year:   draft.year          ?? null,
+              series: draft.series?.trim() || null,
+              color:  draft.color?.trim()  || null,
+              scale:  draft.scale?.trim()  || null,
+            },
+          })
+        : Promise.resolve(null),
+      brand && name
+        ? prisma.catalogModel.findMany({
+            where: { brand, name },
+            orderBy: [{ year: 'desc' }, { color: 'asc' }],
+            take: 10,
+          })
+        : Promise.resolve([]),
     ])
+
+    locations = locationsResult
     exactCatalogMatch = exactMatch
     similarCatalogModels = exactMatch
       ? allSimilar.filter((m) => m.id !== exactMatch.id)
@@ -326,6 +336,7 @@ export default async function EditIntakeDraftPage({
                 </p>
                 <ConvertDraftForm
                   action={convertAction}
+                  locations={locations}
                   suggestedSku={suggestedSku}
                   suggestedTitle={suggestedTitle || undefined}
                   suggestedPrice={suggestedPrice}
