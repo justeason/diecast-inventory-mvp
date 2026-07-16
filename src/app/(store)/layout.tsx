@@ -20,6 +20,9 @@ export default function StoreLayout({ children }: { children: React.ReactNode })
           <Link href="/account/orders" className="text-sm text-gray-600 hover:text-gray-900 transition-colors">
             My Orders
           </Link>
+          <Link href="/account/collection" className="text-sm text-gray-600 hover:text-gray-900 transition-colors">
+            My Collection
+          </Link>
 
           {/* Right: cart */}
           <div className="ml-auto flex items-center">

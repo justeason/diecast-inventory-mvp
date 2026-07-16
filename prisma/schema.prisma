@@ -9,17 +9,18 @@ datasource db {
 }
 
 model CatalogModel {
-  id        String         @id @default(cuid())
-  brand     String
-  name      String
-  series    String?
-  year      Int?
-  color     String?
-  scale     String?
-  notes     String?
-  createdAt DateTime       @default(now())
-  updatedAt DateTime       @updatedAt
-  items     ItemInstance[]
+  id              String           @id @default(cuid())
+  brand           String
+  name            String
+  series          String?
+  year            Int?
+  color           String?
+  scale           String?
+  notes           String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  items           ItemInstance[]
+  collectionItems CollectionItem[]
 }
 
 model ItemInstance {
@@ -77,16 +78,17 @@ model Listing {
 }
 
 model CustomerProfile {
-  id            String            @id @default(cuid())
-  email         String            @unique
-  name          String?
-  phone         String?
-  notes         String?
-  createdAt     DateTime          @default(now())
-  updatedAt     DateTime          @updatedAt
-  orders        Order[]
-  sessions      CustomerSession[]
-  sellerProfile SellerProfile?
+  id              String            @id @default(cuid())
+  email           String            @unique
+  name            String?
+  phone           String?
+  notes           String?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  orders          Order[]
+  sessions        CustomerSession[]
+  sellerProfile   SellerProfile?
+  collectionItems CollectionItem[]
 }
 
 model SellerProfile {
@@ -164,6 +166,33 @@ model OrderItem {
   listing   Listing      @relation(fields: [listingId], references: [id])
   price     Float
   createdAt DateTime     @default(now())
+}
+
+model CollectionItem {
+  id             String          @id @default(cuid())
+  profileId      String
+  profile        CustomerProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  catalogId      String?
+  catalog        CatalogModel?   @relation(fields: [catalogId], references: [id])
+
+  brand          String?
+  name           String?
+  series         String?
+  year           Int?
+  color          String?
+  scale          String?
+  cardedOrLoose  String?
+  condition      String?
+  conditionNotes String?
+  quantity       Int             @default(1)
+
+  purchasePrice  Float?
+  purchaseDate   DateTime?
+  notes          String?
+
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
 }
 
 model IntakeDraft {

@@ -1,0 +1,203 @@
+import type { Metadata } from 'next'
+import Link from 'next/link'
+import { notFound } from 'next/navigation'
+import { getBuyerSession } from '@/lib/buyerSession'
+import { prisma } from '@/lib/prisma'
+import { deleteCollectionItem } from '@/lib/actions/collectionItems'
+
+export const dynamic = 'force-dynamic'
+
+export const metadata: Metadata = {
+  title: 'Collection Item | CollectNTrades',
+  robots: { index: false, follow: false },
+}
+
+const CONDITION_LABELS: Record<string, string> = {
+  mint:      'Mint',
+  near_mint: 'Near Mint',
+  good:      'Good',
+  fair:      'Fair',
+  poor:      'Poor',
+  damaged:   'Damaged',
+}
+
+const CONDITION_COLORS: Record<string, string> = {
+  mint:      'bg-green-100 text-green-700',
+  near_mint: 'bg-blue-100 text-blue-700',
+  good:      'bg-gray-100 text-gray-700',
+  fair:      'bg-yellow-100 text-yellow-700',
+  poor:      'bg-orange-100 text-orange-700',
+  damaged:   'bg-red-100 text-red-700',
+}
+
+const CARDED_LOOSE_LABELS: Record<string, string> = {
+  carded: 'Carded',
+  loose:  'Loose',
+}
+
+function displayName(item: {
+  brand: string | null
+  name: string | null
+  catalog: { brand: string; name: string } | null
+}): string {
+  if (item.catalog) return `${item.catalog.brand} ${item.catalog.name}`
+  const parts = [item.brand, item.name].filter(Boolean)
+  return parts.length > 0 ? parts.join(' ') : 'Unnamed item'
+}
+
+export default async function CollectionItemDetailPage({
+  params,
+}: {
+  params: Promise<{ id: string }>
+}) {
+  const { id } = await params
+  const session = await getBuyerSession()
+  if (!session) notFound()
+
+  const item = await prisma.collectionItem.findFirst({
+    where: { id, profileId: session.profileId },
+    include: { catalog: { select: { id: true, brand: true, name: true, year: true, color: true, series: true, scale: true } } },
+  })
+  if (!item) notFound()
+
+  const deleteAction = deleteCollectionItem.bind(null, item.id)
+
+  return (
+    <div className="max-w-lg">
+      <div className="mb-6">
+        <Link href="/account/collection" className="text-sm text-gray-500 hover:text-gray-900">
+          ← Back to My Collection
+        </Link>
+      </div>
+
+      <div className="flex items-start justify-between mb-6">
+        <h1 className="text-2xl font-bold text-gray-900 leading-tight">
+          {displayName(item)}
+        </h1>
+        <Link
+          href={`/account/collection/${item.id}/edit`}
+          className="shrink-0 ml-4 rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+        >
+          Edit
+        </Link>
+      </div>
+
+      {/* Badges */}
+      <div className="flex flex-wrap gap-2 mb-6">
+        {item.condition && (
+          <span
+            className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ${CONDITION_COLORS[item.condition] ?? 'bg-gray-100 text-gray-600'}`}
+          >
+            {CONDITION_LABELS[item.condition] ?? item.condition}
+          </span>
+        )}
+        {item.cardedOrLoose && (
+          <span className="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium bg-gray-100 text-gray-700">
+            {CARDED_LOOSE_LABELS[item.cardedOrLoose] ?? item.cardedOrLoose}
+          </span>
+        )}
+      </div>
+
+      {/* Item fields */}
+      <div className="rounded-md border border-gray-200 bg-gray-50 p-5 mb-6">
+        <dl className="space-y-2.5 text-sm">
+          {item.catalog && (
+            <div className="flex gap-3">
+              <dt className="text-gray-500 w-28 shrink-0">Catalog match</dt>
+              <dd className="text-gray-900">
+                {item.catalog.brand} {item.catalog.name}
+                {item.catalog.year && ` (${item.catalog.year})`}
+              </dd>
+            </div>
+          )}
+          {item.brand && (
+            <div className="flex gap-3">
+              <dt className="text-gray-500 w-28 shrink-0">Brand</dt>
+              <dd className="text-gray-900">{item.brand}</dd>
+            </div>
+          )}
+          {item.name && (
+            <div className="flex gap-3">
+              <dt className="text-gray-500 w-28 shrink-0">Model</dt>
+              <dd className="text-gray-900">{item.name}</dd>
+            </div>
+          )}
+          {item.year && (
+            <div className="flex gap-3">
+              <dt className="text-gray-500 w-28 shrink-0">Year</dt>
+              <dd className="text-gray-900">{item.year}</dd>
+            </div>
+          )}
+          {item.series && (
+            <div className="flex gap-3">
+              <dt className="text-gray-500 w-28 shrink-0">Series</dt>
+              <dd className="text-gray-900">{item.series}</dd>
+            </div>
+          )}
+          {item.color && (
+            <div className="flex gap-3">
+              <dt className="text-gray-500 w-28 shrink-0">Color</dt>
+              <dd className="text-gray-900">{item.color}</dd>
+            </div>
+          )}
+          {item.scale && (
+            <div className="flex gap-3">
+              <dt className="text-gray-500 w-28 shrink-0">Scale</dt>
+              <dd className="text-gray-900">{item.scale}</dd>
+            </div>
+          )}
+          {item.conditionNotes && (
+            <div className="flex gap-3">
+              <dt className="text-gray-500 w-28 shrink-0">Condition notes</dt>
+              <dd className="text-gray-900">{item.conditionNotes}</dd>
+            </div>
+          )}
+          <div className="flex gap-3">
+            <dt className="text-gray-500 w-28 shrink-0">Quantity</dt>
+            <dd className="text-gray-900">{item.quantity}</dd>
+          </div>
+          {item.purchasePrice != null && (
+            <div className="flex gap-3">
+              <dt className="text-gray-500 w-28 shrink-0">Purchase price</dt>
+              <dd className="text-gray-900">${item.purchasePrice.toFixed(2)}</dd>
+            </div>
+          )}
+          {item.purchaseDate && (
+            <div className="flex gap-3">
+              <dt className="text-gray-500 w-28 shrink-0">Purchase date</dt>
+              <dd className="text-gray-900">{item.purchaseDate.toLocaleDateString()}</dd>
+            </div>
+          )}
+          {item.notes && (
+            <div className="flex gap-3">
+              <dt className="text-gray-500 w-28 shrink-0">Notes</dt>
+              <dd className="text-gray-900 whitespace-pre-wrap">{item.notes}</dd>
+            </div>
+          )}
+        </dl>
+      </div>
+
+      {/* Timestamps */}
+      <p className="text-xs text-gray-400 mb-8">
+        Added {item.createdAt.toLocaleDateString()}
+        {item.updatedAt > item.createdAt && ` · Updated ${item.updatedAt.toLocaleDateString()}`}
+      </p>
+
+      {/* Delete */}
+      <div className="pt-6 border-t border-gray-200">
+        <p className="text-sm font-medium text-gray-700 mb-1">Remove from collection</p>
+        <p className="text-xs text-gray-500 mb-3">
+          This will permanently delete this collection item. This cannot be undone.
+        </p>
+        <form action={deleteAction}>
+          <button
+            type="submit"
+            className="rounded-md border border-red-300 bg-white px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-50 transition-colors"
+          >
+            Delete item
+          </button>
+        </form>
+      </div>
+    </div>
+  )
+}
