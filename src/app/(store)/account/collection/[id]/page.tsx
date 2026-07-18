@@ -6,6 +6,7 @@ import { prisma } from '@/lib/prisma'
 import { deleteCollectionItem } from '@/lib/actions/collectionItems'
 import { deleteCollectionPhoto } from '@/lib/actions/collectionPhotos'
 import { CollectionPhotoUpload } from '@/components/store/CollectionPhotoUpload'
+import { CollectionAiScan } from '@/components/store/CollectionAiScan'
 
 export const dynamic = 'force-dynamic'
 
@@ -149,6 +150,15 @@ export default async function CollectionItemDetailPage({
           <p className="text-xs text-gray-400">Maximum of 3 photos reached.</p>
         )}
       </div>
+
+      {/* AI scan section */}
+      <CollectionAiScan
+        itemId={item.id}
+        hasPhotos={item.photos.length > 0}
+        aiExtractionConfidence={item.aiExtractionConfidence}
+        aiExtractionNotes={item.aiExtractionNotes}
+        aiExtractedAt={item.aiExtractedAt}
+      />
 
       {/* Item fields */}
       <div className="rounded-md border border-gray-200 bg-gray-50 p-5 mb-6">
