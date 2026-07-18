@@ -4,6 +4,8 @@ import { notFound } from 'next/navigation'
 import { getBuyerSession } from '@/lib/buyerSession'
 import { prisma } from '@/lib/prisma'
 import { deleteCollectionItem } from '@/lib/actions/collectionItems'
+import { deleteCollectionPhoto } from '@/lib/actions/collectionPhotos'
+import { CollectionPhotoUpload } from '@/components/store/CollectionPhotoUpload'
 
 export const dynamic = 'force-dynamic'
 
@@ -35,6 +37,13 @@ const CARDED_LOOSE_LABELS: Record<string, string> = {
   loose:  'Loose',
 }
 
+const PHOTO_TYPE_LABELS: Record<string, string> = {
+  front:  'Front',
+  back:   'Back',
+  detail: 'Detail',
+  other:  'Other',
+}
+
 function displayName(item: {
   brand: string | null
   name: string | null
@@ -56,11 +65,14 @@ export default async function CollectionItemDetailPage({
 
   const item = await prisma.collectionItem.findFirst({
     where: { id, profileId: session.profileId },
-    include: { catalog: { select: { id: true, brand: true, name: true, year: true, color: true, series: true, scale: true } } },
+    include: {
+      catalog: { select: { id: true, brand: true, name: true, year: true, color: true, series: true, scale: true } },
+      photos:  { orderBy: { sortOrder: 'asc' } },
+    },
   })
   if (!item) notFound()
 
-  const deleteAction = deleteCollectionItem.bind(null, item.id)
+  const deleteItemAction = deleteCollectionItem.bind(null, item.id)
 
   return (
     <div className="max-w-lg">
@@ -82,7 +94,7 @@ export default async function CollectionItemDetailPage({
         </Link>
       </div>
 
-      {/* Badges */}
+      {/* Condition/type badges */}
       <div className="flex flex-wrap gap-2 mb-6">
         {item.condition && (
           <span
@@ -95,6 +107,46 @@ export default async function CollectionItemDetailPage({
           <span className="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium bg-gray-100 text-gray-700">
             {CARDED_LOOSE_LABELS[item.cardedOrLoose] ?? item.cardedOrLoose}
           </span>
+        )}
+      </div>
+
+      {/* Photos section */}
+      <div className="mb-8">
+        <h2 className="text-sm font-semibold text-gray-900 mb-3">Photos</h2>
+
+        {item.photos.length > 0 && (
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4">
+            {item.photos.map((photo) => (
+              <div key={photo.id} className="relative group rounded-md overflow-hidden border border-gray-200 bg-gray-50">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={photo.url}
+                  alt={PHOTO_TYPE_LABELS[photo.type] ?? photo.type}
+                  className="w-full aspect-square object-cover"
+                />
+                <div className="absolute bottom-0 left-0 right-0 flex items-center justify-between bg-black/50 px-2 py-1">
+                  <span className="text-xs text-white">
+                    {PHOTO_TYPE_LABELS[photo.type] ?? photo.type}
+                  </span>
+                  <form action={deleteCollectionPhoto.bind(null, photo.id)}>
+                    <button
+                      type="submit"
+                      className="text-xs text-white/80 hover:text-white transition-colors"
+                      title="Delete photo"
+                    >
+                      ✕
+                    </button>
+                  </form>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {item.photos.length < 3 ? (
+          <CollectionPhotoUpload itemId={item.id} />
+        ) : (
+          <p className="text-xs text-gray-400">Maximum of 3 photos reached.</p>
         )}
       </div>
 
@@ -183,13 +235,13 @@ export default async function CollectionItemDetailPage({
         {item.updatedAt > item.createdAt && ` · Updated ${item.updatedAt.toLocaleDateString()}`}
       </p>
 
-      {/* Delete */}
+      {/* Delete item */}
       <div className="pt-6 border-t border-gray-200">
         <p className="text-sm font-medium text-gray-700 mb-1">Remove from collection</p>
         <p className="text-xs text-gray-500 mb-3">
-          This will permanently delete this collection item. This cannot be undone.
+          This will permanently delete this item and all its photos. This cannot be undone.
         </p>
-        <form action={deleteAction}>
+        <form action={deleteItemAction}>
           <button
             type="submit"
             className="rounded-md border border-red-300 bg-white px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-50 transition-colors"

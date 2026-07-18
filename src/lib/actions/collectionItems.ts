@@ -1,6 +1,7 @@
 'use server'
 
 import { z } from 'zod'
+import { del } from '@vercel/blob'
 import { prisma } from '@/lib/prisma'
 import { getBuyerSession } from '@/lib/buyerSession'
 import { redirect } from 'next/navigation'
@@ -200,9 +201,29 @@ export async function deleteCollectionItem(id: string): Promise<void> {
   const session = await getBuyerSession()
   if (!session) redirect('/account/orders')
 
+  // Fetch the item's photos before deletion so we can clean up blobs afterward
+  const item = await prisma.collectionItem.findFirst({
+    where: { id, profileId: session.profileId },
+    select: { photos: { select: { url: true } } },
+  })
+  if (!item) redirect('/account/collection')
+
+  // Delete the item — cascade removes CollectionItemPhoto rows from DB
   await prisma.collectionItem.deleteMany({
     where: { id, profileId: session.profileId },
   })
+
+  // Best-effort blob cleanup after DB deletion
+  for (const photo of item.photos) {
+    try {
+      await del(photo.url)
+    } catch (err) {
+      console.error(
+        '[deleteCollectionItem] Failed to delete blob:',
+        err instanceof Error ? err.message : 'UnknownError'
+      )
+    }
+  }
 
   redirect('/account/collection')
 }

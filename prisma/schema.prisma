@@ -169,12 +169,12 @@ model OrderItem {
 }
 
 model CollectionItem {
-  id             String          @id @default(cuid())
+  id             String               @id @default(cuid())
   profileId      String
-  profile        CustomerProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  profile        CustomerProfile      @relation(fields: [profileId], references: [id], onDelete: Cascade)
 
   catalogId      String?
-  catalog        CatalogModel?   @relation(fields: [catalogId], references: [id])
+  catalog        CatalogModel?        @relation(fields: [catalogId], references: [id])
 
   brand          String?
   name           String?
@@ -185,14 +185,27 @@ model CollectionItem {
   cardedOrLoose  String?
   condition      String?
   conditionNotes String?
-  quantity       Int             @default(1)
+  quantity       Int                  @default(1)
 
   purchasePrice  Float?
   purchaseDate   DateTime?
   notes          String?
 
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+  photos         CollectionItemPhoto[]
+}
+
+model CollectionItemPhoto {
+  id        String         @id @default(cuid())
+  itemId    String
+  item      CollectionItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  url       String
+  type      String         @default("other")
+  sortOrder Int            @default(0)
+
+  createdAt DateTime       @default(now())
 }
 
 model IntakeDraft {

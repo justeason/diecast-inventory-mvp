@@ -72,6 +72,7 @@ export default async function CollectionListPage() {
       quantity:      true,
       createdAt:     true,
       catalog:       { select: { brand: true, name: true } },
+      photos:        { orderBy: { sortOrder: 'asc' }, take: 1, select: { url: true } },
     },
   })
 
@@ -110,41 +111,58 @@ export default async function CollectionListPage() {
             <Link
               key={item.id}
               href={`/account/collection/${item.id}`}
-              className="block rounded-md border border-gray-200 bg-white px-5 py-4 hover:border-gray-300 hover:bg-gray-50 transition-colors"
+              className="block rounded-md border border-gray-200 bg-white px-4 py-4 hover:border-gray-300 hover:bg-gray-50 transition-colors"
             >
-              <div className="flex items-start justify-between gap-4">
-                <div className="min-w-0">
-                  <p className="font-medium text-gray-900 truncate">
-                    {displayName(item)}
-                    {item.year && (
-                      <span className="ml-2 text-sm font-normal text-gray-500">
-                        {item.year}
-                      </span>
-                    )}
-                  </p>
-                  <div className="flex flex-wrap items-center gap-2 mt-1.5">
-                    {item.condition && (
-                      <span
-                        className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${CONDITION_COLORS[item.condition] ?? 'bg-gray-100 text-gray-600'}`}
-                      >
-                        {CONDITION_LABELS[item.condition] ?? item.condition}
-                      </span>
-                    )}
-                    {item.cardedOrLoose && (
-                      <span
-                        className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${CARDED_LOOSE_COLORS[item.cardedOrLoose] ?? 'bg-gray-100 text-gray-600'}`}
-                      >
-                        {item.cardedOrLoose.charAt(0).toUpperCase() + item.cardedOrLoose.slice(1)}
-                      </span>
-                    )}
-                    {item.quantity > 1 && (
-                      <span className="text-xs text-gray-400">×{item.quantity}</span>
-                    )}
+              <div className="flex items-center gap-4">
+                {/* Thumbnail — first photo if available */}
+                {item.photos[0] ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={item.photos[0].url}
+                    alt=""
+                    className="w-14 h-14 rounded-md object-cover border border-gray-200 shrink-0 bg-gray-100"
+                  />
+                ) : (
+                  <div className="w-14 h-14 rounded-md border border-dashed border-gray-200 bg-gray-50 shrink-0 flex items-center justify-center">
+                    <span className="text-xs text-gray-300">No photo</span>
                   </div>
+                )}
+
+                {/* Text content */}
+                <div className="flex-1 min-w-0 flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <p className="font-medium text-gray-900 truncate">
+                      {displayName(item)}
+                      {item.year && (
+                        <span className="ml-2 text-sm font-normal text-gray-500">
+                          {item.year}
+                        </span>
+                      )}
+                    </p>
+                    <div className="flex flex-wrap items-center gap-2 mt-1.5">
+                      {item.condition && (
+                        <span
+                          className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${CONDITION_COLORS[item.condition] ?? 'bg-gray-100 text-gray-600'}`}
+                        >
+                          {CONDITION_LABELS[item.condition] ?? item.condition}
+                        </span>
+                      )}
+                      {item.cardedOrLoose && (
+                        <span
+                          className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${CARDED_LOOSE_COLORS[item.cardedOrLoose] ?? 'bg-gray-100 text-gray-600'}`}
+                        >
+                          {item.cardedOrLoose.charAt(0).toUpperCase() + item.cardedOrLoose.slice(1)}
+                        </span>
+                      )}
+                      {item.quantity > 1 && (
+                        <span className="text-xs text-gray-400">×{item.quantity}</span>
+                      )}
+                    </div>
+                  </div>
+                  <p className="text-xs text-gray-400 shrink-0 mt-0.5">
+                    {item.createdAt.toLocaleDateString()}
+                  </p>
                 </div>
-                <p className="text-xs text-gray-400 shrink-0 mt-0.5">
-                  {item.createdAt.toLocaleDateString()}
-                </p>
               </div>
             </Link>
           ))}
