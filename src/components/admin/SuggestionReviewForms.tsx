@@ -8,15 +8,7 @@ import {
   markSuggestionDuplicate,
   type AdminSuggestionActionState,
 } from '@/lib/actions/adminCatalogSuggestions'
-
-type CatalogOption = {
-  id: string
-  brand: string
-  name: string
-  year: number | null
-  color: string | null
-  series: string | null
-}
+import { CatalogModelSearch } from '@/components/shared/CatalogModelSearch'
 
 function SubmitButton({ label }: { label: string }) {
   const { pending } = useFormStatus()
@@ -217,13 +209,11 @@ export function SuggestionRejectForm({ suggestionId }: { suggestionId: string })
 type DuplicateFormProps = {
   suggestionId: string
   hasCollectionItem: boolean
-  catalogModels: CatalogOption[]
 }
 
 export function SuggestionDuplicateForm({
   suggestionId,
   hasCollectionItem,
-  catalogModels,
 }: DuplicateFormProps) {
   const action = markSuggestionDuplicate.bind(null, suggestionId)
   const [state, formAction] = useActionState<AdminSuggestionActionState, FormData>(action, null)
@@ -242,21 +232,10 @@ export function SuggestionDuplicateForm({
       <form action={formAction} className="space-y-4">
         <div className="flex flex-col gap-1">
           <label className="text-sm font-medium text-gray-700">Existing catalog model *</label>
-          <select
-            name="existingCatalogId"
-            defaultValue=""
-            className={`${inputCls(!!errors.existingCatalogId)} bg-white`}
-          >
-            <option value="">Select existing model…</option>
-            {catalogModels.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.brand} {m.name}
-                {m.year ? ` (${m.year})` : ''}
-                {m.color ? ` — ${m.color}` : ''}
-                {m.series ? ` [${m.series}]` : ''}
-              </option>
-            ))}
-          </select>
+          <p className="text-xs text-gray-400 mb-1">
+            Search for the existing catalog model this suggestion duplicates.
+          </p>
+          <CatalogModelSearch name="existingCatalogId" />
           <FieldError message={errors.existingCatalogId?.[0]} />
         </div>
 

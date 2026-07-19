@@ -35,47 +35,41 @@ export default async function AdminCatalogSuggestionDetailPage({
 }) {
   const { id } = await params
 
-  const [suggestion, catalogModels] = await Promise.all([
-    prisma.catalogSuggestion.findUnique({
-      where: { id },
-      select: {
-        id:                    true,
-        brand:                 true,
-        name:                  true,
-        series:                true,
-        year:                  true,
-        color:                 true,
-        scale:                 true,
-        userNotes:             true,
-        adminNotes:            true,
-        aiExtractionConfidence: true,
-        status:                true,
-        reviewedAt:            true,
-        createdAt:             true,
-        profile: { select: { id: true, name: true, email: true } },
-        // Only safe catalog-level CollectionItem fields — no private data
-        collectionItem: {
-          select: {
-            id:           true,
-            brand:        true,
-            name:         true,
-            series:       true,
-            year:         true,
-            color:        true,
-            scale:        true,
-            condition:    true,
-            cardedOrLoose: true,
-            // NOT selected: notes, purchasePrice, purchaseDate, quantity, photos
-          },
+  const suggestion = await prisma.catalogSuggestion.findUnique({
+    where: { id },
+    select: {
+      id:                    true,
+      brand:                 true,
+      name:                  true,
+      series:                true,
+      year:                  true,
+      color:                 true,
+      scale:                 true,
+      userNotes:             true,
+      adminNotes:            true,
+      aiExtractionConfidence: true,
+      status:                true,
+      reviewedAt:            true,
+      createdAt:             true,
+      profile: { select: { id: true, name: true, email: true } },
+      // Only safe catalog-level CollectionItem fields — no private data
+      collectionItem: {
+        select: {
+          id:           true,
+          brand:        true,
+          name:         true,
+          series:       true,
+          year:         true,
+          color:        true,
+          scale:        true,
+          condition:    true,
+          cardedOrLoose: true,
+          // NOT selected: notes, purchasePrice, purchaseDate, quantity, photos
         },
-        approvedCatalog: { select: { id: true, brand: true, name: true } },
       },
-    }),
-    prisma.catalogModel.findMany({
-      orderBy: [{ brand: 'asc' }, { name: 'asc' }],
-      select: { id: true, brand: true, name: true, year: true, color: true, series: true },
-    }),
-  ])
+      approvedCatalog: { select: { id: true, brand: true, name: true } },
+    },
+  })
 
   if (!suggestion) notFound()
 
@@ -305,7 +299,6 @@ export default async function AdminCatalogSuggestionDetailPage({
           <SuggestionDuplicateForm
             suggestionId={suggestion.id}
             hasCollectionItem={hasItem}
-            catalogModels={catalogModels}
           />
         </div>
       )}
