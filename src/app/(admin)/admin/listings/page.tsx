@@ -78,6 +78,7 @@ export default async function AdminListingsPage({
         select: {
           sku: true,
           catalog: { select: { brand: true, name: true } },
+          _count: { select: { photos: true } },
         },
       },
     },
@@ -132,11 +133,18 @@ export default async function AdminListingsPage({
                   </td>
                   <td className="px-4 py-3">${listing.price.toFixed(2)}</td>
                   <td className="px-4 py-3">
-                    <span
-                      className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_COLORS[listing.status] ?? 'bg-gray-100 text-gray-600'}`}
-                    >
-                      {STATUS_LABELS[listing.status] ?? listing.status}
-                    </span>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span
+                        className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_COLORS[listing.status] ?? 'bg-gray-100 text-gray-600'}`}
+                      >
+                        {STATUS_LABELS[listing.status] ?? listing.status}
+                      </span>
+                      {listing.status === 'active' && listing.item._count.photos === 0 && (
+                        <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
+                          No item photos
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="px-4 py-3 text-gray-500 text-xs">
                     {listing.createdAt.toLocaleDateString()}

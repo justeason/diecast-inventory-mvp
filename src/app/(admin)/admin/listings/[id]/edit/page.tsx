@@ -12,7 +12,15 @@ export default async function EditListingPage({
 
   const listing = await prisma.listing.findUnique({
     where: { id },
-    include: { item: { include: { catalog: true, location: true } } },
+    include: {
+      item: {
+        include: {
+          catalog: true,
+          location: true,
+          _count: { select: { photos: true } },
+        },
+      },
+    },
   })
 
   if (!listing) notFound()
@@ -33,6 +41,12 @@ export default async function EditListingPage({
           </Link>
         </div>
       </div>
+      {listing.status === 'active' && listing.item._count.photos === 0 && (
+        <div className="mb-6 max-w-lg rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          This listing has no actual item photos. Buyers may see a catalog reference image if
+          available, but actual item photos are recommended.
+        </div>
+      )}
       <EditListingForm listing={listing} />
     </>
   )

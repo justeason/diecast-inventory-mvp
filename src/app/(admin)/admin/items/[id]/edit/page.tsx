@@ -16,7 +16,7 @@ export default async function EditItemPage({
       where: { id },
       include: {
         photos: { select: { url: true, type: true }, orderBy: { sortOrder: 'asc' } },
-        listing: { select: { id: true } },
+        listing: { select: { id: true, status: true } },
       },
     }),
     prisma.catalogModel.findMany({ orderBy: [{ brand: 'asc' }, { name: 'asc' }] }),
@@ -56,6 +56,13 @@ export default async function EditItemPage({
           </Link>
         </div>
       </div>
+
+      {item.listing?.status === 'active' && item.photos.length === 0 && (
+        <div className="mb-6 max-w-2xl rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          This item is listed without actual item photos. Add item photos when possible so buyers
+          can verify condition.
+        </div>
+      )}
 
       {item.photos.length > 0 && (
         <div className="mb-6 max-w-2xl">
