@@ -68,7 +68,12 @@ export default async function CollectionItemDetailPage({
   const item = await prisma.collectionItem.findFirst({
     where: { id, profileId: session.profileId },
     include: {
-      catalog: { select: { id: true, brand: true, name: true, year: true, color: true, series: true, scale: true } },
+      catalog: {
+        select: {
+          id: true, brand: true, name: true, year: true, color: true, series: true, scale: true,
+          photos: { take: 1, orderBy: { sortOrder: 'asc' }, select: { url: true, altText: true } },
+        },
+      },
       photos:  { orderBy: { sortOrder: 'asc' } },
       catalogSuggestions: {
         orderBy: { createdAt: 'desc' },
@@ -147,6 +152,22 @@ export default async function CollectionItemDetailPage({
                 </div>
               </div>
             ))}
+          </div>
+        )}
+
+        {/* Catalog reference image — shown only when user has no own photos */}
+        {item.photos.length === 0 && item.catalog?.photos?.[0] && (
+          <div className="mb-4 rounded-md border border-gray-100 bg-gray-50 p-4">
+            <p className="text-sm font-medium text-gray-700 mb-0.5">Model reference image</p>
+            <p className="text-xs text-gray-400 mb-3">
+              This is a public catalog reference image, not your uploaded photo of this specific item.
+            </p>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={item.catalog.photos[0].url}
+              alt={item.catalog.photos[0].altText ?? `${item.catalog.brand} ${item.catalog.name}`}
+              className="max-w-[180px] rounded-md border border-gray-200 object-contain bg-white"
+            />
           </div>
         )}
 

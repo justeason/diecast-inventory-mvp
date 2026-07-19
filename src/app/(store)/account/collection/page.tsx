@@ -71,8 +71,14 @@ export default async function CollectionListPage() {
       cardedOrLoose: true,
       quantity:      true,
       createdAt:     true,
-      catalog:       { select: { brand: true, name: true } },
-      photos:        { orderBy: { sortOrder: 'asc' }, take: 1, select: { url: true } },
+      catalog: {
+        select: {
+          brand: true,
+          name:  true,
+          photos: { take: 1, orderBy: { sortOrder: 'asc' }, select: { url: true, altText: true } },
+        },
+      },
+      photos: { orderBy: { sortOrder: 'asc' }, take: 1, select: { url: true } },
     },
   })
 
@@ -107,21 +113,32 @@ export default async function CollectionListPage() {
         </div>
       ) : (
         <div className="space-y-3">
-          {items.map((item) => (
+          {items.map((item) => {
+            const ownPhoto = item.photos[0]
+            const catalogPhoto = item.catalog?.photos?.[0]
+            const photoUrl = ownPhoto?.url ?? catalogPhoto?.url ?? null
+            const isRefImage = !ownPhoto && !!catalogPhoto
+
+            return (
             <Link
               key={item.id}
               href={`/account/collection/${item.id}`}
               className="block rounded-md border border-gray-200 bg-white px-4 py-4 hover:border-gray-300 hover:bg-gray-50 transition-colors"
             >
               <div className="flex items-center gap-4">
-                {/* Thumbnail — first photo if available */}
-                {item.photos[0] ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={item.photos[0].url}
-                    alt=""
-                    className="w-14 h-14 rounded-md object-cover border border-gray-200 shrink-0 bg-gray-100"
-                  />
+                {/* Thumbnail — user photo first, catalog reference fallback, then placeholder */}
+                {photoUrl ? (
+                  <div className="shrink-0 flex flex-col items-center gap-0.5 w-14">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={photoUrl}
+                      alt=""
+                      className="w-14 h-14 rounded-md object-cover border border-gray-200 bg-gray-100"
+                    />
+                    {isRefImage && (
+                      <span className="text-[9px] leading-none text-gray-400">Reference</span>
+                    )}
+                  </div>
                 ) : (
                   <div className="w-14 h-14 rounded-md border border-dashed border-gray-200 bg-gray-50 shrink-0 flex items-center justify-center">
                     <span className="text-xs text-gray-300">No photo</span>
@@ -165,7 +182,8 @@ export default async function CollectionListPage() {
                 </div>
               </div>
             </Link>
-          ))}
+            )
+          })}
         </div>
       )}
     </div>
