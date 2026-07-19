@@ -11,6 +11,7 @@ const navLinks = [
   { href: '/admin/customers', label: 'Customers' },
   { href: '/admin/seller-profiles', label: 'Sellers' },
   { href: '/admin/intake', label: 'Intake' },
+  { href: '/admin/catalog-suggestions', label: 'Suggestions' },
   { href: '/admin/analytics', label: 'Analytics' },
 ]
 

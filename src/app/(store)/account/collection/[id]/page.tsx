@@ -7,6 +7,7 @@ import { deleteCollectionItem } from '@/lib/actions/collectionItems'
 import { deleteCollectionPhoto } from '@/lib/actions/collectionPhotos'
 import { CollectionPhotoUpload } from '@/components/store/CollectionPhotoUpload'
 import { CollectionAiScan } from '@/components/store/CollectionAiScan'
+import { CatalogSuggestionForm } from '@/components/store/CatalogSuggestionForm'
 
 export const dynamic = 'force-dynamic'
 
@@ -69,6 +70,11 @@ export default async function CollectionItemDetailPage({
     include: {
       catalog: { select: { id: true, brand: true, name: true, year: true, color: true, series: true, scale: true } },
       photos:  { orderBy: { sortOrder: 'asc' } },
+      catalogSuggestions: {
+        orderBy: { createdAt: 'desc' },
+        take: 1,
+        select: { id: true, status: true, adminNotes: true },
+      },
     },
   })
   if (!item) notFound()
@@ -159,6 +165,20 @@ export default async function CollectionItemDetailPage({
         aiExtractionNotes={item.aiExtractionNotes}
         aiExtractedAt={item.aiExtractedAt}
       />
+
+      {/* Catalog suggestion — only when no catalog match yet */}
+      {!item.catalogId && (
+        <CatalogSuggestionForm
+          itemId={item.id}
+          brand={item.brand}
+          name={item.name}
+          series={item.series}
+          year={item.year}
+          color={item.color}
+          scale={item.scale}
+          latestSuggestion={item.catalogSuggestions[0] ?? null}
+        />
+      )}
 
       {/* Item fields */}
       <div className="rounded-md border border-gray-200 bg-gray-50 p-5 mb-6">
