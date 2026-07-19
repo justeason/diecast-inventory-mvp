@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation'
 import { getBuyerSession } from '@/lib/buyerSession'
 import { prisma } from '@/lib/prisma'
 import { CollectionItemForm } from '@/components/store/CollectionItemForm'
+import { formatCatalogResult } from '@/lib/catalogFormat'
 
 export const dynamic = 'force-dynamic'
 
@@ -21,16 +22,22 @@ export default async function EditCollectionItemPage({
   const session = await getBuyerSession()
   if (!session) notFound()
 
-  const [item, catalogModels] = await Promise.all([
-    prisma.collectionItem.findFirst({
-      where: { id, profileId: session.profileId },
-    }),
-    prisma.catalogModel.findMany({
-      orderBy: [{ brand: 'asc' }, { name: 'asc' }],
-      select: { id: true, brand: true, name: true, year: true, color: true, series: true },
-    }),
-  ])
+  const item = await prisma.collectionItem.findFirst({
+    where: { id, profileId: session.profileId },
+  })
   if (!item) notFound()
+
+  // Fetch only the linked catalog model (if any) for the search component's initial label
+  const selectedCatalog = item.catalogId
+    ? await prisma.catalogModel.findUnique({
+        where: { id: item.catalogId },
+        select: { id: true, brand: true, name: true, year: true, color: true, series: true, scale: true },
+      })
+    : null
+
+  const initialCatalog = selectedCatalog
+    ? { id: selectedCatalog.id, label: formatCatalogResult(selectedCatalog) }
+    : null
 
   return (
     <div className="max-w-lg">
@@ -43,7 +50,7 @@ export default async function EditCollectionItemPage({
         </Link>
       </div>
       <h1 className="text-2xl font-bold text-gray-900 mb-6">Edit Collection Item</h1>
-      <CollectionItemForm mode="edit" item={item} catalogModels={catalogModels} />
+      <CollectionItemForm mode="edit" item={item} initialCatalog={initialCatalog} />
     </div>
   )
 }

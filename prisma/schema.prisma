@@ -22,6 +22,9 @@ model CatalogModel {
   items           ItemInstance[]
   collectionItems CollectionItem[]
   suggestionsApproved CatalogSuggestion[] @relation("SuggestionApproval")
+
+  @@index([brand])
+  @@index([name])
 }
 
 model ItemInstance {

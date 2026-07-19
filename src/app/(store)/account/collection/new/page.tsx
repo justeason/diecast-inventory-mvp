@@ -2,7 +2,6 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { getBuyerSession } from '@/lib/buyerSession'
-import { prisma } from '@/lib/prisma'
 import { CollectionItemForm } from '@/components/store/CollectionItemForm'
 
 export const dynamic = 'force-dynamic'
@@ -16,11 +15,6 @@ export default async function NewCollectionItemPage() {
   const session = await getBuyerSession()
   if (!session) notFound()
 
-  const catalogModels = await prisma.catalogModel.findMany({
-    orderBy: [{ brand: 'asc' }, { name: 'asc' }],
-    select: { id: true, brand: true, name: true, year: true, color: true, series: true },
-  })
-
   return (
     <div className="max-w-lg">
       <div className="mb-6">
@@ -29,7 +23,7 @@ export default async function NewCollectionItemPage() {
         </Link>
       </div>
       <h1 className="text-2xl font-bold text-gray-900 mb-6">Add to Collection</h1>
-      <CollectionItemForm mode="create" catalogModels={catalogModels} />
+      <CollectionItemForm mode="create" />
     </div>
   )
 }

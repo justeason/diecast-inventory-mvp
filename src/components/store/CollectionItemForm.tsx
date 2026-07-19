@@ -1,13 +1,15 @@
 'use client'
 
-import { useActionState } from 'react'
+import { useState, useActionState } from 'react'
 import Link from 'next/link'
-import type { CatalogModel, CollectionItem } from '@prisma/client'
+import type { CollectionItem } from '@prisma/client'
 import {
   createCollectionItem,
   updateCollectionItem,
   type CollectionItemActionState,
 } from '@/lib/actions/collectionItems'
+import { CatalogModelSearch } from '@/components/shared/CatalogModelSearch'
+import type { CatalogSearchResult } from '@/lib/catalogFormat'
 
 const CONDITION_OPTIONS = [
   { value: 'mint',      label: 'Mint' },
@@ -23,28 +25,17 @@ const CARDED_LOOSE_OPTIONS = [
   { value: 'loose',  label: 'Loose (removed from packaging)' },
 ]
 
-type CatalogOption = Pick<CatalogModel, 'id' | 'brand' | 'name' | 'year' | 'color' | 'series'>
-
 type CreateProps = {
   mode: 'create'
-  catalogModels: CatalogOption[]
 }
 
 type EditProps = {
   mode: 'edit'
   item: CollectionItem
-  catalogModels: CatalogOption[]
+  initialCatalog: { id: string; label: string } | null
 }
 
 type Props = CreateProps | EditProps
-
-function formatCatalogOption(m: CatalogOption): string {
-  const parts = [m.brand, m.name]
-  if (m.year) parts.push(`(${m.year})`)
-  if (m.color) parts.push(`— ${m.color}`)
-  if (m.series) parts.push(`[${m.series}]`)
-  return parts.join(' ')
-}
 
 function formatDateForInput(d: Date | string | null | undefined): string {
   if (!d) return ''
@@ -60,7 +51,14 @@ function FieldError({ message }: { message?: string }) {
 export function CollectionItemForm(props: Props) {
   const isCreate = props.mode === 'create'
   const item = isCreate ? null : (props as EditProps).item
-  const { catalogModels } = props
+  const initialCatalog = !isCreate ? (props as EditProps).initialCatalog : null
+
+  const initialCatalogId = initialCatalog?.id ?? ''
+  const initialCatalogLabel = initialCatalog?.label ?? ''
+  // Pre-fill search query from item fields when no catalog is linked yet
+  const initialQuery = !isCreate && !initialCatalogId
+    ? (item?.brand || item?.name || '')
+    : ''
 
   const action = isCreate
     ? createCollectionItem
@@ -73,6 +71,24 @@ export function CollectionItemForm(props: Props) {
 
   const errors = state?.errors ?? {}
   const cancelHref = item ? `/account/collection/${item.id}` : '/account/collection'
+
+  // Controlled state for identification fields — allows prefill on catalog select
+  const [brandValue, setBrandValue] = useState(item?.brand ?? '')
+  const [nameValue, setNameValue] = useState(item?.name ?? '')
+  const [seriesValue, setSeriesValue] = useState(item?.series ?? '')
+  const [yearValue, setYearValue] = useState(item?.year?.toString() ?? '')
+  const [colorValue, setColorValue] = useState(item?.color ?? '')
+  const [scaleValue, setScaleValue] = useState(item?.scale ?? '')
+
+  function handleCatalogSelect(model: CatalogSearchResult | null) {
+    if (!model) return // clearing does not modify text fields
+    if (!brandValue) setBrandValue(model.brand)
+    if (!nameValue) setNameValue(model.name)
+    if (!seriesValue && model.series) setSeriesValue(model.series)
+    if (!yearValue && model.year) setYearValue(model.year.toString())
+    if (!colorValue && model.color) setColorValue(model.color)
+    if (!scaleValue && model.scale) setScaleValue(model.scale)
+  }
 
   const inputClass = (field: string) =>
     `w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900 ${
@@ -93,28 +109,22 @@ export function CollectionItemForm(props: Props) {
         <div>
           <h2 className="text-sm font-semibold text-gray-900">Item identification</h2>
           <p className="text-xs text-gray-500 mt-0.5">
-            At least one of catalog match, brand, or name is required.
+            Search for a catalog model, or fill in the fields below manually.
           </p>
         </div>
 
-        {/* Catalog model (optional) */}
+        {/* Catalog model search */}
         <div className="flex flex-col gap-1">
-          <label htmlFor="catalogId" className="text-sm font-medium text-gray-700">
+          <label className="text-sm font-medium text-gray-700">
             Catalog model <span className="font-normal text-gray-400">(optional)</span>
           </label>
-          <select
-            id="catalogId"
+          <CatalogModelSearch
             name="catalogId"
-            defaultValue={item?.catalogId ?? ''}
-            className={inputClass('catalogId')}
-          >
-            <option value="">No catalog match</option>
-            {catalogModels.map((m) => (
-              <option key={m.id} value={m.id}>
-                {formatCatalogOption(m)}
-              </option>
-            ))}
-          </select>
+            defaultValue={initialCatalogId}
+            defaultLabel={initialCatalogLabel}
+            initialQuery={initialQuery}
+            onSelect={handleCatalogSelect}
+          />
           <p className="text-xs text-gray-400">
             Linking to a catalog model is optional. Your collection details stay private and do not
             create or modify any public catalog records.
@@ -129,7 +139,8 @@ export function CollectionItemForm(props: Props) {
             id="brand"
             name="brand"
             type="text"
-            defaultValue={item?.brand ?? ''}
+            value={brandValue}
+            onChange={(e) => setBrandValue(e.target.value)}
             placeholder="e.g. Hot Wheels, Matchbox"
             className={inputClass('brand')}
           />
@@ -143,7 +154,8 @@ export function CollectionItemForm(props: Props) {
             id="name"
             name="name"
             type="text"
-            defaultValue={item?.name ?? ''}
+            value={nameValue}
+            onChange={(e) => setNameValue(e.target.value)}
             placeholder="e.g. Ferrari 308 GTS"
             className={inputClass('name')}
           />
@@ -160,7 +172,8 @@ export function CollectionItemForm(props: Props) {
               type="number"
               min="1950"
               max="2100"
-              defaultValue={item?.year ?? ''}
+              value={yearValue}
+              onChange={(e) => setYearValue(e.target.value)}
               placeholder="e.g. 1995"
               className={inputClass('year')}
             />
@@ -172,11 +185,11 @@ export function CollectionItemForm(props: Props) {
               id="series"
               name="series"
               type="text"
-              defaultValue={item?.series ?? ''}
+              value={seriesValue}
+              onChange={(e) => setSeriesValue(e.target.value)}
               placeholder="e.g. Treasure Hunt"
               className={inputClass('series')}
             />
-            <FieldError message={errors.series?.[0]} />
           </div>
         </div>
 
@@ -188,7 +201,8 @@ export function CollectionItemForm(props: Props) {
               id="color"
               name="color"
               type="text"
-              defaultValue={item?.color ?? ''}
+              value={colorValue}
+              onChange={(e) => setColorValue(e.target.value)}
               placeholder="e.g. Red"
               className={inputClass('color')}
             />
@@ -200,7 +214,8 @@ export function CollectionItemForm(props: Props) {
               id="scale"
               name="scale"
               type="text"
-              defaultValue={item?.scale ?? ''}
+              value={scaleValue}
+              onChange={(e) => setScaleValue(e.target.value)}
               placeholder="e.g. 1:64"
               className={inputClass('scale')}
             />
