@@ -154,7 +154,10 @@ export default async function BrowsePage({
           cardedOrLoose: true,
           condition: true,
           catalog: {
-            select: { brand: true, name: true, year: true, series: true, color: true },
+            select: {
+              brand: true, name: true, year: true, series: true, color: true,
+              photos: { take: 1, orderBy: { sortOrder: 'asc' }, select: { url: true, altText: true } },
+            },
           },
           photos: { where: { type: 'front' }, take: 1, select: { url: true } },
         },
@@ -220,13 +223,21 @@ export default async function BrowsePage({
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-          {listings.map((listing) => (
-            <ListingCard
-              key={listing.id}
-              listing={listing}
-              photoUrl={listing.item.photos[0]?.url ?? null}
-            />
-          ))}
+          {listings.map((listing) => {
+            const itemPhoto = listing.item.photos[0]
+            const catalogPhoto = listing.item.catalog.photos[0]
+            const photoUrl = itemPhoto?.url ?? catalogPhoto?.url ?? null
+            const imageSource: 'item' | 'catalog' | 'none' =
+              itemPhoto ? 'item' : catalogPhoto ? 'catalog' : 'none'
+            return (
+              <ListingCard
+                key={listing.id}
+                listing={listing}
+                photoUrl={photoUrl}
+                imageSource={imageSource}
+              />
+            )
+          })}
         </div>
       )}
 

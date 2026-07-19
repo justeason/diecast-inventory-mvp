@@ -89,6 +89,7 @@ export default async function ListingDetailPage({
               series: true,
               color: true,
               scale: true,
+              photos: { take: 1, orderBy: { sortOrder: 'asc' }, select: { url: true, altText: true } },
             },
           },
           photos: {
@@ -105,6 +106,7 @@ export default async function ListingDetailPage({
   const { item } = listing
   const { catalog } = item
   const photos = item.photos
+  const catalogPhoto = catalog.photos[0] ?? null
 
   const mainPhotoUrl = photos.find((p) => p.type === 'front')?.url ?? photos[0]?.url ?? null
 
@@ -127,8 +129,27 @@ export default async function ListingDetailPage({
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
-        {/* Photo gallery */}
-        <PhotoGallery photos={photos} title={listing.title} />
+        {/* Photo column — actual item photos, then catalog reference if none */}
+        <div className="space-y-4">
+          <PhotoGallery photos={photos} title={listing.title} />
+
+          {photos.length === 0 && catalogPhoto && (
+            <div className="rounded-md border border-gray-100 bg-gray-50 p-4">
+              <p className="text-sm font-medium text-gray-700 mb-0.5">Model reference image</p>
+              <p className="text-xs text-gray-400 mb-3">
+                This is a catalog reference image, not a photo of this specific item. Actual
+                appearance may differ.
+              </p>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={catalogPhoto.url}
+                alt={catalogPhoto.altText ?? `${catalog.brand} ${catalog.name} — catalog reference`}
+                loading="lazy"
+                className="max-w-xs rounded-md border border-gray-200 object-contain bg-white"
+              />
+            </div>
+          )}
+        </div>
 
         <div>
           <h1 className="text-2xl font-bold text-gray-900 leading-snug">{listing.title}</h1>

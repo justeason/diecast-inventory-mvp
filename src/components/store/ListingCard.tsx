@@ -31,9 +31,10 @@ type Props = {
     }
   }
   photoUrl?: string | null
+  imageSource?: 'item' | 'catalog' | 'none'
 }
 
-export function ListingCard({ listing, photoUrl }: Props) {
+export function ListingCard({ listing, photoUrl, imageSource }: Props) {
   const { item } = listing
   const { catalog } = item
 
@@ -50,8 +51,13 @@ export function ListingCard({ listing, photoUrl }: Props) {
   return (
     <div className="rounded-lg border border-gray-200 overflow-hidden bg-white hover:border-gray-400 transition-colors">
       <Link href={`/browse/${listing.id}`} className="group block">
-        <div className="aspect-square overflow-hidden">
+        <div className="aspect-square overflow-hidden relative">
           <PhotoThumbnail photoUrl={photoUrl} alt={listing.title} size="fill" />
+          {imageSource === 'catalog' && (
+            <div className="absolute bottom-0 left-0 right-0 bg-gray-900/60 px-2 py-1">
+              <span className="text-xs text-white">Reference image</span>
+            </div>
+          )}
         </div>
 
         <div className="p-4 pb-3">
