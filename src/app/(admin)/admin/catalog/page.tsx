@@ -1,9 +1,13 @@
 import Link from 'next/link'
 import { prisma } from '@/lib/prisma'
+import { PhotoThumbnail } from '@/components/shared/PhotoThumbnail'
 
 export default async function AdminCatalogPage() {
   const models = await prisma.catalogModel.findMany({
-    include: { _count: { select: { items: true } } },
+    include: {
+      _count: { select: { items: true } },
+      photos: { take: 1, orderBy: { sortOrder: 'asc' }, select: { url: true, altText: true } },
+    },
     orderBy: [{ brand: 'asc' }, { name: 'asc' }],
   })
 
@@ -31,6 +35,7 @@ export default async function AdminCatalogPage() {
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr className="text-left text-gray-500">
+                <th className="px-4 py-3 font-medium">Photo</th>
                 <th className="px-4 py-3 font-medium">Brand</th>
                 <th className="px-4 py-3 font-medium">Name</th>
                 <th className="px-4 py-3 font-medium">Series</th>
@@ -44,6 +49,13 @@ export default async function AdminCatalogPage() {
             <tbody className="divide-y divide-gray-100">
               {models.map((model) => (
                 <tr key={model.id} className="hover:bg-gray-50">
+                  <td className="px-4 py-3">
+                    <PhotoThumbnail
+                      photoUrl={model.photos[0]?.url ?? null}
+                      alt={model.photos[0]?.altText ?? `${model.brand} ${model.name}`}
+                      size="sm"
+                    />
+                  </td>
                   <td className="px-4 py-3">{model.brand}</td>
                   <td className="px-4 py-3 font-medium">{model.name}</td>
                   <td className="px-4 py-3 text-gray-500">{model.series ?? '—'}</td>

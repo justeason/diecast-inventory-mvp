@@ -22,9 +22,21 @@ model CatalogModel {
   items           ItemInstance[]
   collectionItems CollectionItem[]
   suggestionsApproved CatalogSuggestion[] @relation("SuggestionApproval")
+  photos          CatalogModelPhoto[]
 
   @@index([brand])
   @@index([name])
+}
+
+model CatalogModelPhoto {
+  id        String       @id @default(cuid())
+  catalogId String
+  catalog   CatalogModel @relation(fields: [catalogId], references: [id], onDelete: Cascade)
+  url       String
+  altText   String?
+  sortOrder Int          @default(0)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
 }
 
 model ItemInstance {
