@@ -10,7 +10,7 @@ import { ALLOWED_MIME, validateBlobFile, uploadToBlob } from '@/lib/blobUpload'
 // Admin catalog photo actions rely on the (admin) route group middleware for auth,
 // consistent with all other admin server actions in this repo (catalog.ts, adminCatalogSuggestions.ts, etc.).
 
-const MAX_CATALOG_PHOTOS = 1 // MVP: one reference image per catalog model
+const MAX_CATALOG_PHOTOS = 3
 
 export type CatalogPhotoActionState = { error: string } | null
 
@@ -21,12 +21,19 @@ export async function uploadCatalogPhoto(
 ): Promise<CatalogPhotoActionState> {
   const catalog = await prisma.catalogModel.findUnique({
     where: { id: catalogId },
-    select: { id: true, _count: { select: { photos: true } } },
+    select: { id: true },
   })
   if (!catalog) return { error: 'Catalog model not found.' }
 
-  if (catalog._count.photos >= MAX_CATALOG_PHOTOS) {
-    return { error: 'This model already has a reference image. Delete the existing image before uploading a new one.' }
+  // Fetch existing photos to check count and determine next sortOrder
+  const existingPhotos = await prisma.catalogModelPhoto.findMany({
+    where: { catalogId },
+    orderBy: { sortOrder: 'desc' },
+    select: { sortOrder: true },
+  })
+
+  if (existingPhotos.length >= MAX_CATALOG_PHOTOS) {
+    return { error: 'This model already has the maximum of 3 reference images.' }
   }
 
   const file = formData.get('photo')
@@ -45,8 +52,10 @@ export async function uploadCatalogPhoto(
   const url = await uploadToBlob(pathname, file)
   if (!url) return { error: 'Upload failed. Please try again.' }
 
+  const nextSortOrder = existingPhotos.length > 0 ? existingPhotos[0].sortOrder + 1 : 0
+
   await prisma.catalogModelPhoto.create({
-    data: { catalogId, url, altText, sortOrder: 0 },
+    data: { catalogId, url, altText, sortOrder: nextSortOrder },
   })
 
   revalidatePath('/admin/catalog')
@@ -79,6 +88,40 @@ export async function updateCatalogPhotoAltText(
   redirect(`/admin/catalog/${catalogId}/edit`)
 }
 
+export async function setPrimaryCatalogPhoto(catalogId: string, photoId: string): Promise<void> {
+  const photo = await prisma.catalogModelPhoto.findFirst({
+    where: { id: photoId, catalogId },
+    select: { id: true },
+  })
+  if (!photo) {
+    redirect(`/admin/catalog/${catalogId}/edit`)
+  }
+
+  const allPhotos = await prisma.catalogModelPhoto.findMany({
+    where: { catalogId },
+    orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+    select: { id: true },
+  })
+
+  // Selected photo gets sortOrder 0; remaining keep their relative order
+  const reordered = [
+    allPhotos.find((p) => p.id === photo.id)!,
+    ...allPhotos.filter((p) => p.id !== photo.id),
+  ]
+
+  await prisma.$transaction(
+    reordered.map((p, i) =>
+      prisma.catalogModelPhoto.update({ where: { id: p.id }, data: { sortOrder: i } })
+    )
+  )
+
+  revalidatePath('/admin/catalog')
+  revalidatePath(`/admin/catalog/${catalogId}/edit`)
+  revalidatePath('/account/collection')
+  revalidatePath('/browse')
+  redirect(`/admin/catalog/${catalogId}/edit`)
+}
+
 export async function deleteCatalogPhoto(catalogId: string, photoId: string): Promise<void> {
   const photo = await prisma.catalogModelPhoto.findFirst({
     where: { id: photoId, catalogId },
@@ -101,7 +144,22 @@ export async function deleteCatalogPhoto(catalogId: string, photoId: string): Pr
     )
   }
 
+  // Compact sortOrder so remaining photos stay at 0, 1, 2 with no gaps
+  const remaining = await prisma.catalogModelPhoto.findMany({
+    where: { catalogId },
+    orderBy: { sortOrder: 'asc' },
+    select: { id: true },
+  })
+  for (let i = 0; i < remaining.length; i++) {
+    await prisma.catalogModelPhoto.update({
+      where: { id: remaining[i].id },
+      data: { sortOrder: i },
+    })
+  }
+
   revalidatePath('/admin/catalog')
   revalidatePath(`/admin/catalog/${catalogId}/edit`)
+  revalidatePath('/account/collection')
+  revalidatePath('/browse')
   redirect(`/admin/catalog/${catalogId}/edit`)
 }

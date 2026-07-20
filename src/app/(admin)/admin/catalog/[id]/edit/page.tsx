@@ -13,12 +13,13 @@ export default async function EditCatalogModelPage({
   const model = await prisma.catalogModel.findUnique({
     where: { id },
     include: {
-      photos: { orderBy: { sortOrder: 'asc' }, select: { id: true, url: true, altText: true } },
+      photos: {
+        orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+        select: { id: true, url: true, altText: true, sortOrder: true },
+      },
     },
   })
   if (!model) notFound()
-
-  const primaryPhoto = model.photos[0] ?? null
 
   return (
     <>
@@ -30,7 +31,7 @@ export default async function EditCatalogModelPage({
       </div>
       <CatalogModelForm model={model} />
       <div className="mt-8 pt-6 border-t border-gray-200 max-w-lg">
-        <CatalogPhotoUpload catalogId={model.id} photo={primaryPhoto} />
+        <CatalogPhotoUpload catalogId={model.id} photos={model.photos} />
       </div>
     </>
   )
