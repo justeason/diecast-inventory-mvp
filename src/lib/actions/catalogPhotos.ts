@@ -54,6 +54,31 @@ export async function uploadCatalogPhoto(
   redirect(`/admin/catalog/${catalogId}/edit`)
 }
 
+export async function updateCatalogPhotoAltText(
+  catalogId: string,
+  photoId: string,
+  _prev: CatalogPhotoActionState,
+  formData: FormData
+): Promise<CatalogPhotoActionState> {
+  const photo = await prisma.catalogModelPhoto.findFirst({
+    where: { id: photoId, catalogId },
+    select: { id: true },
+  })
+  if (!photo) return { error: 'Photo not found.' }
+
+  const raw = (formData.get('altText') as string | null)?.trim() ?? ''
+  const altText = raw.slice(0, 200) || null
+
+  await prisma.catalogModelPhoto.update({
+    where: { id: photo.id },
+    data: { altText },
+  })
+
+  revalidatePath('/admin/catalog')
+  revalidatePath(`/admin/catalog/${catalogId}/edit`)
+  redirect(`/admin/catalog/${catalogId}/edit`)
+}
+
 export async function deleteCatalogPhoto(catalogId: string, photoId: string): Promise<void> {
   const photo = await prisma.catalogModelPhoto.findFirst({
     where: { id: photoId, catalogId },
