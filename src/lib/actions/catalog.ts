@@ -1,6 +1,7 @@
 'use server'
 
 import { z } from 'zod'
+import { del } from '@vercel/blob'
 import { prisma } from '@/lib/prisma'
 import { redirect } from 'next/navigation'
 
@@ -86,6 +87,12 @@ export async function mergeCatalogModels(
       return { errors: { form: ['All selected models must share the same brand and name.'] } }
   }
 
+  // Collect duplicate catalog image URLs before the transaction — cascade delete removes the rows.
+  const duplicatePhotoUrls = await prisma.catalogModelPhoto.findMany({
+    where: { catalogId: { in: duplicateIds } },
+    select: { url: true },
+  })
+
   // Move items then delete duplicates — all in one transaction.
   try {
     await prisma.$transaction(async (tx) => {
@@ -99,6 +106,15 @@ export async function mergeCatalogModels(
     })
   } catch {
     return { errors: { form: ['Merge failed. Please try again.'] } }
+  }
+
+  // Best-effort blob cleanup after successful transaction — never blocks the merge.
+  for (const { url } of duplicatePhotoUrls) {
+    try {
+      await del(url)
+    } catch (err) {
+      console.error('[mergeCatalogModels] Failed to delete catalog image blob:', err)
+    }
   }
 
   redirect('/admin/catalog/duplicates')
