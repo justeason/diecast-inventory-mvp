@@ -1,5 +1,7 @@
 // size="sm"   → fixed 40×40, for table rows
-// size="fill" → fills parent container (place inside an aspect-ratio wrapper)
+// size="fill" → fills parent container (parent must have position: relative)
+
+import Image from 'next/image'
 
 type Props = {
   photoUrl?: string | null
@@ -7,24 +9,38 @@ type Props = {
   size?: 'sm' | 'fill'
 }
 
-const SIZE: Record<'sm' | 'fill', string> = {
+const PLACEHOLDER_CLS: Record<'sm' | 'fill', string> = {
   sm:   'h-10 w-10 shrink-0 rounded',
   fill: 'w-full h-full',
 }
 
 export function PhotoThumbnail({ photoUrl, alt, size = 'fill' }: Props) {
-  const cls = SIZE[size]
-
   if (!photoUrl) {
     return (
-      <div className={`${cls} bg-gray-100 flex items-center justify-center`}>
+      <div className={`${PLACEHOLDER_CLS[size]} bg-gray-100 flex items-center justify-center`}>
         <span className="text-gray-400 text-xs select-none">No photo</span>
       </div>
     )
   }
 
+  if (size === 'sm') {
+    return (
+      <Image
+        src={photoUrl}
+        alt={alt}
+        width={40}
+        height={40}
+        className="h-10 w-10 shrink-0 rounded object-cover bg-gray-100"
+      />
+    )
+  }
+
   return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img src={photoUrl} alt={alt} className={`${cls} object-cover bg-gray-100`} />
+    <Image
+      src={photoUrl}
+      alt={alt}
+      fill
+      className="object-cover bg-gray-100"
+    />
   )
 }

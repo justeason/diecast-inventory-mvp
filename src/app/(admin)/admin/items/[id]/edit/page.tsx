@@ -70,7 +70,7 @@ export default async function EditItemPage({
           <div className="flex flex-wrap gap-3">
             {item.photos.map((photo, i) => (
               <div key={i} className="flex flex-col gap-1">
-                <div className="h-32 w-32 overflow-hidden rounded-md">
+                <div className="relative h-32 w-32 overflow-hidden rounded-md">
                   <PhotoThumbnail photoUrl={photo.url} alt={`${photo.type} photo`} size="fill" />
                 </div>
                 <p className="text-xs text-gray-500 capitalize text-center">{photo.type}</p>
