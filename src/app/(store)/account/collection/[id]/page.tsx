@@ -80,6 +80,11 @@ export default async function CollectionItemDetailPage({
         take: 1,
         select: { id: true, status: true, adminNotes: true },
       },
+      sellerSubmissions: {
+        where: { status: { in: ['submitted', 'under_review', 'needs_info'] } },
+        select: { id: true },
+        take: 1,
+      },
     },
   })
   if (!item) notFound()
@@ -285,6 +290,34 @@ export default async function CollectionItemDetailPage({
         Added {item.createdAt.toLocaleDateString()}
         {item.updatedAt > item.createdAt && ` · Updated ${item.updatedAt.toLocaleDateString()}`}
       </p>
+
+      {/* Sell this item */}
+      <div className="pt-6 border-t border-gray-200 mb-6">
+        <p className="text-sm font-medium text-gray-700 mb-1">Sell this item</p>
+        {item.sellerSubmissions[0] ? (
+          <div className="space-y-1">
+            <p className="text-sm text-gray-500">You have an active sell request for this item.</p>
+            <Link
+              href="/account/sell"
+              className="text-sm font-medium text-gray-900 underline underline-offset-2"
+            >
+              View sell requests →
+            </Link>
+          </div>
+        ) : (
+          <div className="space-y-1">
+            <p className="text-xs text-gray-500 mb-2">
+              Interested in selling this? Submit a request and we&apos;ll review it.
+            </p>
+            <Link
+              href={`/account/collection/${item.id}/sell`}
+              className="inline-block rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+            >
+              Sell this item
+            </Link>
+          </div>
+        )}
+      </div>
 
       {/* Delete item */}
       <div className="pt-6 border-t border-gray-200">

@@ -23,6 +23,7 @@ model CatalogModel {
   collectionItems CollectionItem[]
   suggestionsApproved CatalogSuggestion[] @relation("SuggestionApproval")
   photos          CatalogModelPhoto[]
+  sellerSubmissions SellerSubmission[]
 
   @@index([brand])
   @@index([name])
@@ -106,6 +107,7 @@ model CustomerProfile {
   sellerProfile       SellerProfile?
   collectionItems     CollectionItem[]
   catalogSuggestions  CatalogSuggestion[]
+  sellerSubmissions   SellerSubmission[]
 }
 
 model SellerProfile {
@@ -216,6 +218,7 @@ model CollectionItem {
   updatedAt          DateTime             @updatedAt
   photos             CollectionItemPhoto[]
   catalogSuggestions CatalogSuggestion[]
+  sellerSubmissions  SellerSubmission[]
 }
 
 model CollectionItemPhoto {
@@ -259,6 +262,46 @@ model CatalogSuggestion {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model SellerSubmission {
+  id        String          @id @default(cuid())
+  profileId String
+  profile   CustomerProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  collectionItemId String?
+  collectionItem   CollectionItem? @relation(fields: [collectionItemId], references: [id], onDelete: SetNull)
+
+  catalogId String?
+  catalog   CatalogModel? @relation(fields: [catalogId], references: [id], onDelete: SetNull)
+
+  brand          String?
+  name           String?
+  series         String?
+  year           Int?
+  color          String?
+  scale          String?
+  cardedOrLoose  String?
+  condition      String?
+  conditionNotes String?
+  quantity       Int       @default(1)
+
+  saleTypePreference String?
+  expectedPrice      Float?
+  userNotes          String?
+
+  userMessage String?
+  adminNotes  String?
+
+  status     String    @default("submitted")
+  reviewedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([profileId])
+  @@index([status])
+  @@index([collectionItemId])
 }
 
 model IntakeDraft {
