@@ -129,6 +129,7 @@ export async function submitCollectionItemForSale(
   })
 
   revalidatePath('/account/sell')
+  revalidatePath('/account/collection')
   revalidatePath(`/account/collection/${collectionItemId}`)
   redirect('/account/sell')
 }
