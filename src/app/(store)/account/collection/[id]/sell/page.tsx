@@ -81,10 +81,10 @@ export default async function SellItemPage({
           </p>
           <div className="flex flex-col gap-1.5 pt-1">
             <Link
-              href="/account/sell"
+              href={`/account/sell/${activeSubmission.id}`}
               className="text-sm font-medium text-amber-900 underline underline-offset-2"
             >
-              View sell requests →
+              View sell request →
             </Link>
             <Link
               href={`/account/collection/${id}`}

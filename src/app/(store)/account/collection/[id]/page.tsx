@@ -90,6 +90,7 @@ export default async function CollectionItemDetailPage({
   if (!item) notFound()
 
   const deleteItemAction = deleteCollectionItem.bind(null, item.id)
+  const activeSubmission = item.sellerSubmissions[0] ?? null
 
   return (
     <div className="max-w-lg">
@@ -294,14 +295,14 @@ export default async function CollectionItemDetailPage({
       {/* Sell this item */}
       <div className="pt-6 border-t border-gray-200 mb-6">
         <p className="text-sm font-medium text-gray-700 mb-1">Sell this item</p>
-        {item.sellerSubmissions[0] ? (
+        {activeSubmission ? (
           <div className="space-y-1">
             <p className="text-sm text-gray-500">You have an active sell request for this item.</p>
             <Link
-              href="/account/sell"
+              href={`/account/sell/${activeSubmission.id}`}
               className="text-sm font-medium text-gray-900 underline underline-offset-2"
             >
-              View sell requests →
+              View sell request →
             </Link>
           </div>
         ) : (

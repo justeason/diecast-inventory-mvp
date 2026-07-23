@@ -8,6 +8,7 @@ import { revalidatePath } from 'next/cache'
 const VALID_SALE_TYPE_PREFS = ['consignment', 'buyout', 'unsure'] as const
 const VALID_CONDITIONS = ['mint', 'near_mint', 'good', 'fair', 'poor', 'damaged'] as const
 const ACTIVE_STATUSES = ['submitted', 'under_review', 'needs_info'] as const
+const WITHDRAWABLE_STATUSES = ['submitted', 'needs_info'] as const
 
 export type SellerSubmissionActionState = { errors: Record<string, string[]> } | null
 
@@ -132,4 +133,44 @@ export async function submitCollectionItemForSale(
   revalidatePath('/account/collection')
   revalidatePath(`/account/collection/${collectionItemId}`)
   redirect('/account/sell')
+}
+
+export async function withdrawSellerSubmission(
+  _prev: SellerSubmissionActionState,
+  formData: FormData
+): Promise<SellerSubmissionActionState> {
+  const session = await getBuyerSession()
+  if (!session) {
+    return { errors: { form: ['You must be signed in.'] } }
+  }
+
+  const submissionId = formData.get('submissionId')?.toString().trim() ?? ''
+  if (!submissionId) {
+    return { errors: { form: ['Sell request not found.'] } }
+  }
+
+  const submission = await prisma.sellerSubmission.findFirst({
+    where: { id: submissionId, profileId: session.profileId },
+    select: { id: true, status: true, collectionItemId: true },
+  })
+  if (!submission) {
+    return { errors: { form: ['Sell request not found.'] } }
+  }
+
+  if (!(WITHDRAWABLE_STATUSES as readonly string[]).includes(submission.status)) {
+    return { errors: { form: ['This sell request can no longer be withdrawn.'] } }
+  }
+
+  await prisma.sellerSubmission.update({
+    where: { id: submission.id },
+    data: { status: 'withdrawn' },
+  })
+
+  revalidatePath('/account/sell')
+  revalidatePath(`/account/sell/${submissionId}`)
+  revalidatePath('/account/collection')
+  if (submission.collectionItemId) {
+    revalidatePath(`/account/collection/${submission.collectionItemId}`)
+  }
+  redirect(`/account/sell/${submissionId}`)
 }
