@@ -86,6 +86,10 @@ export default async function AdminSellerSubmissionDetailPage({
       catalogId:          true,
       profile: { select: { id: true, name: true, email: true } },
       catalog: { select: { brand: true, name: true } },
+      photos: {
+        select: { id: true, url: true, sortOrder: true },
+        orderBy: { sortOrder: 'asc' },
+      },
       collectionItem: {
         select: {
           id: true,
@@ -102,7 +106,8 @@ export default async function AdminSellerSubmissionDetailPage({
   const itemTitle =
     [submission.brand, submission.name].filter(Boolean).join(' ') || 'Untitled item'
   const customerLabel = submission.profile.name ?? submission.profile.email
-  const photos = submission.collectionItem?.photos ?? []
+  const submissionPhotos = submission.photos
+  const collectionPhotos = submission.collectionItem?.photos ?? []
   const isTerminal = TERMINAL_STATUSES.has(submission.status)
 
   return (
@@ -270,15 +275,44 @@ export default async function AdminSellerSubmissionDetailPage({
         </div>
       </div>
 
+      {/* Submission photos — private review only */}
+      {submissionPhotos.length > 0 && (
+        <div className="mb-6">
+          <h2 className="text-sm font-semibold text-gray-900 mb-1">
+            Submission photos — private review only
+          </h2>
+          <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2 mb-3">
+            These photos were uploaded for this sell request and must not be used as public listing,
+            inventory, or catalog photos automatically.
+          </p>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            {submissionPhotos.map((photo) => (
+              <div
+                key={photo.id}
+                className="rounded-md border border-gray-200 bg-gray-50 overflow-hidden"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={photo.url}
+                  alt="Submission photo"
+                  loading="lazy"
+                  className="w-full aspect-square object-cover"
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Private collection photos — admin review only */}
-      {photos.length > 0 && (
+      {collectionPhotos.length > 0 && (
         <div className="mb-6">
           <h2 className="text-sm font-semibold text-gray-900 mb-1">Collection photos</h2>
           <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2 mb-3">
             User&apos;s private collection photos — admin review only. Do not share or copy.
           </p>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-            {photos.map((photo) => (
+            {collectionPhotos.map((photo) => (
               <div
                 key={photo.id}
                 className="rounded-md border border-gray-200 bg-gray-50 overflow-hidden"

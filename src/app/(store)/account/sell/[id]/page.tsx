@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation'
 import { getBuyerSession } from '@/lib/buyerSession'
 import { prisma } from '@/lib/prisma'
 import { WithdrawForm } from '@/components/store/WithdrawForm'
+import { SellerSubmissionPhotoUpload } from '@/components/store/SellerSubmissionPhotoUpload'
 
 export const dynamic = 'force-dynamic'
 
@@ -83,12 +84,17 @@ export default async function SellRequestDetailPage({
       collectionItemId:   true,
       createdAt:          true,
       updatedAt:          true,
+      photos: {
+        select: { id: true, url: true, sortOrder: true },
+        orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+      },
     },
   })
   if (!submission) notFound()
 
   const canWithdraw = WITHDRAWABLE_STATUSES.includes(submission.status)
   const isUnderReview = submission.status === 'under_review'
+  const canEditPhotos = ['submitted', 'needs_info'].includes(submission.status)
   const showUserMessage =
     !!submission.userMessage &&
     ['needs_info', 'declined'].includes(submission.status)
@@ -243,6 +249,19 @@ export default async function SellRequestDetailPage({
             )}
           </dl>
         </div>
+      </div>
+
+      {/* Submission photos */}
+      <div className="mb-6">
+        <h2 className="text-sm font-semibold text-gray-900 mb-1">Submission photos</h2>
+        <p className="text-xs text-gray-500 mb-3">
+          These photos are private and used only for admin review.
+        </p>
+        <SellerSubmissionPhotoUpload
+          submissionId={submission.id}
+          photos={submission.photos}
+          editable={canEditPhotos}
+        />
       </div>
 
       {/* Actions */}

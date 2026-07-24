@@ -299,9 +299,25 @@ model SellerSubmission {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  photos SellerSubmissionPhoto[]
+
   @@index([profileId])
   @@index([status])
   @@index([collectionItemId])
+}
+
+model SellerSubmissionPhoto {
+  id           String           @id @default(cuid())
+  submissionId String
+  submission   SellerSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  url       String
+  sortOrder Int      @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([submissionId])
 }
 
 model IntakeDraft {
