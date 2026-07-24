@@ -299,7 +299,8 @@ model SellerSubmission {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  photos SellerSubmissionPhoto[]
+  photos       SellerSubmissionPhoto[]
+  intakeDrafts IntakeDraft[]
 
   @@index([profileId])
   @@index([status])
@@ -347,6 +348,11 @@ model IntakeDraft {
   aiExtractionNotes      String?
   aiExtractionConfidence Float?
 
+  sellerSubmissionId String?
+  sellerSubmission   SellerSubmission? @relation(fields: [sellerSubmissionId], references: [id], onDelete: SetNull)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([sellerSubmissionId])
 }

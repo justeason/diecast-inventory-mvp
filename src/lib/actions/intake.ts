@@ -586,3 +586,66 @@ export async function uploadIntakePhoto(
 
   redirect(`/admin/intake/${draftId}/edit`)
 }
+
+// ─── Start Intake from Seller Submission ──────────────────────────────────────
+
+export async function startIntakeDraftFromSubmission(
+  submissionId: string,
+  formData: FormData
+): Promise<void> {
+  if (formData.get('_action') !== 'start-intake') {
+    redirect(`/admin/seller-submissions/${submissionId}`)
+  }
+
+  const submission = await prisma.sellerSubmission.findUnique({
+    where: { id: submissionId },
+    select: {
+      id:            true,
+      status:        true,
+      brand:         true,
+      name:          true,
+      series:        true,
+      year:          true,
+      color:         true,
+      scale:         true,
+      cardedOrLoose: true,
+      condition:     true,
+      conditionNotes: true,
+      intakeDrafts: {
+        where: { status: { notIn: ['rejected'] } },
+        select: { id: true },
+        orderBy: { createdAt: 'desc' },
+        take: 1,
+      },
+    },
+  })
+
+  if (!submission) redirect('/admin/seller-submissions')
+
+  if (submission.status !== 'approved_for_intake') {
+    redirect(`/admin/seller-submissions/${submissionId}`)
+  }
+
+  const existing = submission.intakeDrafts[0]
+  if (existing) {
+    redirect(`/admin/intake/${existing.id}/edit`)
+  }
+
+  const draft = await prisma.intakeDraft.create({
+    data: {
+      sellerSubmissionId: submissionId,
+      brand:          submission.brand,
+      name:           submission.name,
+      series:         submission.series,
+      year:           submission.year,
+      color:          submission.color,
+      scale:          submission.scale,
+      cardedOrLoose:  submission.cardedOrLoose,
+      condition:      submission.condition,
+      conditionNotes: submission.conditionNotes,
+      notes: 'Prefilled from seller submission. Verify all fields against the physical item.',
+    },
+  })
+
+  redirect(`/admin/intake/${draft.id}/edit`)
+}

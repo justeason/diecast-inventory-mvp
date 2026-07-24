@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { prisma } from '@/lib/prisma'
 import { SellerSubmissionStatusForm } from '@/components/admin/SellerSubmissionStatusForm'
+import { startIntakeDraftFromSubmission } from '@/lib/actions/intake'
 
 export const dynamic = 'force-dynamic'
 
@@ -99,6 +100,10 @@ export default async function AdminSellerSubmissionDetailPage({
           },
         },
       },
+      intakeDrafts: {
+        select: { id: true, status: true, createdAt: true, convertedItemId: true },
+        orderBy: { createdAt: 'desc' },
+      },
     },
   })
   if (!submission) notFound()
@@ -109,6 +114,7 @@ export default async function AdminSellerSubmissionDetailPage({
   const submissionPhotos = submission.photos
   const collectionPhotos = submission.collectionItem?.photos ?? []
   const isTerminal = TERMINAL_STATUSES.has(submission.status)
+  const activeIntakeDraft = submission.intakeDrafts.find((d) => d.status !== 'rejected')
 
   return (
     <div className="max-w-2xl">
@@ -329,6 +335,40 @@ export default async function AdminSellerSubmissionDetailPage({
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* Intake linkage */}
+      {submission.status === 'approved_for_intake' && (
+        <div className="mb-6 pt-6 border-t border-gray-200">
+          <h2 className="text-sm font-semibold text-gray-900 mb-3">Intake</h2>
+          {!activeIntakeDraft && (
+            <form action={startIntakeDraftFromSubmission.bind(null, submission.id)}>
+              <input type="hidden" name="_action" value="start-intake" />
+              <button
+                type="submit"
+                className="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700 transition-colors"
+              >
+                Start intake draft
+              </button>
+            </form>
+          )}
+          {activeIntakeDraft && activeIntakeDraft.status !== 'converted' && (
+            <Link
+              href={`/admin/intake/${activeIntakeDraft.id}/edit`}
+              className="inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+            >
+              Resume intake draft →
+            </Link>
+          )}
+          {activeIntakeDraft && activeIntakeDraft.status === 'converted' && (
+            <Link
+              href={`/admin/intake/${activeIntakeDraft.id}/edit`}
+              className="inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+            >
+              View converted intake →
+            </Link>
+          )}
         </div>
       )}
 

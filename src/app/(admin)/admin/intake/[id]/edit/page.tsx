@@ -136,6 +136,20 @@ export default async function EditIntakeDraftPage({
         </Link>
       </div>
 
+      {/* Seller submission back-link */}
+      {draft.sellerSubmissionId && (
+        <div className="mb-6 rounded-md bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800">
+          Fields prefilled from{' '}
+          <Link
+            href={`/admin/seller-submissions/${draft.sellerSubmissionId}`}
+            className="font-medium underline hover:no-underline"
+          >
+            seller&apos;s submission
+          </Link>
+          . Verify all details against the physical item before converting.
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-start justify-between mb-6">
         <h1 className="text-2xl font-bold text-gray-900">
