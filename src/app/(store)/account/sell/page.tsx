@@ -62,19 +62,27 @@ export default async function SellRequestsPage() {
 
   return (
     <div className="max-w-2xl">
-      <div className="flex items-center justify-between mb-8">
+      <div className="flex items-start justify-between gap-4 mb-8">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Sell Requests</h1>
           <p className="text-sm text-gray-500 mt-1">
             {submissions.length} request{submissions.length !== 1 ? 's' : ''}
           </p>
         </div>
-        <Link
-          href="/account/collection"
-          className="text-sm text-gray-500 hover:text-gray-900 transition-colors"
-        >
-          My Collection
-        </Link>
+        <div className="flex flex-col items-end gap-2 shrink-0">
+          <Link
+            href="/account/sell/new"
+            className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+          >
+            Submit manual sell request
+          </Link>
+          <Link
+            href="/account/collection"
+            className="text-sm text-gray-500 hover:text-gray-900 transition-colors"
+          >
+            My Collection
+          </Link>
+        </div>
       </div>
 
       {submissions.length === 0 ? (
@@ -82,12 +90,20 @@ export default async function SellRequestsPage() {
           <p className="text-sm text-gray-500 mb-4">
             You have not submitted any sell requests yet.
           </p>
-          <Link
-            href="/account/collection"
-            className="text-sm font-medium text-gray-900 hover:underline underline-offset-2"
-          >
-            Go to My Collection →
-          </Link>
+          <div className="flex flex-col items-center gap-3">
+            <Link
+              href="/account/collection"
+              className="text-sm font-medium text-gray-900 hover:underline underline-offset-2"
+            >
+              Submit from My Collection →
+            </Link>
+            <Link
+              href="/account/sell/new"
+              className="text-sm text-gray-500 hover:text-gray-900 hover:underline underline-offset-2"
+            >
+              Or submit an item manually
+            </Link>
+          </div>
         </div>
       ) : (
         <div className="space-y-3">

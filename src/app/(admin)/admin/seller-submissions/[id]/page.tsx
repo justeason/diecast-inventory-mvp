@@ -147,10 +147,14 @@ export default async function AdminSellerSubmissionDetailPage({
         {submission.profile.name && (
           <p className="text-xs text-gray-500">{submission.profile.email}</p>
         )}
-        {submission.collectionItemId && (
+        {submission.collectionItemId ? (
           <p className="mt-2 text-xs text-gray-400">
             Collection item:{' '}
             <span className="font-mono text-gray-600">{submission.collectionItemId}</span>
+          </p>
+        ) : (
+          <p className="mt-2 text-xs text-gray-500 italic">
+            This request was submitted manually and is not linked to a collection item.
           </p>
         )}
         {submission.catalogId && submission.catalog && (

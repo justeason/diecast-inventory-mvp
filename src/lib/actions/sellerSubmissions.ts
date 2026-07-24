@@ -9,6 +9,7 @@ const VALID_SALE_TYPE_PREFS = ['consignment', 'buyout', 'unsure'] as const
 const VALID_CONDITIONS = ['mint', 'near_mint', 'good', 'fair', 'poor', 'damaged'] as const
 const ACTIVE_STATUSES = ['submitted', 'under_review', 'needs_info'] as const
 const WITHDRAWABLE_STATUSES = ['submitted', 'needs_info'] as const
+const VALID_CARDED_LOOSE = ['carded', 'loose'] as const
 const ADMIN_ALLOWED_STATUSES = ['submitted', 'under_review', 'needs_info', 'approved_for_intake', 'declined'] as const
 const REVIEWED_STATUSES = new Set(['under_review', 'needs_info', 'approved_for_intake', 'declined'])
 
@@ -134,6 +135,113 @@ export async function submitCollectionItemForSale(
   revalidatePath('/account/sell')
   revalidatePath('/account/collection')
   revalidatePath(`/account/collection/${collectionItemId}`)
+  redirect('/account/sell')
+}
+
+export async function submitManualSellRequest(
+  _prev: SellerSubmissionActionState,
+  formData: FormData
+): Promise<SellerSubmissionActionState> {
+  const session = await getBuyerSession()
+  if (!session) {
+    return { errors: { form: ['You must be signed in to submit a sell request.'] } }
+  }
+
+  const rawBrand = trimOrNull(formData.get('brand')?.toString())
+  const rawName = trimOrNull(formData.get('name')?.toString())
+  const rawSeries = trimOrNull(formData.get('series')?.toString())
+  const rawYear = formData.get('year')?.toString().trim() ?? ''
+  const rawColor = trimOrNull(formData.get('color')?.toString())
+  const rawScale = trimOrNull(formData.get('scale')?.toString())
+  const rawCardedOrLoose = trimOrNull(formData.get('cardedOrLoose')?.toString())
+  const rawCondition = trimOrNull(formData.get('condition')?.toString())
+  const rawConditionNotes = trimOrNull(formData.get('conditionNotes')?.toString())
+  const rawQuantity = formData.get('quantity')?.toString().trim() ?? ''
+  const rawSaleType = formData.get('saleTypePreference')?.toString().trim() ?? ''
+  const rawExpectedPrice = formData.get('expectedPrice')?.toString().trim() ?? ''
+  const rawUserNotes = trimOrNull(formData.get('userNotes')?.toString())
+
+  if (!rawBrand && !rawName) {
+    return { errors: { brandOrName: ['Please provide at least a brand or model name.'] } }
+  }
+  if (rawBrand && rawBrand.length > 100) {
+    return { errors: { brand: ['Brand must be 100 characters or fewer.'] } }
+  }
+  if (rawName && rawName.length > 150) {
+    return { errors: { name: ['Model name must be 150 characters or fewer.'] } }
+  }
+  if (rawSeries && rawSeries.length > 150) {
+    return { errors: { series: ['Series must be 150 characters or fewer.'] } }
+  }
+  if (rawColor && rawColor.length > 100) {
+    return { errors: { color: ['Color must be 100 characters or fewer.'] } }
+  }
+  if (rawScale && rawScale.length > 50) {
+    return { errors: { scale: ['Scale must be 50 characters or fewer.'] } }
+  }
+  if (rawCardedOrLoose && !(VALID_CARDED_LOOSE as readonly string[]).includes(rawCardedOrLoose)) {
+    return { errors: { cardedOrLoose: ['Invalid value.'] } }
+  }
+  if (rawCondition && !(VALID_CONDITIONS as readonly string[]).includes(rawCondition)) {
+    return { errors: { condition: ['Invalid condition value.'] } }
+  }
+  if (rawConditionNotes && rawConditionNotes.length > 500) {
+    return { errors: { conditionNotes: ['Condition notes must be 500 characters or fewer.'] } }
+  }
+
+  let year: number | null = null
+  if (rawYear) {
+    const n = parseInt(rawYear, 10)
+    if (isNaN(n) || n < 1900 || n > 2100) {
+      return { errors: { year: ['Year must be between 1900 and 2100.'] } }
+    }
+    year = n
+  }
+
+  const quantity = parseInt(rawQuantity, 10)
+  if (isNaN(quantity) || quantity < 1) {
+    return { errors: { quantity: ['Quantity must be 1 or more.'] } }
+  }
+
+  if (!rawSaleType || !(VALID_SALE_TYPE_PREFS as readonly string[]).includes(rawSaleType)) {
+    return { errors: { saleTypePreference: ['Please select how you would like to sell.'] } }
+  }
+
+  let expectedPrice: number | null = null
+  if (rawExpectedPrice) {
+    const n = parseFloat(rawExpectedPrice)
+    if (!Number.isFinite(n) || n < 0) {
+      return { errors: { expectedPrice: ['Expected price must be 0 or more.'] } }
+    }
+    expectedPrice = n
+  }
+
+  if (rawUserNotes && rawUserNotes.length > 1000) {
+    return { errors: { userNotes: ['Notes must be 1000 characters or fewer.'] } }
+  }
+
+  await prisma.sellerSubmission.create({
+    data: {
+      profileId:          session.profileId,
+      collectionItemId:   null,
+      catalogId:          null,
+      brand:              rawBrand,
+      name:               rawName,
+      series:             rawSeries,
+      year,
+      color:              rawColor,
+      scale:              rawScale,
+      cardedOrLoose:      rawCardedOrLoose,
+      condition:          rawCondition,
+      conditionNotes:     rawConditionNotes,
+      quantity,
+      saleTypePreference: rawSaleType,
+      expectedPrice,
+      userNotes:          rawUserNotes,
+    },
+  })
+
+  revalidatePath('/account/sell')
   redirect('/account/sell')
 }
 
