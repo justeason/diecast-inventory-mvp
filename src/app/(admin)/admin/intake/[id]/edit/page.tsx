@@ -7,6 +7,7 @@ import { IntakeDraftForm } from '@/components/admin/IntakeDraftForm'
 import { ConvertDraftForm } from '@/components/admin/ConvertDraftForm'
 import { ExtractPhotosButton } from '@/components/admin/ExtractPhotosButton'
 import { IntakePhotoUpload } from '@/components/admin/IntakePhotoUpload'
+import { SellerSubmissionIntakeContext } from '@/components/admin/SellerSubmissionIntakeContext'
 import {
   updateIntakeDraft,
   markDraftReviewed,
@@ -67,7 +68,45 @@ export default async function EditIntakeDraftPage({
   const [draft, suggestedSku] = await Promise.all([
     prisma.intakeDraft.findUnique({
       where: { id },
-      include: { convertedItem: { select: { id: true, sku: true, listing: { select: { id: true } } } } },
+      include: {
+        convertedItem: { select: { id: true, sku: true, listing: { select: { id: true } } } },
+        sellerSubmission: {
+          select: {
+            id:                 true,
+            status:             true,
+            brand:              true,
+            name:               true,
+            series:             true,
+            year:               true,
+            color:              true,
+            scale:              true,
+            cardedOrLoose:      true,
+            condition:          true,
+            conditionNotes:     true,
+            quantity:           true,
+            saleTypePreference: true,
+            expectedPrice:      true,
+            userNotes:          true,
+            userMessage:        true,
+            adminNotes:         true,
+            createdAt:          true,
+            profile: { select: { id: true, name: true, email: true } },
+            photos: {
+              select: { id: true, url: true, sortOrder: true, createdAt: true },
+              orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+            },
+            collectionItem: {
+              select: {
+                id: true,
+                photos: {
+                  select: { id: true, url: true, sortOrder: true, createdAt: true },
+                  orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+                },
+              },
+            },
+          },
+        },
+      },
     }),
     getNextHwSku(),
   ])
@@ -199,6 +238,11 @@ export default async function EditIntakeDraftPage({
         <div className="mb-6 rounded-md bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800">
           Draft created, but one or more photos failed to upload. You can upload them below.
         </div>
+      )}
+
+      {/* Seller submission context panel */}
+      {draft.sellerSubmission && (
+        <SellerSubmissionIntakeContext submission={draft.sellerSubmission} />
       )}
 
       {isTerminal ? (
