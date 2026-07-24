@@ -53,6 +53,20 @@ const PHOTO_TYPE_LABELS: Record<string, string> = {
 
 const TERMINAL_STATUSES = new Set(['withdrawn'])
 
+const INTAKE_STATUS_LABELS: Record<string, string> = {
+  draft:     'Draft',
+  reviewed:  'Reviewed',
+  converted: 'Converted',
+  rejected:  'Rejected',
+}
+
+const INTAKE_STATUS_COLORS: Record<string, string> = {
+  draft:     'bg-yellow-100 text-yellow-700',
+  reviewed:  'bg-blue-100 text-blue-700',
+  converted: 'bg-green-100 text-green-700',
+  rejected:  'bg-red-100 text-red-700',
+}
+
 export default async function AdminSellerSubmissionDetailPage({
   params,
 }: {
@@ -101,7 +115,20 @@ export default async function AdminSellerSubmissionDetailPage({
         },
       },
       intakeDrafts: {
-        select: { id: true, status: true, createdAt: true, convertedItemId: true },
+        select: {
+          id: true,
+          status: true,
+          createdAt: true,
+          convertedItemId: true,
+          convertedItem: {
+            select: {
+              id: true,
+              sku: true,
+              status: true,
+              listing: { select: { id: true, status: true } },
+            },
+          },
+        },
         orderBy: { createdAt: 'desc' },
       },
     },
@@ -114,7 +141,10 @@ export default async function AdminSellerSubmissionDetailPage({
   const submissionPhotos = submission.photos
   const collectionPhotos = submission.collectionItem?.photos ?? []
   const isTerminal = TERMINAL_STATUSES.has(submission.status)
-  const activeIntakeDraft = submission.intakeDrafts.find((d) => d.status !== 'rejected')
+  const canStartIntake =
+    submission.status === 'approved_for_intake' &&
+    !submission.intakeDrafts.some((d) => d.status !== 'rejected')
+  const hasIntakeHistory = submission.intakeDrafts.length > 0
 
   return (
     <div className="max-w-2xl">
@@ -338,36 +368,98 @@ export default async function AdminSellerSubmissionDetailPage({
         </div>
       )}
 
-      {/* Intake linkage */}
-      {submission.status === 'approved_for_intake' && (
+      {/* Intake */}
+      {(canStartIntake || hasIntakeHistory) && (
         <div className="mb-6 pt-6 border-t border-gray-200">
-          <h2 className="text-sm font-semibold text-gray-900 mb-3">Intake</h2>
-          {!activeIntakeDraft && (
-            <form action={startIntakeDraftFromSubmission.bind(null, submission.id)}>
-              <input type="hidden" name="_action" value="start-intake" />
-              <button
-                type="submit"
-                className="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700 transition-colors"
-              >
-                Start intake draft
-              </button>
-            </form>
+          <h2 className="text-sm font-semibold text-gray-900 mb-4">Intake</h2>
+
+          {canStartIntake && (
+            <div className="mb-5">
+              <form action={startIntakeDraftFromSubmission.bind(null, submission.id)}>
+                <input type="hidden" name="_action" value="start-intake" />
+                <button
+                  type="submit"
+                  className="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700 transition-colors"
+                >
+                  Start intake draft
+                </button>
+              </form>
+              <p className="mt-2 text-xs text-gray-500">
+                Create an intake draft only after the physical item has been received.
+              </p>
+            </div>
           )}
-          {activeIntakeDraft && activeIntakeDraft.status !== 'converted' && (
-            <Link
-              href={`/admin/intake/${activeIntakeDraft.id}/edit`}
-              className="inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
-            >
-              Resume intake draft →
-            </Link>
-          )}
-          {activeIntakeDraft && activeIntakeDraft.status === 'converted' && (
-            <Link
-              href={`/admin/intake/${activeIntakeDraft.id}/edit`}
-              className="inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
-            >
-              View converted intake →
-            </Link>
+
+          {hasIntakeHistory && (
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-3">
+                Intake history
+              </p>
+              <div className="space-y-3">
+                {submission.intakeDrafts.map((draft) => (
+                  <div
+                    key={draft.id}
+                    className="rounded-md border border-gray-200 bg-gray-50 p-3"
+                  >
+                    <div className="flex items-center justify-between gap-4 flex-wrap mb-1">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
+                            INTAKE_STATUS_COLORS[draft.status] ?? 'bg-gray-100 text-gray-600'
+                          }`}
+                        >
+                          {INTAKE_STATUS_LABELS[draft.status] ?? draft.status}
+                        </span>
+                        <span className="text-xs text-gray-400">
+                          {draft.createdAt.toLocaleDateString()}
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap gap-3">
+                        <Link
+                          href={`/admin/intake/${draft.id}/edit`}
+                          className="text-xs text-gray-600 hover:text-gray-900 hover:underline"
+                        >
+                          {draft.status === 'converted'
+                            ? 'View converted intake →'
+                            : draft.status === 'rejected'
+                            ? 'View rejected intake →'
+                            : 'Resume intake →'}
+                        </Link>
+                        {draft.convertedItem && (
+                          <Link
+                            href={`/admin/items/${draft.convertedItem.id}/edit`}
+                            className="text-xs text-gray-600 hover:text-gray-900 hover:underline"
+                          >
+                            View inventory item →
+                          </Link>
+                        )}
+                        {draft.convertedItem?.listing && (
+                          <Link
+                            href={`/admin/listings/${draft.convertedItem.listing.id}/edit`}
+                            className="text-xs text-gray-600 hover:text-gray-900 hover:underline"
+                          >
+                            View listing →
+                          </Link>
+                        )}
+                      </div>
+                    </div>
+                    {draft.convertedItem && (
+                      <p className="text-xs text-gray-400">
+                        SKU:{' '}
+                        <span className="font-mono text-gray-600">{draft.convertedItem.sku}</span>
+                        {' · '}
+                        {draft.convertedItem.status}
+                        {draft.convertedItem.listing && (
+                          <span className="ml-1">
+                            · listing: {draft.convertedItem.listing.status}
+                          </span>
+                        )}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
         </div>
       )}

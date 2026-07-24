@@ -17,6 +17,7 @@ export default async function EditItemPage({
       include: {
         photos: { select: { url: true, type: true }, orderBy: { sortOrder: 'asc' } },
         listing: { select: { id: true, status: true } },
+        intakeDraft: { select: { id: true, sellerSubmissionId: true } },
       },
     }),
     prisma.catalogModel.findMany({ orderBy: [{ brand: 'asc' }, { name: 'asc' }] }),
@@ -56,6 +57,30 @@ export default async function EditItemPage({
           </Link>
         </div>
       </div>
+
+      {/* Seller-sourced inventory traceability */}
+      {item.intakeDraft?.sellerSubmissionId && (
+        <div className="mb-6 max-w-2xl rounded-md border border-gray-200 bg-gray-50 px-4 py-3 text-sm">
+          <p className="font-semibold text-gray-700 mb-1">Seller-sourced inventory</p>
+          <p className="text-gray-500 mb-2">
+            This inventory item was created through a seller submission intake.
+          </p>
+          <div className="flex flex-wrap gap-4">
+            <Link
+              href={`/admin/seller-submissions/${item.intakeDraft.sellerSubmissionId}`}
+              className="text-gray-700 hover:underline"
+            >
+              View seller submission →
+            </Link>
+            <Link
+              href={`/admin/intake/${item.intakeDraft.id}/edit`}
+              className="text-gray-700 hover:underline"
+            >
+              View intake →
+            </Link>
+          </div>
+        </div>
+      )}
 
       {item.listing?.status === 'active' && item.photos.length === 0 && (
         <div className="mb-6 max-w-2xl rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
