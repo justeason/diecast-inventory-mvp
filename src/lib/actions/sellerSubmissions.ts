@@ -9,6 +9,8 @@ const VALID_SALE_TYPE_PREFS = ['consignment', 'buyout', 'unsure'] as const
 const VALID_CONDITIONS = ['mint', 'near_mint', 'good', 'fair', 'poor', 'damaged'] as const
 const ACTIVE_STATUSES = ['submitted', 'under_review', 'needs_info'] as const
 const WITHDRAWABLE_STATUSES = ['submitted', 'needs_info'] as const
+const ADMIN_ALLOWED_STATUSES = ['submitted', 'under_review', 'needs_info', 'approved_for_intake', 'declined'] as const
+const REVIEWED_STATUSES = new Set(['under_review', 'needs_info', 'approved_for_intake', 'declined'])
 
 export type SellerSubmissionActionState = { errors: Record<string, string[]> } | null
 
@@ -133,6 +135,61 @@ export async function submitCollectionItemForSale(
   revalidatePath('/account/collection')
   revalidatePath(`/account/collection/${collectionItemId}`)
   redirect('/account/sell')
+}
+
+export async function updateSellerSubmissionStatus(
+  submissionId: string,
+  _prev: SellerSubmissionActionState,
+  formData: FormData
+): Promise<SellerSubmissionActionState> {
+  // Admin suggestion actions rely on the (admin) route group middleware for auth,
+  // consistent with all other admin server actions in this repo.
+  const rawStatus = formData.get('status')?.toString().trim() ?? ''
+  const rawAdminNotes = formData.get('adminNotes')?.toString() ?? ''
+  const rawUserMessage = formData.get('userMessage')?.toString() ?? ''
+
+  if (!(ADMIN_ALLOWED_STATUSES as readonly string[]).includes(rawStatus)) {
+    return { errors: { status: ['Invalid status.'] } }
+  }
+
+  const userMessage = rawUserMessage.trim() || null
+  if ((rawStatus === 'needs_info' || rawStatus === 'declined') && !userMessage) {
+    return { errors: { userMessage: ['A message to the seller is required for this status.'] } }
+  }
+  if (userMessage && userMessage.length > 1000) {
+    return { errors: { userMessage: ['Message must be 1000 characters or fewer.'] } }
+  }
+
+  const adminNotes = rawAdminNotes.trim() || null
+  if (adminNotes && adminNotes.length > 2000) {
+    return { errors: { adminNotes: ['Admin notes must be 2000 characters or fewer.'] } }
+  }
+
+  const submission = await prisma.sellerSubmission.findUnique({
+    where: { id: submissionId },
+    select: { id: true, status: true, collectionItemId: true },
+  })
+  if (!submission) return { errors: { form: ['Sell request not found.'] } }
+
+  await prisma.sellerSubmission.update({
+    where: { id: submission.id },
+    data: {
+      status: rawStatus,
+      adminNotes,
+      userMessage,
+      ...(REVIEWED_STATUSES.has(rawStatus) ? { reviewedAt: new Date() } : {}),
+    },
+  })
+
+  revalidatePath('/admin/seller-submissions')
+  revalidatePath(`/admin/seller-submissions/${submissionId}`)
+  revalidatePath('/account/sell')
+  revalidatePath(`/account/sell/${submissionId}`)
+  revalidatePath('/account/collection')
+  if (submission.collectionItemId) {
+    revalidatePath(`/account/collection/${submission.collectionItemId}`)
+  }
+  redirect(`/admin/seller-submissions/${submissionId}`)
 }
 
 export async function withdrawSellerSubmission(
