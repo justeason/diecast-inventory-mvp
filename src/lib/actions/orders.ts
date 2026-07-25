@@ -2,9 +2,11 @@
 
 import { z } from 'zod'
 import { redirect } from 'next/navigation'
+import { revalidatePath } from 'next/cache'
 import { prisma } from '@/lib/prisma'
 import { getStripe } from '@/lib/stripe'
 import { normalizeEmail } from '@/lib/normalizeEmail'
+import { ensureConsignmentPayoutLinesForCompletedOrder } from '@/lib/actions/sellerPayouts'
 
 const OrderSchema = z.object({
   buyerName: z.string().min(1, 'Name is required'),
@@ -222,6 +224,7 @@ export async function updateOrderStatus(
     where: { id },
     select: {
       stripeSessionId: true,
+      completedAt: true,
       orderItems: { select: { itemId: true, listingId: true } },
     },
   })
@@ -257,8 +260,11 @@ export async function updateOrderStatus(
       }
     }
   } else if (status === 'complete') {
+    // Set completedAt only on first transition to complete
+    const completedAt = order.completedAt ?? new Date()
+
     await prisma.$transaction(async (tx) => {
-      await tx.order.update({ where: { id }, data: { status: 'complete' } })
+      await tx.order.update({ where: { id }, data: { status: 'complete', completedAt } })
       // Only update items currently reserved and listings currently active —
       // status guards prevent double-effects and scope writes to exact IDs only.
       await tx.itemInstance.updateMany({
@@ -270,6 +276,19 @@ export async function updateOrderStatus(
         data: { status: 'sold' },
       })
     })
+
+    // Non-blocking: generate consignment payout lines after order completion.
+    // Failure here does NOT roll back order completion — buyer lifecycle is primary.
+    try {
+      const result = await ensureConsignmentPayoutLinesForCompletedOrder(id)
+      if (result.created > 0) {
+        revalidatePath('/admin/seller-payouts')
+        revalidatePath('/account/sell')
+      }
+    } catch (err) {
+      console.error('[updateOrderStatus] Consignment payout line generation failed for order', id, ':', err instanceof Error ? err.message : 'UnknownError')
+      // Order remains complete. Admin can use the reconciliation tool on the order detail page.
+    }
   } else {
     // paid | picking | shipped — only Order.status changes, no item or listing side effects.
     await prisma.order.update({ where: { id }, data: { status } })

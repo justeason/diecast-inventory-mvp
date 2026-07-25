@@ -24,6 +24,8 @@ import {
   RecordAcceptanceForm,
   CancelAgreementForm,
 } from '@/components/admin/SellerAgreementActions'
+import { GenerateBuyoutEligibilityForm } from '@/components/admin/SellerPayoutForms'
+import { derivePayoutLineDisplayStatus } from '@/lib/sellerPayoutCalculation'
 
 export const dynamic = 'force-dynamic'
 
@@ -69,6 +71,19 @@ export default async function SellerAgreementPage({
               listing: { select: { id: true, status: true } },
             },
             orderBy: { createdAt: 'asc' as const },
+          },
+          payoutLines: {
+            select: {
+              id: true,
+              lineType: true,
+              status: true,
+              netAmount: true,
+              eligibleAt: true,
+              agreedBuyoutAmount: true,
+              payout: { select: { id: true, status: true, approvedAt: true, paidAt: true } },
+              orderItem: { select: { order: { select: { id: true } } } },
+            },
+            orderBy: { eligibleAt: 'asc' as const },
           },
         },
         orderBy: { createdAt: 'desc' },
@@ -292,6 +307,59 @@ export default async function SellerAgreementPage({
               </div>
             </div>
           )}
+
+          {/* Seller payment and payout history */}
+          {activeAgreement.payoutLines.length > 0 || activeAgreement.type === 'buyout' ? (
+            <div className="pt-6 border-t border-gray-200">
+              <h3 className="text-sm font-semibold text-gray-700 mb-3">Seller payment and payout history</h3>
+              {activeAgreement.payoutLines.length === 0 &&
+               activeAgreement.type === 'buyout' &&
+               activeAgreement.items.length > 0 && (
+                <div className="mb-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-3 text-xs text-amber-800 space-y-2">
+                  <p className="font-medium">Linked buyout inventory is missing its seller payment eligibility record.</p>
+                  <p>This is normally created automatically when inventory is converted via intake. Use the action below to generate it.</p>
+                  <GenerateBuyoutEligibilityForm agreementId={activeAgreement.id} />
+                </div>
+              )}
+              {activeAgreement.payoutLines.length > 0 && (
+                <div className="space-y-2">
+                  {activeAgreement.payoutLines.map((line) => {
+                    const displayStatus = derivePayoutLineDisplayStatus(line.status, line.payout ?? null)
+                    return (
+                      <div key={line.id} className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-xs space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="capitalize font-medium text-gray-700">{line.lineType}</span>
+                          <span className="font-mono font-medium text-gray-900">
+                            ${parseFloat(line.netAmount.toString()).toFixed(2)}
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap gap-x-4 text-gray-500">
+                          <span>Status: <span className="text-gray-700">{displayStatus}</span></span>
+                          <span>Eligible: {line.eligibleAt.toLocaleDateString()}</span>
+                          {line.payout?.approvedAt && (
+                            <span>Approved: {line.payout.approvedAt.toLocaleDateString()}</span>
+                          )}
+                          {line.payout?.paidAt && (
+                            <span>Paid: {line.payout.paidAt.toLocaleDateString()}</span>
+                          )}
+                        </div>
+                        {line.payout && (
+                          <Link href={`/admin/seller-payouts/${line.payout.id}`} className="text-blue-600 hover:underline">
+                            View payout →
+                          </Link>
+                        )}
+                        {line.orderItem?.order && (
+                          <Link href={`/admin/orders/${line.orderItem.order.id}`} className="ml-4 text-blue-600 hover:underline">
+                            View order →
+                          </Link>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          ) : null}
 
           <div className="pt-6 border-t border-gray-200">
             <h3 className="text-sm font-semibold text-gray-700 mb-1">Cancel</h3>

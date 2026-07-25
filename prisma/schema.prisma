@@ -114,6 +114,8 @@ model CustomerProfile {
   collectionItems     CollectionItem[]
   catalogSuggestions  CatalogSuggestion[]
   sellerSubmissions   SellerSubmission[]
+  sellerPayoutLines   SellerPayoutLine[]
+  sellerPayouts       SellerPayout[]
 }
 
 model SellerProfile {
@@ -129,6 +131,7 @@ model SellerProfile {
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
   agreements     SellerAgreement[]
+  payouts        SellerPayout[]
 }
 
 model CustomerLoginToken {
@@ -172,6 +175,7 @@ model Order {
   paymentLink        String?
   paymentRequestedAt     DateTime?
   paidAt                 DateTime?
+  completedAt            DateTime?
   stripeSessionId        String?
   stripeSessionExpiresAt DateTime?
   stripePaymentIntentId  String?
@@ -192,6 +196,8 @@ model OrderItem {
   listing   Listing      @relation(fields: [listingId], references: [id])
   price     Float
   createdAt DateTime     @default(now())
+
+  sellerPayoutLine SellerPayoutLine?
 }
 
 model CollectionItem {
@@ -386,7 +392,8 @@ model SellerAgreement {
   sellerTermsSummary String?
   adminNotes         String?
 
-  items ItemInstance[]
+  items        ItemInstance[]
+  payoutLines  SellerPayoutLine[]
 
   proposedAt       DateTime?
   acceptedAt       DateTime?
@@ -398,6 +405,84 @@ model SellerAgreement {
   updatedAt DateTime @updatedAt
 
   @@index([submissionId])
+  @@index([sellerProfileId])
+  @@index([status])
+}
+
+model SellerPayoutLine {
+  id        String @id @default(cuid())
+  sourceKey String @unique
+
+  lineType String
+  status   String @default("eligible")
+  currency String @default("USD")
+
+  customerProfileId String
+  customerProfile   CustomerProfile  @relation(fields: [customerProfileId], references: [id], onDelete: Restrict)
+
+  agreementId String?
+  agreement   SellerAgreement? @relation(fields: [agreementId], references: [id], onDelete: SetNull)
+
+  orderItemId String?  @unique
+  orderItem   OrderItem? @relation(fields: [orderItemId], references: [id], onDelete: SetNull)
+
+  payoutId String?
+  payout   SellerPayout? @relation(fields: [payoutId], references: [id], onDelete: SetNull)
+
+  grossSalePrice      Decimal? @db.Decimal(10, 2)
+  agreedBuyoutAmount  Decimal? @db.Decimal(10, 2)
+
+  commissionPercent   Decimal? @db.Decimal(6, 4)
+  commissionAmount    Decimal? @db.Decimal(10, 2)
+  fixedFee            Decimal? @db.Decimal(10, 2)
+  minimumSellerPayout Decimal? @db.Decimal(10, 2)
+  minimumAdjustment   Decimal? @db.Decimal(10, 2)
+
+  netAmount  Decimal  @db.Decimal(10, 2)
+  eligibleAt DateTime
+
+  heldAt     DateTime?
+  holdReason String?
+
+  voidedAt   DateTime?
+  voidReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([customerProfileId])
+  @@index([agreementId])
+  @@index([payoutId])
+  @@index([status])
+  @@index([lineType])
+}
+
+model SellerPayout {
+  id       String @id @default(cuid())
+  status   String @default("draft")
+  currency String @default("USD")
+
+  customerProfileId String
+  customerProfile   CustomerProfile @relation(fields: [customerProfileId], references: [id], onDelete: Restrict)
+
+  sellerProfileId String?
+  sellerProfile   SellerProfile? @relation(fields: [sellerProfileId], references: [id], onDelete: SetNull)
+
+  totalAmount Decimal @db.Decimal(10, 2)
+
+  approvedAt DateTime?
+  paidAt     DateTime?
+
+  paymentMethod    String?
+  paymentReference String?
+  adminNotes       String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  lines SellerPayoutLine[]
+
+  @@index([customerProfileId])
   @@index([sellerProfileId])
   @@index([status])
 }

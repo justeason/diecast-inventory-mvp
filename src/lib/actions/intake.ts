@@ -11,6 +11,10 @@ import {
   resolveConversionEligibility,
   validateConversionConfirmation,
 } from '@/lib/sellerAgreementInventory'
+import {
+  buildBuyoutSourceKey,
+  calculateBuyoutPayoutSnapshot,
+} from '@/lib/sellerPayoutCalculation'
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -274,6 +278,7 @@ export async function convertDraft(
       let conversionSourceType: 'company_owned' | 'buyout' | 'consignment' = 'company_owned'
       let conversionAgreementId: string | null = null
       let conversionPurchasePrice: number | null = null
+      let conversionBuyoutAgreedAmount: Prisma.Decimal | null = null
 
       if (draft.sellerSubmissionId) {
         const agreements = await tx.sellerAgreement.findMany({
@@ -312,6 +317,7 @@ export async function convertDraft(
             throw new Error('TX_VALIDATION')
           }
           conversionPurchasePrice = buyoutAmount
+          conversionBuyoutAgreedAmount = accepted.agreedBuyoutAmount
         }
       }
 
@@ -365,6 +371,37 @@ export async function convertDraft(
       })
       newItemId = item.id
 
+      // 4b. Create buyout payout eligibility line atomically with inventory creation.
+      //     Idempotent: skipped if a line with the same sourceKey already exists.
+      if (conversionSourceType === 'buyout' && conversionAgreementId && conversionBuyoutAgreedAmount) {
+        const submission = await tx.sellerSubmission.findUnique({
+          where: { id: draft.sellerSubmissionId! },
+          select: { profileId: true },
+        })
+        if (!submission) {
+          txError = { errors: { form: ['Seller submission not found.'] } }
+          throw new Error('TX_VALIDATION')
+        }
+        const sourceKey = buildBuyoutSourceKey(conversionAgreementId)
+        const existingLine = await tx.sellerPayoutLine.findUnique({ where: { sourceKey } })
+        if (!existingLine) {
+          const snap = calculateBuyoutPayoutSnapshot(conversionBuyoutAgreedAmount)
+          await tx.sellerPayoutLine.create({
+            data: {
+              sourceKey,
+              lineType: 'buyout',
+              status: 'eligible',
+              currency: 'USD',
+              customerProfileId: submission.profileId,
+              agreementId: conversionAgreementId,
+              agreedBuyoutAmount: snap.agreedBuyoutAmount,
+              netAmount: snap.netAmount,
+              eligibleAt: new Date(),
+            },
+          })
+        }
+      }
+
       // 5. Create Photo records only for non-blank URLs.
       const front = draft.frontPhotoUrl?.trim()
       if (front) {
@@ -404,6 +441,8 @@ export async function convertDraft(
   if (sellerSubmissionId) {
     revalidatePath(`/admin/seller-submissions/${sellerSubmissionId}`)
     revalidatePath(`/admin/seller-submissions/${sellerSubmissionId}/agreement`)
+    revalidatePath('/admin/seller-payouts')
+    revalidatePath(`/account/sell/${sellerSubmissionId}`)
   }
   if (newListingId) {
     revalidatePath('/admin/listings')

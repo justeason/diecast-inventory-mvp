@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { ItemInstanceForm } from '@/components/admin/ItemInstanceForm'
 import { PhotoThumbnail } from '@/components/shared/PhotoThumbnail'
 import { formatCommissionDisplay } from '@/lib/sellerAgreementDisplay'
+import { derivePayoutLineDisplayStatus } from '@/lib/sellerPayoutCalculation'
 
 export default async function EditItemPage({
   params,
@@ -32,7 +33,35 @@ export default async function EditItemPage({
             agreedListPrice: true,
             acceptedAt: true,
             acceptanceMethod: true,
+            payoutLines: {
+              select: {
+                id: true,
+                lineType: true,
+                status: true,
+                netAmount: true,
+                eligibleAt: true,
+                payout: { select: { id: true, status: true, paidAt: true } },
+              },
+              take: 1,
+              orderBy: { eligibleAt: 'asc' as const },
+            },
           },
+        },
+        orderItems: {
+          select: {
+            sellerPayoutLine: {
+              select: {
+                id: true,
+                lineType: true,
+                status: true,
+                netAmount: true,
+                eligibleAt: true,
+                payout: { select: { id: true, status: true, paidAt: true } },
+              },
+            },
+          },
+          take: 1,
+          orderBy: { createdAt: 'desc' as const },
         },
       },
     }),
@@ -133,6 +162,62 @@ export default async function EditItemPage({
           )}
         </div>
       )}
+
+      {/* Payout context for seller-sourced inventory */}
+      {item.sourceType === 'buyout' && (() => {
+        const payoutLine = item.sellerAgreement?.payoutLines?.[0] ?? null
+        const displayStatus = payoutLine
+          ? derivePayoutLineDisplayStatus(payoutLine.status, payoutLine.payout ?? null)
+          : null
+        return (
+          <div className="mb-6 max-w-2xl rounded-md border border-gray-200 bg-gray-50 px-4 py-3 text-sm">
+            <p className="font-semibold text-gray-700 mb-2">Buyout payment status</p>
+            {payoutLine ? (
+              <div className="space-y-1 text-gray-600">
+                <p>Status: <span className="text-gray-900">{displayStatus}</span></p>
+                <p>Net amount: <span className="font-mono text-gray-900">${parseFloat(payoutLine.netAmount.toString()).toFixed(2)}</span></p>
+                {payoutLine.payout?.paidAt && (
+                  <p>Paid: <span className="text-gray-900">{payoutLine.payout.paidAt.toLocaleDateString()}</span></p>
+                )}
+                {payoutLine.payout && (
+                  <Link href={`/admin/seller-payouts/${payoutLine.payout.id}`} className="text-blue-600 hover:underline">
+                    View payout →
+                  </Link>
+                )}
+              </div>
+            ) : (
+              <p className="text-amber-700 text-sm">No payout eligibility record found. This should be created automatically on buyout inventory conversion.</p>
+            )}
+          </div>
+        )
+      })()}
+      {item.sourceType === 'consignment' && (() => {
+        const consignmentLine = item.orderItems?.[0]?.sellerPayoutLine ?? null
+        const displayStatus = consignmentLine
+          ? derivePayoutLineDisplayStatus(consignmentLine.status, consignmentLine.payout ?? null)
+          : null
+        return (
+          <div className="mb-6 max-w-2xl rounded-md border border-gray-200 bg-gray-50 px-4 py-3 text-sm">
+            <p className="font-semibold text-gray-700 mb-2">Consignment payout status</p>
+            {consignmentLine ? (
+              <div className="space-y-1 text-gray-600">
+                <p>Status: <span className="text-gray-900">{displayStatus}</span></p>
+                <p>Net amount: <span className="font-mono text-gray-900">${parseFloat(consignmentLine.netAmount.toString()).toFixed(2)}</span></p>
+                {consignmentLine.payout?.paidAt && (
+                  <p>Paid: <span className="text-gray-900">{consignmentLine.payout.paidAt.toLocaleDateString()}</span></p>
+                )}
+                {consignmentLine.payout && (
+                  <Link href={`/admin/seller-payouts/${consignmentLine.payout.id}`} className="text-blue-600 hover:underline">
+                    View payout →
+                  </Link>
+                )}
+              </div>
+            ) : (
+              <p className="text-gray-500 text-sm">No payout eligibility until the related order is completed.</p>
+            )}
+          </div>
+        )
+      })()}
 
       {/* Seller-sourced inventory traceability */}
       {item.intakeDraft?.sellerSubmissionId && (

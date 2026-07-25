@@ -12,6 +12,7 @@ import {
   formatAmount,
   formatCommissionDisplay,
 } from '@/lib/sellerAgreementDisplay'
+import { deriveSellerFacingPayoutStatus } from '@/lib/sellerPayoutCalculation'
 
 export const dynamic = 'force-dynamic'
 
@@ -110,6 +111,17 @@ export default async function SellRequestDetailPage({
           proposedAt: true,
           acceptedAt: true,
           cancelledAt: true,
+          payoutLines: {
+            select: {
+              id: true,
+              lineType: true,
+              status: true,
+              netAmount: true,
+              eligibleAt: true,
+              payout: { select: { status: true, approvedAt: true, paidAt: true } },
+            },
+            orderBy: { eligibleAt: 'asc' as const },
+          },
         },
         orderBy: { createdAt: 'desc' as const },
       },
@@ -411,6 +423,54 @@ export default async function SellRequestDetailPage({
           </div>
         </div>
       )}
+
+      {/* Payment status — shown only when payout lines exist for the accepted/accepted agreement */}
+      {(() => {
+        const acceptedAgreement = submission.agreements.find((a) => a.status === 'accepted') ?? null
+        if (!acceptedAgreement || acceptedAgreement.payoutLines.length === 0) return null
+        return (
+          <div className="mb-6">
+            <h2 className="text-sm font-semibold text-gray-900 mb-3">Payment status</h2>
+            <div className="space-y-2">
+              {acceptedAgreement.payoutLines.map((line) => {
+                const { label, description } = deriveSellerFacingPayoutStatus(
+                  line.status,
+                  line.payout ?? null,
+                )
+                const isBuyout = line.lineType === 'buyout'
+                return (
+                  <div
+                    key={line.id}
+                    className="rounded-md border border-gray-200 bg-gray-50 px-4 py-3 text-sm"
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <p className="font-medium text-gray-900">
+                        {isBuyout ? 'Buyout payment' : 'Consignment proceeds'}
+                      </p>
+                      <p className="font-mono text-gray-900">
+                        ${parseFloat(line.netAmount.toString()).toFixed(2)}
+                      </p>
+                    </div>
+                    <p className="text-xs font-medium text-gray-700 mb-0.5">{label}</p>
+                    <p className="text-xs text-gray-500">{description}</p>
+                    <div className="mt-2 text-xs text-gray-400 space-y-0.5">
+                      {line.eligibleAt && (
+                        <p>Eligible since {line.eligibleAt.toLocaleDateString()}</p>
+                      )}
+                      {line.payout?.approvedAt && (
+                        <p>Approved {line.payout.approvedAt.toLocaleDateString()}</p>
+                      )}
+                      {line.payout?.paidAt && (
+                        <p>Paid {line.payout.paidAt.toLocaleDateString()}</p>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )
+      })()}
 
       {/* Actions */}
       {canWithdraw && (

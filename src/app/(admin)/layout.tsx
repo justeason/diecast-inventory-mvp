@@ -10,6 +10,7 @@ const navLinks = [
   { href: '/admin/orders', label: 'Orders' },
   { href: '/admin/customers', label: 'Customers' },
   { href: '/admin/seller-profiles', label: 'Sellers' },
+  { href: '/admin/seller-payouts', label: 'Payouts' },
   { href: '/admin/intake', label: 'Intake' },
   { href: '/admin/catalog-suggestions', label: 'Suggestions' },
   { href: '/admin/seller-submissions', label: 'Sell Requests' },

@@ -6,6 +6,8 @@ import { OrderReviewForm } from '@/components/admin/OrderReviewForm'
 import { OrderPaymentForm } from '@/components/admin/OrderPaymentForm'
 import { StripePaymentPanel } from '@/components/admin/StripePaymentPanel'
 import { PhotoThumbnail } from '@/components/shared/PhotoThumbnail'
+import { GeneratePayoutLinesForm } from '@/components/admin/GeneratePayoutLinesForm'
+import { derivePayoutLineDisplayStatus } from '@/lib/sellerPayoutCalculation'
 
 const CONDITION_LABELS: Record<string, string> = {
   mint: 'Mint',
@@ -53,11 +55,22 @@ export default async function AdminOrderDetailPage({
               sku: true,
               cardedOrLoose: true,
               condition: true,
+              sourceType: true,
               catalog: {
                 select: { brand: true, name: true, year: true, series: true, color: true },
               },
               location: { select: { label: true } },
               photos: { where: { type: 'front' }, take: 1, select: { url: true } },
+              sellerAgreement: { select: { id: true, submissionId: true } },
+            },
+          },
+          sellerPayoutLine: {
+            select: {
+              id: true,
+              status: true,
+              netAmount: true,
+              customerProfile: { select: { name: true, email: true } },
+              payout: { select: { id: true, status: true } },
             },
           },
         },
@@ -435,6 +448,97 @@ export default async function AdminOrderDetailPage({
           </div>
         </div>
       )}
+
+      {/* Seller payout eligibility — consignment items only, completed orders */}
+      {order.status === 'complete' && (() => {
+        const consignmentItems = order.orderItems.filter((oi) => oi.item.sourceType === 'consignment')
+        if (consignmentItems.length === 0) return null
+
+        const hasMissingLines = consignmentItems.some((oi) => !oi.sellerPayoutLine)
+
+        return (
+          <div className="mb-8 rounded-md border border-gray-200 bg-white p-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-1">Seller payout eligibility</h2>
+            <p className="text-xs text-gray-500 mb-4">Admin-only. Not visible to buyers or sellers.</p>
+
+            {hasMissingLines && (
+              <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                <p className="font-medium mb-1">Missing payout eligibility records</p>
+                <p className="mb-3">
+                  One or more completed consignment items are missing a seller payout eligibility record.
+                </p>
+                <GeneratePayoutLinesForm orderId={order.id} />
+              </div>
+            )}
+
+            <div className="overflow-x-auto rounded-md border border-gray-200">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 border-b border-gray-200">
+                  <tr className="text-left text-gray-500">
+                    <th className="px-4 py-2 font-medium">SKU</th>
+                    <th className="px-4 py-2 font-medium">Seller</th>
+                    <th className="px-4 py-2 font-medium">Agreement</th>
+                    <th className="px-4 py-2 font-medium">Payout line</th>
+                    <th className="px-4 py-2 font-medium text-right">Net amount</th>
+                    <th className="px-4 py-2 font-medium">Payout status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {consignmentItems.map((oi) => {
+                    const line = oi.sellerPayoutLine
+                    const displayStatus = line
+                      ? derivePayoutLineDisplayStatus(line.status, line.payout)
+                      : null
+                    return (
+                      <tr key={oi.id} className="hover:bg-gray-50">
+                        <td className="px-4 py-2 font-mono text-xs">
+                          <Link href={`/admin/items/${oi.item.id}/edit`} className="text-blue-600 hover:underline">
+                            {oi.item.sku}
+                          </Link>
+                        </td>
+                        <td className="px-4 py-2 text-gray-700 text-xs">
+                          {line?.customerProfile
+                            ? (line.customerProfile.name ?? line.customerProfile.email)
+                            : '—'}
+                        </td>
+                        <td className="px-4 py-2 text-xs">
+                          {oi.item.sellerAgreement ? (
+                            <Link
+                              href={`/admin/seller-submissions/${oi.item.sellerAgreement.submissionId}/agreement`}
+                              className="text-blue-600 hover:underline"
+                            >
+                              View →
+                            </Link>
+                          ) : '—'}
+                        </td>
+                        <td className="px-4 py-2 text-xs">
+                          {line ? (
+                            line.payout ? (
+                              <Link href={`/admin/seller-payouts/${line.payout.id}`} className="text-blue-600 hover:underline">
+                                View payout →
+                              </Link>
+                            ) : (
+                              <span className="text-gray-500">Unbatched</span>
+                            )
+                          ) : (
+                            <span className="text-amber-700 font-medium">Missing</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-2 font-mono text-right text-gray-900">
+                          {line ? `$${parseFloat(line.netAmount.toString()).toFixed(2)}` : '—'}
+                        </td>
+                        <td className="px-4 py-2 text-xs">
+                          {displayStatus ?? <span className="text-amber-700">No payout line</span>}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )
+      })()}
 
       {/* Status update */}
       <div className="border-t border-gray-200 pt-6">
