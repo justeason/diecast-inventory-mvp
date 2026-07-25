@@ -1,8 +1,9 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
-import { notFound } from 'next/navigation'
 import { getBuyerSession } from '@/lib/buyerSession'
 import { prisma } from '@/lib/prisma'
+import { BuyerOrderAccessForm } from '@/components/store/BuyerOrderAccessForm'
+import { deriveSellerFacingPayoutStatus } from '@/lib/sellerPayoutCalculation'
 
 export const dynamic = 'force-dynamic'
 
@@ -29,6 +30,13 @@ const STATUS_COLORS: Record<string, string> = {
   withdrawn:           'bg-gray-100 text-gray-500',
 }
 
+const AGREEMENT_STATUS_LABELS: Record<string, string> = {
+  draft:     'Agreement draft',
+  proposed:  'Agreement proposed',
+  accepted:  'Agreement accepted',
+  cancelled: 'Agreement cancelled',
+}
+
 const SALE_TYPE_LABELS: Record<string, string> = {
   consignment: 'Consign with us',
   buyout:      'Sell outright',
@@ -42,8 +50,22 @@ function submissionTitle(s: { brand: string | null; name: string | null }): stri
 
 export default async function SellRequestsPage() {
   const session = await getBuyerSession()
-  if (!session) notFound()
 
+  // No valid session — show email sign-in form. Never return 404.
+  if (!session) {
+    return (
+      <div className="max-w-md">
+        <h1 className="text-2xl font-bold text-gray-900 mb-1">Sell to CollectNTrades</h1>
+        <p className="text-sm text-gray-500 mb-8">
+          Enter your email address to receive a sign-in link and view your sell requests.
+        </p>
+        <BuyerOrderAccessForm />
+      </div>
+    )
+  }
+
+  // Session valid — load only this seller's submissions. profileId comes exclusively
+  // from the server-side verified session, never from request input.
   const submissions = await prisma.sellerSubmission.findMany({
     where: { profileId: session.profileId },
     orderBy: { createdAt: 'desc' },
@@ -53,10 +75,28 @@ export default async function SellRequestsPage() {
       name:               true,
       status:             true,
       saleTypePreference: true,
-      expectedPrice:      true,
       quantity:           true,
-      userNotes:          true,
       createdAt:          true,
+      agreements: {
+        where: { status: { not: 'draft' } },
+        select: {
+          id:     true,
+          type:   true,
+          status: true,
+          payoutLines: {
+            select: {
+              id:        true,
+              lineType:  true,
+              status:    true,
+              netAmount: true,
+              payout:    { select: { status: true, paidAt: true } },
+            },
+            orderBy: { eligibleAt: 'asc' as const },
+          },
+        },
+        orderBy: { createdAt: 'desc' as const },
+        take: 1,
+      },
     },
   })
 
@@ -74,7 +114,7 @@ export default async function SellRequestsPage() {
             href="/account/sell/new"
             className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
           >
-            Submit manual sell request
+            Submit sell request
           </Link>
           <Link
             href="/account/collection"
@@ -107,47 +147,69 @@ export default async function SellRequestsPage() {
         </div>
       ) : (
         <div className="space-y-3">
-          {submissions.map((sub) => (
-            <Link
-              key={sub.id}
-              href={`/account/sell/${sub.id}`}
-              className="block rounded-md border border-gray-200 bg-white px-4 py-4 hover:border-gray-300 hover:bg-gray-50 transition-colors"
-            >
-              <div className="flex items-start justify-between gap-4">
-                <div className="min-w-0 flex-1">
-                  <p className="font-medium text-gray-900 truncate">
-                    {submissionTitle(sub)}
-                  </p>
-                  <div className="flex flex-wrap items-center gap-2 mt-1.5">
-                    <span
-                      className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_COLORS[sub.status] ?? 'bg-gray-100 text-gray-600'}`}
-                    >
-                      {STATUS_LABELS[sub.status] ?? sub.status}
-                    </span>
-                    {sub.saleTypePreference && (
-                      <span className="text-xs text-gray-500">
-                        {SALE_TYPE_LABELS[sub.saleTypePreference] ?? sub.saleTypePreference}
+          {submissions.map((sub) => {
+            const agreement = sub.agreements[0] ?? null
+            const payoutLine = agreement?.payoutLines[0] ?? null
+            const payoutStatus = payoutLine
+              ? deriveSellerFacingPayoutStatus(payoutLine.status, payoutLine.payout ?? null)
+              : null
+
+            return (
+              <Link
+                key={sub.id}
+                href={`/account/sell/${sub.id}`}
+                className="block rounded-md border border-gray-200 bg-white px-4 py-4 hover:border-gray-300 hover:bg-gray-50 transition-colors"
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0 flex-1">
+                    <p className="font-medium text-gray-900 truncate">
+                      {submissionTitle(sub)}
+                    </p>
+                    <div className="flex flex-wrap items-center gap-2 mt-1.5">
+                      <span
+                        className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_COLORS[sub.status] ?? 'bg-gray-100 text-gray-600'}`}
+                      >
+                        {STATUS_LABELS[sub.status] ?? sub.status}
                       </span>
+                      {sub.saleTypePreference && (
+                        <span className="text-xs text-gray-500">
+                          {SALE_TYPE_LABELS[sub.saleTypePreference] ?? sub.saleTypePreference}
+                        </span>
+                      )}
+                      {sub.quantity > 1 && (
+                        <span className="text-xs text-gray-400">×{sub.quantity}</span>
+                      )}
+                    </div>
+
+                    {/* Agreement status summary */}
+                    {agreement && (
+                      <p className="text-xs text-gray-500 mt-1.5">
+                        {AGREEMENT_STATUS_LABELS[agreement.status] ?? agreement.status}
+                      </p>
                     )}
-                    {sub.expectedPrice != null && (
-                      <span className="text-xs text-gray-500">
-                        ${sub.expectedPrice.toFixed(2)}
-                      </span>
-                    )}
-                    {sub.quantity > 1 && (
-                      <span className="text-xs text-gray-400">×{sub.quantity}</span>
+
+                    {/* Payment status summary — seller-safe labels only */}
+                    {payoutStatus && (
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        Payment:{' '}
+                        <span className={payoutStatus.label === 'Paid' ? 'text-green-700 font-medium' : 'text-gray-600'}>
+                          {payoutStatus.label}
+                        </span>
+                        {payoutLine?.netAmount != null && (
+                          <span className="text-gray-400 ml-1">
+                            · ${parseFloat(payoutLine.netAmount.toString()).toFixed(2)}
+                          </span>
+                        )}
+                      </p>
                     )}
                   </div>
-                  {sub.userNotes && (
-                    <p className="text-xs text-gray-400 mt-1.5 truncate">{sub.userNotes}</p>
-                  )}
+                  <p className="text-xs text-gray-400 shrink-0 mt-0.5">
+                    {sub.createdAt.toLocaleDateString()}
+                  </p>
                 </div>
-                <p className="text-xs text-gray-400 shrink-0 mt-0.5">
-                  {sub.createdAt.toLocaleDateString()}
-                </p>
-              </div>
-            </Link>
-          ))}
+              </Link>
+            )
+          })}
         </div>
       )}
     </div>
