@@ -5,6 +5,13 @@ import { getBuyerSession } from '@/lib/buyerSession'
 import { prisma } from '@/lib/prisma'
 import { WithdrawForm } from '@/components/store/WithdrawForm'
 import { SellerSubmissionPhotoUpload } from '@/components/store/SellerSubmissionPhotoUpload'
+import {
+  AGREEMENT_TYPE_LABELS,
+  AGREEMENT_STATUS_LABELS,
+  AGREEMENT_STATUS_COLORS,
+  formatAmount,
+  formatCommissionDisplay,
+} from '@/lib/sellerAgreementDisplay'
 
 export const dynamic = 'force-dynamic'
 
@@ -88,11 +95,44 @@ export default async function SellRequestDetailPage({
         select: { id: true, url: true, sortOrder: true },
         orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
       },
+      agreements: {
+        where: { status: { in: ['proposed', 'accepted', 'cancelled'] } },
+        select: {
+          id: true,
+          type: true,
+          status: true,
+          agreedBuyoutAmount: true,
+          commissionPercent: true,
+          fixedFee: true,
+          minimumSellerPayout: true,
+          agreedListPrice: true,
+          sellerTermsSummary: true,
+          proposedAt: true,
+          acceptedAt: true,
+          cancelledAt: true,
+        },
+        orderBy: { createdAt: 'desc' as const },
+      },
     },
   })
   if (!submission) notFound()
 
   const canWithdraw = WITHDRAWABLE_STATUSES.includes(submission.status)
+
+  // Active agreement: most recent proposed or accepted (never draft).
+  const activeAgreement =
+    submission.agreements.find((a) => a.status === 'proposed' || a.status === 'accepted') ?? null
+
+  // Fallback: most recent cancelled agreement that was previously presented
+  // (proposedAt or acceptedAt set — i.e. not cancelled before the seller ever saw it).
+  const cancelledAgreement =
+    activeAgreement
+      ? null
+      : submission.agreements.find(
+          (a) => a.status === 'cancelled' && (a.proposedAt !== null || a.acceptedAt !== null),
+        ) ?? null
+
+  const sellerAgreement = activeAgreement ?? cancelledAgreement
   const isUnderReview = submission.status === 'under_review'
   const canEditPhotos = ['submitted', 'needs_info'].includes(submission.status)
   const showUserMessage =
@@ -263,6 +303,114 @@ export default async function SellRequestDetailPage({
           editable={canEditPhotos}
         />
       </div>
+
+      {/* Agreement — visible when proposed, accepted, or previously-presented cancelled */}
+      {sellerAgreement && (
+        <div className="mb-6">
+          <h2 className="text-sm font-semibold text-gray-900 mb-3">Agreement</h2>
+          <div
+            className={`rounded-md border px-4 py-4 text-sm ${
+              sellerAgreement.status === 'accepted'
+                ? 'border-green-200 bg-green-50'
+                : sellerAgreement.status === 'cancelled'
+                  ? 'border-gray-200 bg-gray-50'
+                  : 'border-blue-200 bg-blue-50'
+            }`}
+          >
+            <div className="flex items-center gap-2 mb-3">
+              <span
+                className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
+                  AGREEMENT_STATUS_COLORS[sellerAgreement.status] ?? 'bg-gray-100 text-gray-600'
+                }`}
+              >
+                {AGREEMENT_STATUS_LABELS[sellerAgreement.status] ?? sellerAgreement.status}
+              </span>
+              <span className="text-gray-700 text-xs">
+                {AGREEMENT_TYPE_LABELS[sellerAgreement.type] ?? sellerAgreement.type}
+              </span>
+            </div>
+            <dl className="space-y-2 text-sm">
+              {sellerAgreement.type === 'buyout' && sellerAgreement.agreedBuyoutAmount && (
+                <div className="flex gap-3">
+                  <dt className="text-gray-600 w-32 shrink-0">Buyout amount</dt>
+                  <dd className="text-gray-900">
+                    {formatAmount(sellerAgreement.agreedBuyoutAmount.toFixed(2))}
+                  </dd>
+                </div>
+              )}
+              {sellerAgreement.type === 'consignment' && sellerAgreement.commissionPercent && (
+                <div className="flex gap-3">
+                  <dt className="text-gray-600 w-32 shrink-0">Our commission</dt>
+                  <dd className="text-gray-900">
+                    {formatCommissionDisplay(sellerAgreement.commissionPercent.toString())}
+                  </dd>
+                </div>
+              )}
+              {sellerAgreement.type === 'consignment' && sellerAgreement.fixedFee && (
+                <div className="flex gap-3">
+                  <dt className="text-gray-600 w-32 shrink-0">Fixed fee</dt>
+                  <dd className="text-gray-900">
+                    {formatAmount(sellerAgreement.fixedFee.toFixed(2))}
+                  </dd>
+                </div>
+              )}
+              {sellerAgreement.type === 'consignment' && sellerAgreement.minimumSellerPayout && (
+                <div className="flex gap-3">
+                  <dt className="text-gray-600 w-32 shrink-0">Min. payout to you</dt>
+                  <dd className="text-gray-900">
+                    {formatAmount(sellerAgreement.minimumSellerPayout.toFixed(2))}
+                  </dd>
+                </div>
+              )}
+              {sellerAgreement.agreedListPrice && (
+                <div className="flex gap-3">
+                  <dt className="text-gray-600 w-32 shrink-0">Agreed list price</dt>
+                  <dd className="text-gray-900">
+                    {formatAmount(sellerAgreement.agreedListPrice.toFixed(2))}
+                  </dd>
+                </div>
+              )}
+              {sellerAgreement.sellerTermsSummary && (
+                <div className="flex gap-3">
+                  <dt className="text-gray-600 w-32 shrink-0">Terms</dt>
+                  <dd className="text-gray-900 whitespace-pre-wrap">
+                    {sellerAgreement.sellerTermsSummary}
+                  </dd>
+                </div>
+              )}
+              {sellerAgreement.proposedAt && (
+                <div className="flex gap-3">
+                  <dt className="text-gray-600 w-32 shrink-0">Proposed</dt>
+                  <dd className="text-gray-900">
+                    {sellerAgreement.proposedAt.toLocaleDateString()}
+                  </dd>
+                </div>
+              )}
+              {sellerAgreement.acceptedAt && (
+                <div className="flex gap-3">
+                  <dt className="text-gray-600 w-32 shrink-0">Accepted</dt>
+                  <dd className="text-gray-900">
+                    {sellerAgreement.acceptedAt.toLocaleDateString()}
+                  </dd>
+                </div>
+              )}
+              {sellerAgreement.cancelledAt && (
+                <div className="flex gap-3">
+                  <dt className="text-gray-600 w-32 shrink-0">Cancelled</dt>
+                  <dd className="text-gray-900">
+                    {sellerAgreement.cancelledAt.toLocaleDateString()}
+                  </dd>
+                </div>
+              )}
+            </dl>
+            {sellerAgreement.status === 'cancelled' && (
+              <p className="mt-3 text-xs text-gray-500 border-t border-gray-200 pt-3">
+                This agreement is no longer active.
+              </p>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Actions */}
       {canWithdraw && (

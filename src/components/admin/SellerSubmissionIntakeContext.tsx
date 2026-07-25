@@ -1,5 +1,12 @@
 import { type ReactNode } from 'react'
 import Link from 'next/link'
+import {
+  AGREEMENT_TYPE_LABELS,
+  AGREEMENT_STATUS_LABELS,
+  AGREEMENT_STATUS_COLORS,
+  formatAmount,
+  formatCommissionDisplay,
+} from '@/lib/sellerAgreementDisplay'
 
 const STATUS_LABELS: Record<string, string> = {
   submitted:           'Submitted',
@@ -65,6 +72,22 @@ export type SubmissionContext = {
   collectionItem: { id: string; photos: ReviewPhoto[] } | null
 }
 
+export type AgreementContext = {
+  id: string
+  type: string
+  status: string
+  agreedBuyoutAmount: string | null
+  commissionPercent: string | null
+  fixedFee: string | null
+  minimumSellerPayout: string | null
+  agreedListPrice: string | null
+  sellerTermsSummary: string | null
+  adminNotes: string | null
+  proposedAt: Date | null
+  acceptedAt: Date | null
+  acceptanceMethod: string | null
+}
+
 function InfoRow({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex gap-3">
@@ -74,7 +97,13 @@ function InfoRow({ label, children }: { label: string; children: ReactNode }) {
   )
 }
 
-export function SellerSubmissionIntakeContext({ submission }: { submission: SubmissionContext }) {
+export function SellerSubmissionIntakeContext({
+  submission,
+  activeAgreement,
+}: {
+  submission: SubmissionContext
+  activeAgreement?: AgreementContext | null
+}) {
   const itemTitle =
     [submission.brand, submission.name].filter(Boolean).join(' ') || 'Untitled item'
   const customerLabel = submission.profile.name ?? submission.profile.email
@@ -250,6 +279,72 @@ export function SellerSubmissionIntakeContext({ submission }: { submission: Subm
                   />
                 </div>
               ))}
+            </div>
+          </div>
+        )}
+
+        {/* Agreement context */}
+        {activeAgreement && (
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-3">
+              Commercial agreement
+            </p>
+            <div className="rounded-md border border-gray-200 bg-gray-50 px-4 py-3 text-sm">
+              <div className="flex items-center gap-2 mb-2">
+                <span
+                  className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
+                    AGREEMENT_STATUS_COLORS[activeAgreement.status] ?? 'bg-gray-100 text-gray-600'
+                  }`}
+                >
+                  {AGREEMENT_STATUS_LABELS[activeAgreement.status] ?? activeAgreement.status}
+                </span>
+                <span className="text-gray-700">
+                  {AGREEMENT_TYPE_LABELS[activeAgreement.type] ?? activeAgreement.type}
+                </span>
+                <Link
+                  href={`/admin/seller-submissions/${submission.id}/agreement`}
+                  className="ml-auto text-xs text-gray-400 hover:text-gray-900 hover:underline"
+                >
+                  Manage →
+                </Link>
+              </div>
+              <dl className="space-y-1 text-xs text-gray-700">
+                {activeAgreement.type === 'buyout' && activeAgreement.agreedBuyoutAmount && (
+                  <InfoRow label="Buyout amount">
+                    {formatAmount(activeAgreement.agreedBuyoutAmount)}
+                  </InfoRow>
+                )}
+                {activeAgreement.type === 'consignment' && activeAgreement.commissionPercent && (
+                  <InfoRow label="Commission">
+                    {formatCommissionDisplay(activeAgreement.commissionPercent)}
+                  </InfoRow>
+                )}
+                {activeAgreement.type === 'consignment' && activeAgreement.fixedFee && (
+                  <InfoRow label="Fixed fee">{formatAmount(activeAgreement.fixedFee)}</InfoRow>
+                )}
+                {activeAgreement.type === 'consignment' && activeAgreement.minimumSellerPayout && (
+                  <InfoRow label="Min. payout">
+                    {formatAmount(activeAgreement.minimumSellerPayout)}
+                  </InfoRow>
+                )}
+                {activeAgreement.agreedListPrice && (
+                  <InfoRow label="Agreed list price">
+                    {formatAmount(activeAgreement.agreedListPrice)}
+                  </InfoRow>
+                )}
+                {activeAgreement.sellerTermsSummary && (
+                  <InfoRow label="Terms">
+                    <span className="whitespace-pre-wrap">{activeAgreement.sellerTermsSummary}</span>
+                  </InfoRow>
+                )}
+                {activeAgreement.adminNotes && (
+                  <InfoRow label="Admin notes">
+                    <span className="whitespace-pre-wrap text-gray-500">
+                      {activeAgreement.adminNotes}
+                    </span>
+                  </InfoRow>
+                )}
+              </dl>
             </div>
           </div>
         )}

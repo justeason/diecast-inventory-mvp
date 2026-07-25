@@ -122,6 +122,7 @@ model SellerProfile {
   notes          String?
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
+  agreements     SellerAgreement[]
 }
 
 model CustomerLoginToken {
@@ -301,6 +302,7 @@ model SellerSubmission {
 
   photos       SellerSubmissionPhoto[]
   intakeDrafts IntakeDraft[]
+  agreements   SellerAgreement[]
 
   @@index([profileId])
   @@index([status])
@@ -355,4 +357,39 @@ model IntakeDraft {
   updatedAt DateTime @updatedAt
 
   @@index([sellerSubmissionId])
+}
+
+model SellerAgreement {
+  id           String           @id @default(cuid())
+  submissionId String
+  submission   SellerSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  sellerProfileId String?
+  sellerProfile   SellerProfile? @relation(fields: [sellerProfileId], references: [id], onDelete: SetNull)
+
+  type     String
+  currency String @default("USD")
+  status   String @default("draft")
+
+  agreedBuyoutAmount  Decimal? @db.Decimal(10, 2)
+  commissionPercent   Decimal? @db.Decimal(6, 4)
+  fixedFee            Decimal? @db.Decimal(10, 2)
+  minimumSellerPayout Decimal? @db.Decimal(10, 2)
+  agreedListPrice     Decimal? @db.Decimal(10, 2)
+
+  sellerTermsSummary String?
+  adminNotes         String?
+
+  proposedAt       DateTime?
+  acceptedAt       DateTime?
+  acceptanceMethod String?
+  cancelledAt      DateTime?
+  cancelReason     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([submissionId])
+  @@index([sellerProfileId])
+  @@index([status])
 }

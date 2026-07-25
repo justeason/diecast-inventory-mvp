@@ -3,6 +3,13 @@ import { notFound } from 'next/navigation'
 import { prisma } from '@/lib/prisma'
 import { SellerSubmissionStatusForm } from '@/components/admin/SellerSubmissionStatusForm'
 import { startIntakeDraftFromSubmission } from '@/lib/actions/intake'
+import {
+  AGREEMENT_TYPE_LABELS,
+  AGREEMENT_STATUS_LABELS,
+  AGREEMENT_STATUS_COLORS,
+  formatAmount,
+  formatCommissionDisplay,
+} from '@/lib/sellerAgreementDisplay'
 
 export const dynamic = 'force-dynamic'
 
@@ -131,6 +138,22 @@ export default async function AdminSellerSubmissionDetailPage({
         },
         orderBy: { createdAt: 'desc' },
       },
+      agreements: {
+        where: { status: { not: 'cancelled' } },
+        select: {
+          id: true,
+          type: true,
+          status: true,
+          agreedBuyoutAmount: true,
+          commissionPercent: true,
+          agreedListPrice: true,
+          sellerTermsSummary: true,
+          proposedAt: true,
+          acceptedAt: true,
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 1,
+      },
     },
   })
   if (!submission) notFound()
@@ -145,6 +168,7 @@ export default async function AdminSellerSubmissionDetailPage({
     submission.status === 'approved_for_intake' &&
     !submission.intakeDrafts.some((d) => d.status !== 'rejected')
   const hasIntakeHistory = submission.intakeDrafts.length > 0
+  const activeAgreement = submission.agreements[0] ?? null
 
   return (
     <div className="max-w-2xl">
@@ -463,6 +487,70 @@ export default async function AdminSellerSubmissionDetailPage({
           )}
         </div>
       )}
+
+      {/* Commercial agreement */}
+      <div className="mb-6 pt-6 border-t border-gray-200">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-sm font-semibold text-gray-900">Commercial agreement</h2>
+          <Link
+            href={`/admin/seller-submissions/${submission.id}/agreement`}
+            className="text-xs text-gray-500 hover:text-gray-900 hover:underline"
+          >
+            {activeAgreement ? 'Manage →' : 'Create →'}
+          </Link>
+        </div>
+
+        {!activeAgreement ? (
+          <p className="text-sm text-gray-500">No agreement created yet.</p>
+        ) : (
+          <div className="rounded-md border border-gray-200 bg-gray-50 p-3 text-sm">
+            <div className="flex items-center gap-2 mb-2">
+              <span
+                className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
+                  AGREEMENT_STATUS_COLORS[activeAgreement.status] ?? 'bg-gray-100 text-gray-600'
+                }`}
+              >
+                {AGREEMENT_STATUS_LABELS[activeAgreement.status] ?? activeAgreement.status}
+              </span>
+              <span className="text-gray-600">
+                {AGREEMENT_TYPE_LABELS[activeAgreement.type] ?? activeAgreement.type}
+              </span>
+            </div>
+            <dl className="space-y-1 text-xs">
+              {activeAgreement.type === 'buyout' && activeAgreement.agreedBuyoutAmount && (
+                <div className="flex gap-3">
+                  <dt className="text-gray-500 w-28 shrink-0">Buyout amount</dt>
+                  <dd>{formatAmount(activeAgreement.agreedBuyoutAmount.toFixed(2))}</dd>
+                </div>
+              )}
+              {activeAgreement.type === 'consignment' && activeAgreement.commissionPercent && (
+                <div className="flex gap-3">
+                  <dt className="text-gray-500 w-28 shrink-0">Commission</dt>
+                  <dd>{formatCommissionDisplay(activeAgreement.commissionPercent.toString())}</dd>
+                </div>
+              )}
+              {activeAgreement.agreedListPrice && (
+                <div className="flex gap-3">
+                  <dt className="text-gray-500 w-28 shrink-0">Agreed list price</dt>
+                  <dd>{formatAmount(activeAgreement.agreedListPrice.toFixed(2))}</dd>
+                </div>
+              )}
+              {activeAgreement.proposedAt && (
+                <div className="flex gap-3">
+                  <dt className="text-gray-500 w-28 shrink-0">Proposed</dt>
+                  <dd>{activeAgreement.proposedAt.toLocaleDateString()}</dd>
+                </div>
+              )}
+              {activeAgreement.acceptedAt && (
+                <div className="flex gap-3">
+                  <dt className="text-gray-500 w-28 shrink-0">Accepted</dt>
+                  <dd>{activeAgreement.acceptedAt.toLocaleDateString()}</dd>
+                </div>
+              )}
+            </dl>
+          </div>
+        )}
+      </div>
 
       {/* Admin review */}
       <div className="pt-6 border-t border-gray-200">

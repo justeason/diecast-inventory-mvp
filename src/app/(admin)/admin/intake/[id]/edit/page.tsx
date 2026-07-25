@@ -7,7 +7,10 @@ import { IntakeDraftForm } from '@/components/admin/IntakeDraftForm'
 import { ConvertDraftForm } from '@/components/admin/ConvertDraftForm'
 import { ExtractPhotosButton } from '@/components/admin/ExtractPhotosButton'
 import { IntakePhotoUpload } from '@/components/admin/IntakePhotoUpload'
-import { SellerSubmissionIntakeContext } from '@/components/admin/SellerSubmissionIntakeContext'
+import {
+  SellerSubmissionIntakeContext,
+  type AgreementContext,
+} from '@/components/admin/SellerSubmissionIntakeContext'
 import {
   updateIntakeDraft,
   markDraftReviewed,
@@ -104,6 +107,26 @@ export default async function EditIntakeDraftPage({
                 },
               },
             },
+            agreements: {
+              where: { status: { not: 'cancelled' } },
+              select: {
+                id: true,
+                type: true,
+                status: true,
+                agreedBuyoutAmount: true,
+                commissionPercent: true,
+                fixedFee: true,
+                minimumSellerPayout: true,
+                agreedListPrice: true,
+                sellerTermsSummary: true,
+                adminNotes: true,
+                proposedAt: true,
+                acceptedAt: true,
+                acceptanceMethod: true,
+              },
+              orderBy: { createdAt: 'desc' as const },
+              take: 1,
+            },
           },
         },
       },
@@ -152,6 +175,25 @@ export default async function EditIntakeDraftPage({
   }
 
   const isTerminal = draft.status === 'converted' || draft.status === 'rejected'
+
+  const rawAgreement = draft.sellerSubmission?.agreements?.[0] ?? null
+  const activeAgreement: AgreementContext | null = rawAgreement
+    ? {
+        id: rawAgreement.id,
+        type: rawAgreement.type,
+        status: rawAgreement.status,
+        agreedBuyoutAmount: rawAgreement.agreedBuyoutAmount?.toFixed(2) ?? null,
+        commissionPercent: rawAgreement.commissionPercent?.toString() ?? null,
+        fixedFee: rawAgreement.fixedFee?.toFixed(2) ?? null,
+        minimumSellerPayout: rawAgreement.minimumSellerPayout?.toFixed(2) ?? null,
+        agreedListPrice: rawAgreement.agreedListPrice?.toFixed(2) ?? null,
+        sellerTermsSummary: rawAgreement.sellerTermsSummary,
+        adminNotes: rawAgreement.adminNotes,
+        proposedAt: rawAgreement.proposedAt,
+        acceptedAt: rawAgreement.acceptedAt,
+        acceptanceMethod: rawAgreement.acceptanceMethod,
+      }
+    : null
 
   const updateAction      = updateIntakeDraft.bind(null, id)
   const reviewAction      = markDraftReviewed.bind(null, id)
@@ -242,7 +284,10 @@ export default async function EditIntakeDraftPage({
 
       {/* Seller submission context panel */}
       {draft.sellerSubmission && (
-        <SellerSubmissionIntakeContext submission={draft.sellerSubmission} />
+        <SellerSubmissionIntakeContext
+          submission={draft.sellerSubmission}
+          activeAgreement={activeAgreement}
+        />
       )}
 
       {isTerminal ? (
