@@ -41,25 +41,31 @@ model CatalogModelPhoto {
 }
 
 model ItemInstance {
-  id             String           @id @default(cuid())
-  sku            String           @unique
-  catalogId      String
-  catalog        CatalogModel     @relation(fields: [catalogId], references: [id])
-  locationId     String?
-  location       StorageLocation? @relation(fields: [locationId], references: [id])
-  cardedOrLoose  String
-  condition      String
-  conditionNotes String?
-  purchasePrice  Float?
-  listPrice      Float?
-  status         String           @default("draft")
-  notes          String?
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
-  photos         Photo[]
-  listing        Listing?
-  orderItems     OrderItem[]
-  intakeDraft    IntakeDraft?
+  id                String           @id @default(cuid())
+  sku               String           @unique
+  catalogId         String
+  catalog           CatalogModel     @relation(fields: [catalogId], references: [id])
+  locationId        String?
+  location          StorageLocation? @relation(fields: [locationId], references: [id])
+  cardedOrLoose     String
+  condition         String
+  conditionNotes    String?
+  purchasePrice     Float?
+  listPrice         Float?
+  status            String           @default("draft")
+  notes             String?
+  sourceType        String?
+  sellerAgreementId String?
+  sellerAgreement   SellerAgreement? @relation(fields: [sellerAgreementId], references: [id], onDelete: SetNull)
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  photos            Photo[]
+  listing           Listing?
+  orderItems        OrderItem[]
+  intakeDraft       IntakeDraft?
+
+  @@index([sellerAgreementId])
+  @@index([sourceType])
 }
 
 model Photo {
@@ -379,6 +385,8 @@ model SellerAgreement {
 
   sellerTermsSummary String?
   adminNotes         String?
+
+  items ItemInstance[]
 
   proposedAt       DateTime?
   acceptedAt       DateTime?

@@ -7,12 +7,28 @@ import { createListing, updateListing, type ListingActionState } from '@/lib/act
 import { Button } from '@/components/admin/ui/Button'
 import { Input } from '@/components/admin/ui/Input'
 import { Select } from '@/components/admin/ui/Select'
+import {
+  calculateConsignmentPreview,
+  type ConsignmentPreview,
+} from '@/lib/sellerAgreementInventory'
+import { formatCommissionDisplay } from '@/lib/sellerAgreementDisplay'
 
 // ---------- shared types ----------
+
+export type ConsignmentContextForListing = {
+  agreementId: string
+  submissionId: string
+  commissionPercent: string
+  fixedFee: string | null
+  minimumSellerPayout: string | null
+  agreedListPrice: string | null
+  sellerTermsSummary: string | null
+}
 
 export type ItemWithRelations = ItemInstance & {
   catalog: CatalogModel
   location: StorageLocation | null
+  consignmentContext?: ConsignmentContextForListing | null
 }
 
 export type ListingWithItem = Listing & {
@@ -60,7 +76,124 @@ function ItemSummary({ item }: { item: ItemWithRelations }) {
         <dd>{item.location?.label ?? '—'}</dd>
         <dt className="text-gray-500">List Price</dt>
         <dd>{item.listPrice != null ? `$${item.listPrice.toFixed(2)}` : '—'}</dd>
+        {item.sourceType === 'consignment' && (
+          <>
+            <dt className="text-gray-500">Ownership</dt>
+            <dd className="text-blue-700 font-medium">Consignment</dd>
+          </>
+        )}
+        {item.sourceType === 'buyout' && (
+          <>
+            <dt className="text-gray-500">Ownership</dt>
+            <dd className="text-gray-700">Buyout</dd>
+          </>
+        )}
       </dl>
+    </div>
+  )
+}
+
+// ---------- consignment pricing panel ----------
+
+function PreviewRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between text-xs">
+      <dt className="text-gray-500">{label}</dt>
+      <dd className="font-mono">{value}</dd>
+    </div>
+  )
+}
+
+function PayoutPreview({ preview }: { preview: ConsignmentPreview }) {
+  if (!preview.valid) return null
+  return (
+    <div
+      className={`rounded-md px-3 py-2 text-xs ${
+        preview.belowMinimum
+          ? 'bg-amber-50 border border-amber-200'
+          : 'bg-white border border-blue-200'
+      }`}
+    >
+      <p className="font-medium text-blue-900 mb-1.5">Projected seller payout</p>
+      <dl className="space-y-0.5">
+        <PreviewRow label="Listing price" value={`$${preview.listingPrice.toFixed(2)}`} />
+        <PreviewRow label="Commission" value={`− $${preview.estimatedCommission.toFixed(2)}`} />
+        {preview.estimatedFixedFee > 0 && (
+          <PreviewRow label="Fixed fee" value={`− $${preview.estimatedFixedFee.toFixed(2)}`} />
+        )}
+        <div className="flex justify-between text-xs font-medium border-t border-gray-200 pt-0.5 mt-0.5">
+          <dt>Seller proceeds</dt>
+          <dd className="font-mono">${preview.estimatedProceeds.toFixed(2)}</dd>
+        </div>
+      </dl>
+      {preview.belowMinimum && (
+        <p className="mt-1.5 text-amber-800">
+          Estimated proceeds are below the agreed minimum seller payout. Review listing price.
+        </p>
+      )}
+      <p className="mt-1.5 text-gray-400 italic">Advisory only. Payout is not automatic.</p>
+    </div>
+  )
+}
+
+function ConsignmentPricingPanel({
+  context,
+  listingPriceStr,
+}: {
+  context: ConsignmentContextForListing
+  listingPriceStr: string
+}) {
+  const preview = calculateConsignmentPreview({
+    listingPriceStr,
+    commissionPercent: context.commissionPercent,
+    fixedFee: context.fixedFee,
+    minimumSellerPayout: context.minimumSellerPayout,
+  })
+
+  return (
+    <div className="rounded-md border border-blue-200 bg-blue-50 px-4 py-3 text-sm space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="font-semibold text-blue-900">Consignment pricing context</p>
+        <Link
+          href={`/admin/seller-submissions/${context.submissionId}/agreement`}
+          className="text-xs text-blue-700 hover:underline"
+        >
+          View agreement →
+        </Link>
+      </div>
+
+      <dl className="space-y-1 text-xs">
+        <div className="flex gap-3">
+          <dt className="text-blue-700 w-32 shrink-0">Commission</dt>
+          <dd className="text-blue-900">{formatCommissionDisplay(context.commissionPercent)}</dd>
+        </div>
+        {context.fixedFee && (
+          <div className="flex gap-3">
+            <dt className="text-blue-700 w-32 shrink-0">Fixed fee</dt>
+            <dd className="text-blue-900">${parseFloat(context.fixedFee).toFixed(2)}</dd>
+          </div>
+        )}
+        {context.minimumSellerPayout && (
+          <div className="flex gap-3">
+            <dt className="text-blue-700 w-32 shrink-0">Min. payout</dt>
+            <dd className="text-blue-900">${parseFloat(context.minimumSellerPayout).toFixed(2)}</dd>
+          </div>
+        )}
+        {context.agreedListPrice && (
+          <div className="flex gap-3">
+            <dt className="text-blue-700 w-32 shrink-0">Agreed price</dt>
+            <dd className="text-blue-900">${parseFloat(context.agreedListPrice).toFixed(2)}</dd>
+          </div>
+        )}
+      </dl>
+
+      <PayoutPreview preview={preview} />
+
+      {context.sellerTermsSummary && (
+        <p className="text-xs text-blue-700 whitespace-pre-wrap border-t border-blue-200 pt-2">
+          {context.sellerTermsSummary}
+        </p>
+      )}
     </div>
   )
 }
@@ -114,6 +247,13 @@ export function CreateListingForm({ items, preSelectedItem }: CreateProps) {
 
       {selectedItem && <ItemSummary item={selectedItem} />}
 
+      {selectedItem?.consignmentContext && (
+        <ConsignmentPricingPanel
+          context={selectedItem.consignmentContext}
+          listingPriceStr={price}
+        />
+      )}
+
       <Input
         label="Title"
         name="title"
@@ -156,15 +296,23 @@ export function CreateListingForm({ items, preSelectedItem }: CreateProps) {
 
 // ---------- Edit ----------
 
-type EditProps = { listing: ListingWithItem }
+type EditProps = {
+  listing: ListingWithItem
+  consignmentContext?: ConsignmentContextForListing | null
+}
 
-export function EditListingForm({ listing }: EditProps) {
+export function EditListingForm({ listing, consignmentContext }: EditProps) {
   const action = updateListing.bind(null, listing.id)
   const [state, formAction, isPending] = useActionState<ListingActionState, FormData>(action, null)
+  const [priceForPreview, setPriceForPreview] = useState(listing.price.toString())
 
   return (
     <form action={formAction} className="space-y-4 max-w-lg">
       <ItemSummary item={listing.item} />
+
+      {consignmentContext && (
+        <ConsignmentPricingPanel context={consignmentContext} listingPriceStr={priceForPreview} />
+      )}
 
       <Input
         label="Title"
@@ -182,6 +330,7 @@ export function EditListingForm({ listing }: EditProps) {
         min="0"
         required
         defaultValue={listing.price.toString()}
+        onChange={(e) => setPriceForPreview(e.target.value)}
         error={state?.errors?.price?.[0]}
       />
 

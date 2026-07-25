@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { prisma } from '@/lib/prisma'
-import { EditListingForm } from '@/components/admin/ListingForm'
+import { EditListingForm, type ConsignmentContextForListing } from '@/components/admin/ListingForm'
 
 export default async function EditListingPage({
   params,
@@ -18,12 +18,39 @@ export default async function EditListingPage({
           catalog: true,
           location: true,
           _count: { select: { photos: true } },
+          sellerAgreement: {
+            select: {
+              id: true,
+              submissionId: true,
+              status: true,
+              commissionPercent: true,
+              fixedFee: true,
+              minimumSellerPayout: true,
+              agreedListPrice: true,
+              sellerTermsSummary: true,
+            },
+          },
         },
       },
     },
   })
 
   if (!listing) notFound()
+
+  const consignmentContext: ConsignmentContextForListing | null =
+    listing.item.sourceType === 'consignment' && listing.item.sellerAgreement?.status === 'accepted'
+      ? {
+          agreementId: listing.item.sellerAgreement.id,
+          submissionId: listing.item.sellerAgreement.submissionId,
+          commissionPercent:
+            listing.item.sellerAgreement.commissionPercent?.toString() ?? '0',
+          fixedFee: listing.item.sellerAgreement.fixedFee?.toFixed(2) ?? null,
+          minimumSellerPayout:
+            listing.item.sellerAgreement.minimumSellerPayout?.toFixed(2) ?? null,
+          agreedListPrice: listing.item.sellerAgreement.agreedListPrice?.toFixed(2) ?? null,
+          sellerTermsSummary: listing.item.sellerAgreement.sellerTermsSummary ?? null,
+        }
+      : null
 
   return (
     <>
@@ -47,7 +74,7 @@ export default async function EditListingPage({
           available, but actual item photos are recommended.
         </div>
       )}
-      <EditListingForm listing={listing} />
+      <EditListingForm listing={listing} consignmentContext={consignmentContext} />
     </>
   )
 }

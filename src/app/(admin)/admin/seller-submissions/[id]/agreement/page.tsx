@@ -59,6 +59,17 @@ export default async function SellerAgreementPage({
           acceptanceMethod: true,
           cancelledAt: true,
           createdAt: true,
+          items: {
+            select: {
+              id: true,
+              sku: true,
+              status: true,
+              sourceType: true,
+              catalog: { select: { brand: true, name: true } },
+              listing: { select: { id: true, status: true } },
+            },
+            orderBy: { createdAt: 'asc' as const },
+          },
         },
         orderBy: { createdAt: 'desc' },
       },
@@ -248,10 +259,45 @@ export default async function SellerAgreementPage({
             <AgreementReadOnly agreement={activeAgreement} showAdminNotes />
           </div>
 
+          {/* Linked inventory */}
+          {activeAgreement.items.length > 0 && (
+            <div className="pt-6 border-t border-gray-200">
+              <h3 className="text-sm font-semibold text-gray-700 mb-3">Linked inventory</h3>
+              <div className="space-y-2">
+                {activeAgreement.items.map((item) => (
+                  <div
+                    key={item.id}
+                    className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm rounded-md border border-gray-200 bg-gray-50 px-3 py-2"
+                  >
+                    <Link
+                      href={`/admin/items/${item.id}/edit`}
+                      className="font-mono text-xs text-indigo-700 hover:underline"
+                    >
+                      {item.sku}
+                    </Link>
+                    <span className="text-gray-700">
+                      {item.catalog.brand} {item.catalog.name}
+                    </span>
+                    <span className="text-xs text-gray-400">{item.status}</span>
+                    {item.listing && (
+                      <Link
+                        href={`/admin/listings/${item.listing.id}/edit`}
+                        className="text-xs text-blue-600 hover:underline ml-auto"
+                      >
+                        View listing →
+                      </Link>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="pt-6 border-t border-gray-200">
             <h3 className="text-sm font-semibold text-gray-700 mb-1">Cancel</h3>
             <p className="text-xs text-gray-500 mb-3">
-              Cancellation is blocked if a linked intake has already been converted to inventory.
+              Cancellation is blocked if this agreement is linked to inventory, or if a linked
+              intake has been converted to inventory.
             </p>
             <CancelAgreementForm action={cancelAction} />
           </div>

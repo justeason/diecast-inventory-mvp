@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import { prisma } from '@/lib/prisma'
-import { CreateListingForm } from '@/components/admin/ListingForm'
+import { CreateListingForm, type ItemWithRelations } from '@/components/admin/ListingForm'
 
 export default async function NewListingPage({
   searchParams,
@@ -9,11 +9,42 @@ export default async function NewListingPage({
 }) {
   const { itemId } = await searchParams
 
-  const eligibleItems = await prisma.itemInstance.findMany({
+  const rawItems = await prisma.itemInstance.findMany({
     where: { status: 'available', listing: null },
-    include: { catalog: true, location: true },
+    include: {
+      catalog: true,
+      location: true,
+      sellerAgreement: {
+        select: {
+          id: true,
+          submissionId: true,
+          status: true,
+          commissionPercent: true,
+          fixedFee: true,
+          minimumSellerPayout: true,
+          agreedListPrice: true,
+          sellerTermsSummary: true,
+        },
+      },
+    },
     orderBy: { sku: 'asc' },
   })
+
+  const eligibleItems: ItemWithRelations[] = rawItems.map((item) => ({
+    ...item,
+    consignmentContext:
+      item.sourceType === 'consignment' && item.sellerAgreement?.status === 'accepted'
+        ? {
+            agreementId: item.sellerAgreement.id,
+            submissionId: item.sellerAgreement.submissionId,
+            commissionPercent: item.sellerAgreement.commissionPercent?.toString() ?? '0',
+            fixedFee: item.sellerAgreement.fixedFee?.toFixed(2) ?? null,
+            minimumSellerPayout: item.sellerAgreement.minimumSellerPayout?.toFixed(2) ?? null,
+            agreedListPrice: item.sellerAgreement.agreedListPrice?.toFixed(2) ?? null,
+            sellerTermsSummary: item.sellerAgreement.sellerTermsSummary ?? null,
+          }
+        : null,
+  }))
 
   const preSelectedItem = itemId
     ? (eligibleItems.find((item) => item.id === itemId) ?? null)

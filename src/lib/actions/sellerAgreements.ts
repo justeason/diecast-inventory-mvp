@@ -187,12 +187,27 @@ export async function cancelSellerAgreement(
 
   const agreement = await prisma.sellerAgreement.findUnique({
     where: { id: agreementId },
-    select: { id: true, status: true, submissionId: true },
+    select: {
+      id: true,
+      status: true,
+      submissionId: true,
+      _count: { select: { items: true } },
+    },
   })
   if (!agreement) return { errors: { _form: ['Agreement not found'] } }
 
   const transition = canTransitionStatus(agreement.status, 'cancelled')
   if (!transition.allowed) return { errors: { _form: [transition.reason] } }
+
+  if (agreement._count.items > 0) {
+    return {
+      errors: {
+        _form: [
+          'This agreement is linked to inventory and cannot be cancelled. Resolve the inventory relationship first.',
+        ],
+      },
+    }
+  }
 
   if (agreement.status === 'accepted') {
     const convertedIntake = await prisma.intakeDraft.findFirst({

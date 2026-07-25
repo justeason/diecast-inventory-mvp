@@ -4,13 +4,15 @@ import type { CatalogModel, StorageLocation } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { getNextHwSku } from '@/lib/sku'
 import { IntakeDraftForm } from '@/components/admin/IntakeDraftForm'
-import { ConvertDraftForm } from '@/components/admin/ConvertDraftForm'
+import { ConvertDraftForm, type AgreementConversionData } from '@/components/admin/ConvertDraftForm'
 import { ExtractPhotosButton } from '@/components/admin/ExtractPhotosButton'
 import { IntakePhotoUpload } from '@/components/admin/IntakePhotoUpload'
 import {
   SellerSubmissionIntakeContext,
   type AgreementContext,
 } from '@/components/admin/SellerSubmissionIntakeContext'
+import { resolveConversionEligibility } from '@/lib/sellerAgreementInventory'
+import { ACCEPTANCE_METHOD_LABELS } from '@/lib/sellerAgreementDisplay'
 import {
   updateIntakeDraft,
   markDraftReviewed,
@@ -125,7 +127,6 @@ export default async function EditIntakeDraftPage({
                 acceptanceMethod: true,
               },
               orderBy: { createdAt: 'desc' as const },
-              take: 1,
             },
           },
         },
@@ -176,7 +177,8 @@ export default async function EditIntakeDraftPage({
 
   const isTerminal = draft.status === 'converted' || draft.status === 'rejected'
 
-  const rawAgreement = draft.sellerSubmission?.agreements?.[0] ?? null
+  const allNonCancelledAgreements = draft.sellerSubmission?.agreements ?? []
+  const rawAgreement = allNonCancelledAgreements[0] ?? null
   const activeAgreement: AgreementContext | null = rawAgreement
     ? {
         id: rawAgreement.id,
@@ -194,6 +196,37 @@ export default async function EditIntakeDraftPage({
         acceptanceMethod: rawAgreement.acceptanceMethod,
       }
     : null
+
+  // Compute conversion eligibility and accepted agreement data for the convert form
+  let convertFormAgreement: AgreementConversionData | null = null
+  let convertFormBlockReason: string | null = null
+
+  if (draft.sellerSubmissionId && draft.status === 'reviewed') {
+    const eligibility = resolveConversionEligibility(
+      draft.sellerSubmissionId,
+      allNonCancelledAgreements,
+    )
+    if (!eligibility.eligible) {
+      convertFormBlockReason = eligibility.reason
+    } else if (eligibility.sourceType !== 'company_owned' && eligibility.acceptedAgreementId) {
+      const raw = allNonCancelledAgreements.find((a) => a.id === eligibility.acceptedAgreementId)
+      if (raw) {
+        convertFormAgreement = {
+          id: raw.id,
+          type: raw.type as 'buyout' | 'consignment',
+          agreedBuyoutAmount: raw.agreedBuyoutAmount?.toFixed(2) ?? null,
+          commissionPercent: raw.commissionPercent?.toString() ?? null,
+          fixedFee: raw.fixedFee?.toFixed(2) ?? null,
+          minimumSellerPayout: raw.minimumSellerPayout?.toFixed(2) ?? null,
+          agreedListPrice: raw.agreedListPrice?.toFixed(2) ?? null,
+          sellerTermsSummary: raw.sellerTermsSummary ?? null,
+          acceptedAtLabel: raw.acceptedAt?.toLocaleDateString() ?? '',
+          acceptanceMethodLabel:
+            ACCEPTANCE_METHOD_LABELS[raw.acceptanceMethod ?? ''] ?? raw.acceptanceMethod ?? '',
+        }
+      }
+    }
+  }
 
   const updateAction      = updateIntakeDraft.bind(null, id)
   const reviewAction      = markDraftReviewed.bind(null, id)
@@ -445,6 +478,9 @@ export default async function EditIntakeDraftPage({
                   suggestedPrice={suggestedPrice}
                   exactCatalogMatch={exactCatalogMatch}
                   similarCatalogModels={similarCatalogModels}
+                  sellerSubmissionId={draft.sellerSubmissionId}
+                  acceptedAgreement={convertFormAgreement}
+                  agreementBlockReason={convertFormBlockReason}
                 />
               </div>
             )}

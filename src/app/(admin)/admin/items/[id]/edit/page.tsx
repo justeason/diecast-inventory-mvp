@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation'
 import { prisma } from '@/lib/prisma'
 import { ItemInstanceForm } from '@/components/admin/ItemInstanceForm'
 import { PhotoThumbnail } from '@/components/shared/PhotoThumbnail'
+import { formatCommissionDisplay } from '@/lib/sellerAgreementDisplay'
 
 export default async function EditItemPage({
   params,
@@ -18,6 +19,21 @@ export default async function EditItemPage({
         photos: { select: { url: true, type: true }, orderBy: { sortOrder: 'asc' } },
         listing: { select: { id: true, status: true } },
         intakeDraft: { select: { id: true, sellerSubmissionId: true } },
+        sellerAgreement: {
+          select: {
+            id: true,
+            submissionId: true,
+            type: true,
+            status: true,
+            agreedBuyoutAmount: true,
+            commissionPercent: true,
+            fixedFee: true,
+            minimumSellerPayout: true,
+            agreedListPrice: true,
+            acceptedAt: true,
+            acceptanceMethod: true,
+          },
+        },
       },
     }),
     prisma.catalogModel.findMany({ orderBy: [{ brand: 'asc' }, { name: 'asc' }] }),
@@ -57,6 +73,66 @@ export default async function EditItemPage({
           </Link>
         </div>
       </div>
+
+      {/* Inventory ownership */}
+      {item.sourceType && (
+        <div className="mb-6 max-w-2xl rounded-md border border-gray-200 bg-gray-50 px-4 py-3 text-sm">
+          <p className="font-semibold text-gray-700 mb-2">Inventory ownership</p>
+          {item.sourceType === 'company_owned' && (
+            <p className="text-gray-500">Company-owned. Acquired directly by the business.</p>
+          )}
+          {item.sourceType === 'buyout' && (
+            <div className="space-y-1">
+              <p className="text-gray-700">
+                <span className="font-medium">Buyout</span> — acquired from seller via one-time
+                buyout.
+              </p>
+              {item.purchasePrice != null && (
+                <p className="text-gray-500">
+                  Acquisition cost:{' '}
+                  <span className="font-mono">${item.purchasePrice.toFixed(2)}</span>
+                </p>
+              )}
+              {item.sellerAgreement && (
+                <Link
+                  href={`/admin/seller-submissions/${item.sellerAgreement.submissionId}/agreement`}
+                  className="text-gray-700 hover:underline"
+                >
+                  View commercial agreement →
+                </Link>
+              )}
+            </div>
+          )}
+          {item.sourceType === 'consignment' && (
+            <div className="space-y-1">
+              <p className="text-gray-700">
+                <span className="font-medium">Consignment</span> — item remains seller-owned.
+                Payout is not automatic.
+              </p>
+              {item.sellerAgreement?.commissionPercent && (
+                <p className="text-gray-500">
+                  Commission:{' '}
+                  {formatCommissionDisplay(item.sellerAgreement.commissionPercent.toString())}
+                </p>
+              )}
+              {item.sellerAgreement?.minimumSellerPayout && (
+                <p className="text-gray-500">
+                  Min. payout: $
+                  {parseFloat(item.sellerAgreement.minimumSellerPayout.toFixed(2)).toFixed(2)}
+                </p>
+              )}
+              {item.sellerAgreement && (
+                <Link
+                  href={`/admin/seller-submissions/${item.sellerAgreement.submissionId}/agreement`}
+                  className="text-gray-700 hover:underline"
+                >
+                  View commercial agreement →
+                </Link>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Seller-sourced inventory traceability */}
       {item.intakeDraft?.sellerSubmissionId && (

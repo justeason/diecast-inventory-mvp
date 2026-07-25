@@ -5,7 +5,12 @@ import Anthropic from '@anthropic-ai/sdk'
 import { z } from 'zod'
 import { Prisma } from '@prisma/client'
 import { redirect } from 'next/navigation'
+import { revalidatePath } from 'next/cache'
 import { prisma } from '@/lib/prisma'
+import {
+  resolveConversionEligibility,
+  validateConversionConfirmation,
+} from '@/lib/sellerAgreementInventory'
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -171,14 +176,13 @@ export async function convertDraft(
   _prev: ConvertActionState,
   formData: FormData
 ): Promise<ConvertActionState> {
+  // ── Form field parsing (lightweight, UI-independent) ──────────────────────
   const sku = (formData.get('sku') as string)?.trim()
   if (!sku) return { errors: { sku: ['SKU is required.'] } }
 
-  // Storage location — required; must reference an existing StorageLocation record.
   const locationId = (formData.get('locationId') as string)?.trim() || null
   if (!locationId) return { errors: { locationId: ['Storage location is required.'] } }
 
-  // Optional listing creation fields — only validate when checkbox is on.
   const createListing = formData.get('createListing') === 'on'
   let listingTitle: string | null = null
   let listingPrice: number | null = null
@@ -193,37 +197,37 @@ export async function convertDraft(
     }
   }
 
-  const draft = await prisma.intakeDraft.findUnique({ where: { id } })
-  if (!draft) return { errors: { form: ['Draft not found.'] } }
-  if (draft.status === 'converted') {
+  // Capture commercial confirmation inputs now; they are user-submitted form fields,
+  // not authoritative DB state — they will be validated inside the transaction.
+  const formConfirmBuyout     = formData.get('confirmBuyout')     as string | null
+  const formConfirmConsignment = formData.get('confirmConsignment') as string | null
+  const selectedCatalogId     = (formData.get('catalogModelId') as string)?.trim() || null
+
+  // ── Pre-flight checks for early user-facing errors (non-authoritative) ────
+  const preflight = await prisma.intakeDraft.findUnique({ where: { id } })
+  if (!preflight) return { errors: { form: ['Draft not found.'] } }
+  if (preflight.status === 'converted') {
     return { errors: { form: ['This draft has already been converted.'] } }
   }
-  if (draft.status === 'rejected') {
+  if (preflight.status === 'rejected') {
     return { errors: { form: ['Rejected drafts cannot be converted.'] } }
   }
-
-  const brand = draft.brand?.trim()
-  const name  = draft.name?.trim()
-  if (!brand || !name) {
+  if (!preflight.brand?.trim() || !preflight.name?.trim()) {
     return { errors: { form: ['Brand and name are required to convert.'] } }
   }
-  if (!draft.condition || !draft.cardedOrLoose) {
+  if (!preflight.condition || !preflight.cardedOrLoose) {
     return { errors: { form: ['Condition and type (carded/loose) are required to convert.'] } }
   }
 
-  // Verify the selected storage location exists.
   const locationRecord = await prisma.storageLocation.findUnique({
     where: { id: locationId },
     select: { id: true },
   })
   if (!locationRecord) return { errors: { locationId: ['Selected location not found.'] } }
 
-  // Check SKU uniqueness upfront for a clear user-facing error.
   const existing = await prisma.itemInstance.findUnique({ where: { sku } })
   if (existing) return { errors: { sku: ['SKU is already in use.'] } }
 
-  // Validate manually selected catalog model (if admin chose an override).
-  const selectedCatalogId = (formData.get('catalogModelId') as string)?.trim() || null
   if (selectedCatalogId) {
     const found = await prisma.catalogModel.findUnique({
       where: { id: selectedCatalogId },
@@ -234,86 +238,176 @@ export async function convertDraft(
     }
   }
 
+  // ── Transaction ───────────────────────────────────────────────────────────
+  // All authoritative DB reads and writes — including commercial provenance —
+  // happen inside a single transaction so no intermediate state can be observed.
   let newItemId: string | undefined
   let newListingId: string | undefined
+  let sellerSubmissionId: string | null = null
+  let txError: { errors: Record<string, string[]> } | null = null
 
   try {
-  await prisma.$transaction(async (tx) => {
-    // 1. Resolve catalog model — use admin override if provided, else exact-match or create.
-    let catalog: { id: string }
-    if (selectedCatalogId) {
-      catalog = { id: selectedCatalogId }
-    } else {
-      let found = await tx.catalogModel.findFirst({
-        where: {
-          brand,
-          name,
-          year:   draft.year   ?? null,
-          series: trimOrNull(draft.series),
-          color:  trimOrNull(draft.color),
-          scale:  trimOrNull(draft.scale),
-        },
-      })
-      if (!found) {
-        found = await tx.catalogModel.create({
-          data: {
+    await prisma.$transaction(async (tx) => {
+      // 1. Re-fetch draft through the transaction client for authoritative state.
+      const draft = await tx.intakeDraft.findUnique({ where: { id } })
+      if (!draft) {
+        txError = { errors: { form: ['Draft not found.'] } }
+        throw new Error('TX_VALIDATION')
+      }
+      if (draft.status !== 'reviewed') {
+        txError = { errors: { form: ['Draft must be in reviewed status to convert. Reload and try again.'] } }
+        throw new Error('TX_VALIDATION')
+      }
+
+      const brand = draft.brand?.trim()
+      const name  = draft.name?.trim()
+      if (!brand || !name || !draft.condition || !draft.cardedOrLoose) {
+        txError = { errors: { form: ['Draft is missing required fields. Please update and retry.'] } }
+        throw new Error('TX_VALIDATION')
+      }
+
+      sellerSubmissionId = draft.sellerSubmissionId
+
+      // 2. Resolve commercial provenance inside the transaction.
+      //    sourceType, sellerAgreementId, and purchasePrice are derived exclusively
+      //    from the transaction-fetched agreement records — never from pre-transaction state.
+      let conversionSourceType: 'company_owned' | 'buyout' | 'consignment' = 'company_owned'
+      let conversionAgreementId: string | null = null
+      let conversionPurchasePrice: number | null = null
+
+      if (draft.sellerSubmissionId) {
+        const agreements = await tx.sellerAgreement.findMany({
+          where: { submissionId: draft.sellerSubmissionId, status: { not: 'cancelled' } },
+          select: { id: true, type: true, status: true, agreedBuyoutAmount: true },
+        })
+
+        const eligibility = resolveConversionEligibility(draft.sellerSubmissionId, agreements)
+        if (!eligibility.eligible) {
+          txError = { errors: { form: [eligibility.reason] } }
+          throw new Error('TX_VALIDATION')
+        }
+
+        conversionSourceType  = eligibility.sourceType
+        conversionAgreementId = eligibility.acceptedAgreementId
+
+        const confirmation = validateConversionConfirmation(
+          conversionSourceType,
+          formConfirmBuyout,
+          formConfirmConsignment,
+        )
+        if (!confirmation.valid) {
+          txError = { errors: { form: [confirmation.error] } }
+          throw new Error('TX_VALIDATION')
+        }
+
+        if (conversionSourceType === 'buyout') {
+          const accepted = agreements.find((a) => a.id === conversionAgreementId)
+          if (!accepted?.agreedBuyoutAmount) {
+            txError = { errors: { form: ['Accepted buyout agreement is missing the agreed buyout amount.'] } }
+            throw new Error('TX_VALIDATION')
+          }
+          const buyoutAmount = parseFloat(accepted.agreedBuyoutAmount.toFixed(2))
+          if (!Number.isFinite(buyoutAmount) || buyoutAmount <= 0) {
+            txError = { errors: { form: ['Buyout amount in the accepted agreement is not valid.'] } }
+            throw new Error('TX_VALIDATION')
+          }
+          conversionPurchasePrice = buyoutAmount
+        }
+      }
+
+      // 3. Resolve catalog model.
+      let catalog: { id: string }
+      if (selectedCatalogId) {
+        catalog = { id: selectedCatalogId }
+      } else {
+        let found = await tx.catalogModel.findFirst({
+          where: {
             brand,
             name,
-            year:   draft.year            ?? undefined,
-            series: trimOrNull(draft.series) ?? undefined,
-            color:  trimOrNull(draft.color)  ?? undefined,
-            scale:  trimOrNull(draft.scale)  ?? undefined,
+            year:   draft.year   ?? null,
+            series: trimOrNull(draft.series),
+            color:  trimOrNull(draft.color),
+            scale:  trimOrNull(draft.scale),
           },
         })
+        if (!found) {
+          found = await tx.catalogModel.create({
+            data: {
+              brand,
+              name,
+              year:   draft.year            ?? undefined,
+              series: trimOrNull(draft.series) ?? undefined,
+              color:  trimOrNull(draft.color)  ?? undefined,
+              scale:  trimOrNull(draft.scale)  ?? undefined,
+            },
+          })
+        }
+        catalog = found
       }
-      catalog = found
-    }
 
-    // 2. Create ItemInstance.
-    const item = await tx.itemInstance.create({
-      data: {
-        sku,
-        catalogId:      catalog.id,
-        locationId,
-        cardedOrLoose:  draft.cardedOrLoose!,
-        condition:      draft.condition!,
-        conditionNotes: trimOrNull(draft.conditionNotes) ?? undefined,
-        listPrice:      draft.listPrice ?? undefined,
-        status:         'available',
-        notes:          trimOrNull(draft.notes) ?? undefined,
-      },
-    })
-    newItemId = item.id
-
-    // 3. Create Photo records only for non-blank URLs.
-    const front = draft.frontPhotoUrl?.trim()
-    if (front) {
-      await tx.photo.create({ data: { itemId: item.id, url: front, type: 'front', sortOrder: 0 } })
-    }
-    const back = draft.backPhotoUrl?.trim()
-    if (back) {
-      await tx.photo.create({ data: { itemId: item.id, url: back, type: 'back', sortOrder: 1 } })
-    }
-
-    // 4. Optionally create Listing in the same transaction.
-    if (createListing && listingTitle && listingPrice) {
-      const listing = await tx.listing.create({
-        data: { itemId: item.id, title: listingTitle, price: listingPrice, status: 'active' },
+      // 4. Create ItemInstance — sourceType, sellerAgreementId, and purchasePrice come
+      //    exclusively from the transaction-resolved commercial values above.
+      const item = await tx.itemInstance.create({
+        data: {
+          sku,
+          catalogId:         catalog.id,
+          locationId,
+          cardedOrLoose:     draft.cardedOrLoose!,
+          condition:         draft.condition!,
+          conditionNotes:    trimOrNull(draft.conditionNotes) ?? undefined,
+          listPrice:         draft.listPrice ?? undefined,
+          status:            'available',
+          notes:             trimOrNull(draft.notes) ?? undefined,
+          sourceType:        conversionSourceType,
+          sellerAgreementId: conversionAgreementId ?? undefined,
+          purchasePrice:     conversionPurchasePrice ?? undefined,
+        },
       })
-      newListingId = listing.id
-    }
+      newItemId = item.id
 
-    // 5. Lock the draft.
-    await tx.intakeDraft.update({
-      where: { id },
-      data:  { status: 'converted', convertedItemId: item.id },
+      // 5. Create Photo records only for non-blank URLs.
+      const front = draft.frontPhotoUrl?.trim()
+      if (front) {
+        await tx.photo.create({ data: { itemId: item.id, url: front, type: 'front', sortOrder: 0 } })
+      }
+      const back = draft.backPhotoUrl?.trim()
+      if (back) {
+        await tx.photo.create({ data: { itemId: item.id, url: back, type: 'back', sortOrder: 1 } })
+      }
+
+      // 6. Optionally create Listing in the same transaction.
+      if (createListing && listingTitle && listingPrice) {
+        const listing = await tx.listing.create({
+          data: { itemId: item.id, title: listingTitle, price: listingPrice, status: 'active' },
+        })
+        newListingId = listing.id
+      }
+
+      // 7. Lock the draft — only reached when all above steps succeed.
+      await tx.intakeDraft.update({
+        where: { id },
+        data:  { status: 'converted', convertedItemId: item.id },
+      })
     })
-  })
   } catch (error) {
+    if (txError) return txError
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
       return { errors: { sku: ['SKU is already in use.'] } }
     }
     throw error
+  }
+
+  revalidatePath('/admin/intake')
+  revalidatePath(`/admin/intake/${id}/edit`)
+  revalidatePath('/admin/items')
+  if (newItemId) revalidatePath(`/admin/items/${newItemId}/edit`)
+  if (sellerSubmissionId) {
+    revalidatePath(`/admin/seller-submissions/${sellerSubmissionId}`)
+    revalidatePath(`/admin/seller-submissions/${sellerSubmissionId}/agreement`)
+  }
+  if (newListingId) {
+    revalidatePath('/admin/listings')
+    revalidatePath(`/admin/listings/${newListingId}/edit`)
   }
 
   if (newListingId) {
