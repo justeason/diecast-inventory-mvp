@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { validateAgreementDraft, canTransitionStatus } from '@/lib/sellerAgreementValidation'
+import { ensureSellerLifecycleEvent } from '@/lib/actions/sellerLifecycle'
 
 export type SellerAgreementActionState = {
   errors?: Record<string, string[]>
@@ -147,6 +148,23 @@ export async function proposeSellerAgreement(
     data: { status: 'proposed', proposedAt: new Date() },
   })
 
+  try {
+    await ensureSellerLifecycleEvent({
+      eventKey: `agreement-proposed:${agreementId}`,
+      sellerSubmissionId: agreement.submissionId,
+      eventType: 'agreement_proposed',
+      sourceEntityType: 'agreement',
+      sourceEntityId: agreementId,
+      sellerVisible: true,
+      sellerTitle: 'Agreement proposed',
+      sellerDescription:
+        'CollectNTrades has proposed agreement terms. Review and contact us with any questions.',
+      occurredAt: new Date(),
+    })
+  } catch (err) {
+    console.error('[proposeSellerAgreement] lifecycle event failed:', err instanceof Error ? err.message : 'UnknownError')
+  }
+
   redirect(`/admin/seller-submissions/${agreement.submissionId}/agreement`)
 }
 
@@ -174,6 +192,22 @@ export async function recordSellerAgreementAcceptance(
     where: { id: agreementId },
     data: { status: 'accepted', acceptedAt: new Date(), acceptanceMethod },
   })
+
+  try {
+    await ensureSellerLifecycleEvent({
+      eventKey: `agreement-accepted:${agreementId}`,
+      sellerSubmissionId: agreement.submissionId,
+      eventType: 'agreement_accepted',
+      sourceEntityType: 'agreement',
+      sourceEntityId: agreementId,
+      sellerVisible: true,
+      sellerTitle: 'Agreement accepted',
+      sellerDescription: 'You have accepted the agreement terms.',
+      occurredAt: new Date(),
+    })
+  } catch (err) {
+    console.error('[recordSellerAgreementAcceptance] lifecycle event failed:', err instanceof Error ? err.message : 'UnknownError')
+  }
 
   redirect(`/admin/seller-submissions/${agreement.submissionId}/agreement`)
 }
@@ -229,6 +263,21 @@ export async function cancelSellerAgreement(
     where: { id: agreementId },
     data: { status: 'cancelled', cancelledAt: new Date() },
   })
+
+  try {
+    await ensureSellerLifecycleEvent({
+      eventKey: `agreement-cancelled:${agreementId}`,
+      sellerSubmissionId: agreement.submissionId,
+      eventType: 'agreement_cancelled',
+      sourceEntityType: 'agreement',
+      sourceEntityId: agreementId,
+      sellerVisible: false,
+      adminDescription: 'Agreement cancelled.',
+      occurredAt: new Date(),
+    })
+  } catch (err) {
+    console.error('[cancelSellerAgreement] lifecycle event failed:', err instanceof Error ? err.message : 'UnknownError')
+  }
 
   redirect(`/admin/seller-submissions/${agreement.submissionId}/agreement`)
 }

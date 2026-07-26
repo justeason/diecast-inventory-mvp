@@ -13,6 +13,13 @@ import {
   formatCommissionDisplay,
 } from '@/lib/sellerAgreementDisplay'
 import { deriveSellerFacingPayoutStatus } from '@/lib/sellerPayoutCalculation'
+import {
+  deriveSellerLifecycleSummary,
+  buildSellerLifecycleTimeline,
+  sellerSafeCaseLabel,
+  ATTENTION_LABELS,
+  ATTENTION_DESCRIPTIONS,
+} from '@/lib/sellerLifecycle'
 
 export const dynamic = 'force-dynamic'
 
@@ -111,6 +118,21 @@ export default async function SellRequestDetailPage({
           proposedAt: true,
           acceptedAt: true,
           cancelledAt: true,
+          items: {
+            select: {
+              id: true,
+              status: true,
+              sourceType: true,
+              createdAt: true,
+              listing: { select: { id: true, status: true, createdAt: true } },
+              orderItems: {
+                select: {
+                  id: true,
+                  order: { select: { id: true, status: true, completedAt: true } },
+                },
+              },
+            },
+          },
           payoutLines: {
             select: {
               id: true,
@@ -118,6 +140,9 @@ export default async function SellRequestDetailPage({
               status: true,
               netAmount: true,
               eligibleAt: true,
+              payoutId: true,
+              heldAt: true,
+              voidedAt: true,
               payout: { select: { status: true, approvedAt: true, paidAt: true } },
             },
             orderBy: { eligibleAt: 'asc' as const },
@@ -128,6 +153,105 @@ export default async function SellRequestDetailPage({
     },
   })
   if (!submission) notFound()
+
+  // Lifecycle data — events (seller-visible), cases (seller-visible), and intake drafts.
+  const [lifecycleEvents, lifecycleCases, intakeDrafts] = await Promise.all([
+    prisma.sellerLifecycleEvent.findMany({
+      where: { sellerSubmissionId: id, sellerVisible: true },
+      select: {
+        eventKey: true,
+        eventType: true,
+        sellerTitle: true,
+        sellerDescription: true,
+        sellerVisible: true,
+        occurredAt: true,
+      },
+      orderBy: { occurredAt: 'asc' as const },
+    }),
+    prisma.sellerLifecycleCase.findMany({
+      where: { sellerSubmissionId: id, sellerVisible: true },
+      select: {
+        id: true,
+        caseType: true,
+        status: true,
+        sellerMessage: true,
+        resolutionSummary: true,
+        openedAt: true,
+        resolvedAt: true,
+        returnCarrier: true,
+        returnTrackingNumber: true,
+        returnShippedAt: true,
+      },
+      orderBy: { openedAt: 'desc' as const },
+    }),
+    prisma.intakeDraft.findMany({
+      where: { sellerSubmissionId: id },
+      select: {
+        id: true,
+        status: true,
+        convertedItemId: true,
+        createdAt: true,
+        updatedAt: true,
+        rejectedAt: true,
+        sellerRejectionReason: true,
+      },
+    }),
+  ])
+
+  const allItems = submission.agreements.flatMap((a) => a.items)
+  const allPayoutLines = submission.agreements.flatMap((a) => a.payoutLines)
+
+  const lifecycleSummary = deriveSellerLifecycleSummary({
+    submission: { status: submission.status },
+    agreements: submission.agreements.map((a) => ({ id: a.id, type: a.type, status: a.status })),
+    intakeDrafts,
+    items: allItems.map((i) => ({
+      status: i.status,
+      sourceType: i.sourceType,
+      listing: i.listing ? { status: i.listing.status } : null,
+    })),
+    payoutLines: allPayoutLines.map((l) => ({
+      status: l.status,
+      payoutId: l.payoutId,
+      payout: l.payout,
+    })),
+    openCases: lifecycleCases
+      .filter((c) => c.status === 'open' || c.status === 'action_required')
+      .map((c) => ({ caseType: c.caseType, status: c.status })),
+  })
+
+  const timeline = buildSellerLifecycleTimeline(
+    {
+      submission: { createdAt: submission.createdAt, status: submission.status },
+      agreements: submission.agreements.map((a) => ({
+        id: a.id,
+        proposedAt: a.proposedAt,
+        acceptedAt: a.acceptedAt,
+        cancelledAt: a.cancelledAt,
+        type: a.type,
+        status: a.status,
+      })),
+      intakeDrafts,
+      items: allItems.map((i) => ({ id: i.id, createdAt: i.createdAt, sourceType: i.sourceType })),
+      listings: allItems
+        .map((i) => i.listing)
+        .filter((l): l is NonNullable<typeof l> => !!l)
+        .map((l) => ({ id: l.id, createdAt: l.createdAt, status: l.status })),
+      orderItems: allItems.flatMap((i) => i.orderItems),
+      payoutLines: allPayoutLines.map((l) => ({
+        id: l.id,
+        eligibleAt: l.eligibleAt,
+        lineType: l.lineType,
+        heldAt: l.heldAt,
+        voidedAt: l.voidedAt,
+        payout: l.payout,
+      })),
+      persistedEvents: lifecycleEvents,
+    },
+    { sellerView: true },
+  )
+
+  const visibleCases = lifecycleCases
 
   const canWithdraw = WITHDRAWABLE_STATUSES.includes(submission.status)
 
@@ -200,6 +324,87 @@ export default async function SellRequestDetailPage({
               : 'Request declined'}
           </p>
           <p>{submission.userMessage}</p>
+        </div>
+      )}
+
+      {/* Current status */}
+      <div className="mb-6">
+        <h2 className="text-sm font-semibold text-gray-900 mb-3">Current status</h2>
+        <div className="rounded-md border border-gray-200 bg-white p-4">
+          <p className="font-medium text-gray-900">{lifecycleSummary.label}</p>
+          <p className="text-sm text-gray-600 mt-1">{lifecycleSummary.sellerDescription}</p>
+          {lifecycleSummary.attention !== 'none' && (
+            <div className="mt-3 rounded-md bg-amber-50 border border-amber-200 px-3 py-2">
+              <p className="text-xs font-medium text-amber-800">
+                {ATTENTION_LABELS[lifecycleSummary.attention]}
+              </p>
+              <p className="text-xs text-amber-700">
+                {ATTENTION_DESCRIPTIONS[lifecycleSummary.attention]}
+              </p>
+            </div>
+          )}
+          {lifecycleSummary.nextStep && (
+            <p className="text-xs text-gray-500 mt-3">Next: {lifecycleSummary.nextStep}</p>
+          )}
+        </div>
+      </div>
+
+      {/* Progress timeline */}
+      {timeline.length > 0 && (
+        <div className="mb-6">
+          <h2 className="text-sm font-semibold text-gray-900 mb-3">Progress timeline</h2>
+          <ol className="relative border-l border-gray-200 ml-2 space-y-4">
+            {timeline.map((event) => (
+              <li key={event.key} className="ml-4">
+                <div className="absolute -left-1.5 w-3 h-3 rounded-full bg-gray-300 border border-white" />
+                <p className="text-sm font-medium text-gray-900">{event.title}</p>
+                {event.description && (
+                  <p className="text-xs text-gray-500">{event.description}</p>
+                )}
+                <p className="text-xs text-gray-400">{event.occurredAt.toLocaleDateString()}</p>
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
+
+      {/* Open issues */}
+      {visibleCases.length > 0 && (
+        <div className="mb-6">
+          <h2 className="text-sm font-semibold text-gray-900 mb-3">Issues</h2>
+          <div className="space-y-2">
+            {visibleCases.map((c) => (
+              <div
+                key={c.id}
+                className={`rounded-md border px-4 py-3 text-sm ${
+                  c.status === 'resolved'
+                    ? 'border-green-200 bg-green-50'
+                    : 'border-amber-200 bg-amber-50'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <p className="font-medium text-gray-900">{sellerSafeCaseLabel(c.caseType)}</p>
+                  <span className="text-xs text-gray-500">
+                    {c.status === 'resolved' ? 'Resolved' : 'In progress'}
+                  </span>
+                </div>
+                {c.sellerMessage && <p className="text-xs text-gray-600 mt-1">{c.sellerMessage}</p>}
+                {c.returnShippedAt && c.returnTrackingNumber && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    Return shipped {c.returnShippedAt.toLocaleDateString()}
+                    {c.returnCarrier ? ` via ${c.returnCarrier}` : ''} · Tracking{' '}
+                    {c.returnTrackingNumber}
+                  </p>
+                )}
+                {c.resolutionSummary && (
+                  <p className="text-xs text-gray-500 mt-1">{c.resolutionSummary}</p>
+                )}
+                <p className="text-xs text-gray-400 mt-1">
+                  Opened {c.openedAt.toLocaleDateString()}
+                </p>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

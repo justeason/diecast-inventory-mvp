@@ -16,6 +16,31 @@ import {
   canApprovePayout,
   isValidPaymentMethod,
 } from '@/lib/sellerPayoutCalculation'
+import { ensureSellerLifecycleEvent } from '@/lib/actions/sellerLifecycle'
+
+// Resolve the seller submission id linked to a payout line via its agreement.
+async function submissionIdForLine(lineId: string): Promise<string | null> {
+  const line = await prisma.sellerPayoutLine.findUnique({
+    where: { id: lineId },
+    select: { agreement: { select: { submissionId: true } } },
+  })
+  return line?.agreement?.submissionId ?? null
+}
+
+// Resolve the distinct submission ids linked to a payout via its lines.
+async function submissionIdsForPayout(payoutId: string): Promise<string[]> {
+  const lines = await prisma.sellerPayoutLine.findMany({
+    where: { payoutId },
+    select: { agreement: { select: { submissionId: true } } },
+  })
+  return [
+    ...new Set(
+      lines
+        .map((l) => l.agreement?.submissionId)
+        .filter((s): s is string => !!s),
+    ),
+  ]
+}
 
 // ─── Shared action state ──────────────────────────────────────────────────────
 
@@ -45,6 +70,24 @@ export async function holdSellerPayoutLine(
     data: { status: 'held', heldAt: new Date(), holdReason },
   })
 
+  try {
+    const sid = await submissionIdForLine(lineId)
+    if (sid) {
+      await ensureSellerLifecycleEvent({
+        eventKey: `payout-line-held:${lineId}:${Date.now()}`,
+        sellerSubmissionId: sid,
+        eventType: 'payout_line_held',
+        sourceEntityType: 'payout_line',
+        sourceEntityId: lineId,
+        sellerVisible: false,
+        adminDescription: `Payout line held: ${holdReason}`,
+        occurredAt: new Date(),
+      })
+    }
+  } catch (err) {
+    console.error('[holdSellerPayoutLine] lifecycle event failed:', err instanceof Error ? err.message : 'UnknownError')
+  }
+
   revalidatePath('/admin/seller-payouts')
   revalidatePath(`/admin/seller-submissions`)
   return null
@@ -71,6 +114,24 @@ export async function releaseSellerPayoutLine(
     where: { id: lineId },
     data: { status: 'eligible', heldAt: null, holdReason: null },
   })
+
+  try {
+    const sid = await submissionIdForLine(lineId)
+    if (sid) {
+      await ensureSellerLifecycleEvent({
+        eventKey: `payout-line-released:${lineId}:${Date.now()}`,
+        sellerSubmissionId: sid,
+        eventType: 'payout_line_released',
+        sourceEntityType: 'payout_line',
+        sourceEntityId: lineId,
+        sellerVisible: false,
+        adminDescription: 'Payout line hold released.',
+        occurredAt: new Date(),
+      })
+    }
+  } catch (err) {
+    console.error('[releaseSellerPayoutLine] lifecycle event failed:', err instanceof Error ? err.message : 'UnknownError')
+  }
 
   revalidatePath('/admin/seller-payouts')
   return null
@@ -102,6 +163,24 @@ export async function voidSellerPayoutLine(
     where: { id: lineId },
     data: { status: 'voided', voidedAt: new Date(), voidReason },
   })
+
+  try {
+    const sid = await submissionIdForLine(lineId)
+    if (sid) {
+      await ensureSellerLifecycleEvent({
+        eventKey: `payout-line-voided:${lineId}`,
+        sellerSubmissionId: sid,
+        eventType: 'payout_line_voided',
+        sourceEntityType: 'payout_line',
+        sourceEntityId: lineId,
+        sellerVisible: false,
+        adminDescription: `Payout line voided: ${voidReason}`,
+        occurredAt: new Date(),
+      })
+    }
+  } catch (err) {
+    console.error('[voidSellerPayoutLine] lifecycle event failed:', err instanceof Error ? err.message : 'UnknownError')
+  }
 
   revalidatePath('/admin/seller-payouts')
   return null
@@ -223,6 +302,26 @@ export async function createSellerPayout(
   } catch (err) {
     if (txError) return txError
     throw err
+  }
+
+  if (newPayoutId) {
+    try {
+      const sids = await submissionIdsForPayout(newPayoutId)
+      for (const sid of sids) {
+        await ensureSellerLifecycleEvent({
+          eventKey: `payout-created:${newPayoutId}:${sid}`,
+          sellerSubmissionId: sid,
+          eventType: 'payout_created',
+          sourceEntityType: 'payout',
+          sourceEntityId: newPayoutId,
+          sellerVisible: false,
+          adminDescription: 'Payout batch created.',
+          occurredAt: new Date(),
+        })
+      }
+    } catch (err) {
+      console.error('[createSellerPayout] lifecycle event failed:', err instanceof Error ? err.message : 'UnknownError')
+    }
   }
 
   revalidatePath('/admin/seller-payouts')
@@ -370,6 +469,26 @@ export async function approveSellerPayout(
     throw err
   }
 
+  try {
+    const sids = await submissionIdsForPayout(payoutId)
+    for (const sid of sids) {
+      await ensureSellerLifecycleEvent({
+        eventKey: `payout-approved:${payoutId}:${sid}`,
+        sellerSubmissionId: sid,
+        eventType: 'payout_approved',
+        sourceEntityType: 'payout',
+        sourceEntityId: payoutId,
+        sellerVisible: true,
+        sellerTitle: 'Payout approved',
+        sellerDescription: 'CollectNTrades approved your payout.',
+        occurredAt: new Date(),
+      })
+      revalidatePath(`/account/sell/${sid}`)
+    }
+  } catch (err) {
+    console.error('[approveSellerPayout] lifecycle event failed:', err instanceof Error ? err.message : 'UnknownError')
+  }
+
   revalidatePath('/admin/seller-payouts')
   revalidatePath(`/admin/seller-payouts/${payoutId}`)
   return null
@@ -438,6 +557,21 @@ export async function markSellerPayoutPaid(
     ),
   ]
   for (const sid of submissionIds) {
+    try {
+      await ensureSellerLifecycleEvent({
+        eventKey: `payout-paid:${payoutId}:${sid}`,
+        sellerSubmissionId: sid,
+        eventType: 'payout_paid',
+        sourceEntityType: 'payout',
+        sourceEntityId: payoutId,
+        sellerVisible: true,
+        sellerTitle: 'Payment recorded',
+        sellerDescription: 'CollectNTrades recorded this payout as paid.',
+        occurredAt: new Date(),
+      })
+    } catch (err) {
+      console.error('[markSellerPayoutPaid] lifecycle event failed:', err instanceof Error ? err.message : 'UnknownError')
+    }
     revalidatePath(`/account/sell/${sid}`)
   }
   revalidatePath('/account/sell')

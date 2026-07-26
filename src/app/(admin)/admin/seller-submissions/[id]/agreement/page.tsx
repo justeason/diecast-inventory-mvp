@@ -26,6 +26,16 @@ import {
 } from '@/components/admin/SellerAgreementActions'
 import { GenerateBuyoutEligibilityForm } from '@/components/admin/SellerPayoutForms'
 import { derivePayoutLineDisplayStatus } from '@/lib/sellerPayoutCalculation'
+import {
+  deriveSellerLifecycleSummary,
+  findLifecycleFinancialWarnings,
+} from '@/lib/sellerLifecycle'
+import {
+  adminCaseTypeLabel,
+  adminCaseStatusLabel,
+  ADMIN_CASE_STATUS_COLORS,
+  isOpenCaseStatus,
+} from '@/lib/adminLifecycleDisplay'
 
 export const dynamic = 'force-dynamic'
 
@@ -91,6 +101,68 @@ export default async function SellerAgreementPage({
     },
   })
   if (!submission) notFound()
+
+  // ─── Lifecycle context ───────────────────────────────────────────────────────
+  const [lifecycleCases, intakeDrafts] = await Promise.all([
+    prisma.sellerLifecycleCase.findMany({
+      where: { sellerSubmissionId: id },
+      select: {
+        id: true,
+        caseType: true,
+        status: true,
+        returnedAt: true,
+        itemInstanceId: true,
+        listingId: true,
+        orderItemId: true,
+        openedAt: true,
+        sellerVisible: true,
+      },
+      orderBy: { openedAt: 'desc' as const },
+    }),
+    prisma.intakeDraft.findMany({
+      where: { sellerSubmissionId: id },
+      select: { status: true, convertedItemId: true },
+    }),
+  ])
+
+  const allAgreementItems = submission.agreements.flatMap((a) => a.items)
+  const allPayoutLines = submission.agreements.flatMap((a) =>
+    a.payoutLines.map((l) => ({
+      id: l.id,
+      status: l.status,
+      payoutId: l.payout?.id ?? null,
+      orderItemId: l.orderItem ? undefined : undefined,
+      payout: l.payout ? { status: l.payout.status } : null,
+    })),
+  )
+
+  const lifecycleSummary = deriveSellerLifecycleSummary({
+    submission: { status: submission.status },
+    agreements: submission.agreements.map((a) => ({ id: a.id, type: a.type, status: a.status })),
+    intakeDrafts,
+    items: allAgreementItems.map((i) => ({
+      status: i.status,
+      sourceType: i.sourceType,
+      listing: i.listing ? { status: i.listing.status } : null,
+    })),
+    payoutLines: allPayoutLines,
+    openCases: lifecycleCases
+      .filter((c) => isOpenCaseStatus(c.status))
+      .map((c) => ({ caseType: c.caseType, status: c.status })),
+  })
+
+  const financialWarnings = findLifecycleFinancialWarnings({
+    cases: lifecycleCases,
+    payoutLines: allPayoutLines,
+    items: allAgreementItems.map((i) => ({
+      id: i.id,
+      status: i.status,
+      listing: i.listing ? { status: i.listing.status } : null,
+    })),
+    intakeDrafts,
+  })
+
+  const openCases = lifecycleCases.filter((c) => isOpenCaseStatus(c.status))
 
   const activeAgreement = submission.agreements.find((a) => a.status !== 'cancelled') ?? null
   const cancelledAgreements = submission.agreements.filter((a) => a.status === 'cancelled')
@@ -161,6 +233,78 @@ export default async function SellerAgreementPage({
         Agreement terms are recorded for admin reference. They do not automatically create inventory,
         listings, payouts, or seller profiles. The accepted agreement must be honoured manually.
       </div>
+
+      {/* Lifecycle */}
+      <section className="mb-8">
+        <h2 className="text-sm font-semibold text-gray-900 mb-3">Lifecycle</h2>
+        <div className="rounded-md border border-gray-200 bg-white p-4 space-y-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-gray-500">Stage:</span>
+            <span className="text-sm font-medium text-gray-900">{lifecycleSummary.label}</span>
+            {lifecycleSummary.attention !== 'none' && (
+              <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
+                Needs attention
+              </span>
+            )}
+          </div>
+
+          {/* Payout-impact / reconciliation warnings */}
+          {financialWarnings.length > 0 && (
+            <div className="space-y-2">
+              {financialWarnings.map((w) => (
+                <div
+                  key={w.code}
+                  className={`rounded-md border px-3 py-2 text-xs ${
+                    w.severity === 'critical'
+                      ? 'border-red-300 bg-red-50 text-red-800'
+                      : 'border-amber-200 bg-amber-50 text-amber-800'
+                  }`}
+                >
+                  {w.severity === 'critical' && <span className="font-semibold">Critical: </span>}
+                  {w.message}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Open lifecycle cases */}
+          <div>
+            <p className="text-xs font-medium text-gray-700 mb-2">Open cases</p>
+            {openCases.length === 0 ? (
+              <p className="text-xs text-gray-400">No open lifecycle cases.</p>
+            ) : (
+              <div className="space-y-2">
+                {openCases.map((c) => (
+                  <div
+                    key={c.id}
+                    className="flex items-center gap-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-xs"
+                  >
+                    <span className="font-medium text-gray-700">{adminCaseTypeLabel(c.caseType)}</span>
+                    <span
+                      className={`inline-flex items-center rounded-full px-2 py-0.5 font-medium ${
+                        ADMIN_CASE_STATUS_COLORS[c.status] ?? 'bg-gray-100 text-gray-600'
+                      }`}
+                    >
+                      {adminCaseStatusLabel(c.status)}
+                    </span>
+                    {c.returnedAt && (
+                      <span className="text-gray-500">
+                        Returned {c.returnedAt.toLocaleDateString()}
+                      </span>
+                    )}
+                    <Link
+                      href={`/admin/seller-cases/${c.id}`}
+                      className="ml-auto text-blue-600 hover:underline"
+                    >
+                      View case →
+                    </Link>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
 
       {/* No active agreement */}
       {!activeAgreement && (

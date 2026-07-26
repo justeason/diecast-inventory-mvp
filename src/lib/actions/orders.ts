@@ -7,6 +7,7 @@ import { prisma } from '@/lib/prisma'
 import { getStripe } from '@/lib/stripe'
 import { normalizeEmail } from '@/lib/normalizeEmail'
 import { ensureConsignmentPayoutLinesForCompletedOrder } from '@/lib/actions/sellerPayouts'
+import { ensureSellerLifecycleEvent } from '@/lib/actions/sellerLifecycle'
 
 const OrderSchema = z.object({
   buyerName: z.string().min(1, 'Name is required'),
@@ -288,6 +289,37 @@ export async function updateOrderStatus(
     } catch (err) {
       console.error('[updateOrderStatus] Consignment payout line generation failed for order', id, ':', err instanceof Error ? err.message : 'UnknownError')
       // Order remains complete. Admin can use the reconciliation tool on the order detail page.
+    }
+
+    // Non-blocking: lifecycle events for each seller submission linked to this order.
+    try {
+      const sellerItems = await prisma.orderItem.findMany({
+        where: { orderId: id, item: { sellerAgreement: { isNot: null } } },
+        select: { item: { select: { sellerAgreement: { select: { submissionId: true } } } } },
+      })
+      const submissionIds = [
+        ...new Set(
+          sellerItems
+            .map((oi) => oi.item.sellerAgreement?.submissionId)
+            .filter((s): s is string => !!s),
+        ),
+      ]
+      for (const sid of submissionIds) {
+        await ensureSellerLifecycleEvent({
+          eventKey: `order-completed:${id}:${sid}`,
+          sellerSubmissionId: sid,
+          eventType: 'order_completed',
+          sourceEntityType: 'order',
+          sourceEntityId: id,
+          sellerVisible: true,
+          sellerTitle: 'Sale completed',
+          sellerDescription: 'The sale of your item was completed.',
+          occurredAt: completedAt,
+        })
+        revalidatePath(`/account/sell/${sid}`)
+      }
+    } catch (err) {
+      console.error('[updateOrderStatus] lifecycle event generation failed for order', id, ':', err instanceof Error ? err.message : 'UnknownError')
     }
   } else {
     // paid | picking | shipped — only Order.status changes, no item or listing side effects.

@@ -4,6 +4,10 @@ import { getBuyerSession } from '@/lib/buyerSession'
 import { prisma } from '@/lib/prisma'
 import { BuyerOrderAccessForm } from '@/components/store/BuyerOrderAccessForm'
 import { deriveSellerFacingPayoutStatus } from '@/lib/sellerPayoutCalculation'
+import {
+  deriveSellerLifecycleSummary,
+  ATTENTION_LABELS,
+} from '@/lib/sellerLifecycle'
 
 export const dynamic = 'force-dynamic'
 
@@ -77,18 +81,33 @@ export default async function SellRequestsPage() {
       saleTypePreference: true,
       quantity:           true,
       createdAt:          true,
+      intakeDrafts: {
+        select: { status: true, convertedItemId: true },
+      },
+      lifecycleCases: {
+        where: { status: { in: ['open', 'action_required'] } },
+        select: { caseType: true, status: true },
+      },
       agreements: {
         where: { status: { not: 'draft' } },
         select: {
           id:     true,
           type:   true,
           status: true,
+          items: {
+            select: {
+              status: true,
+              sourceType: true,
+              listing: { select: { status: true } },
+            },
+          },
           payoutLines: {
             select: {
               id:        true,
               lineType:  true,
               status:    true,
               netAmount: true,
+              payoutId:  true,
               payout:    { select: { status: true, paidAt: true } },
             },
             orderBy: { eligibleAt: 'asc' as const },
@@ -154,6 +173,21 @@ export default async function SellRequestsPage() {
               ? deriveSellerFacingPayoutStatus(payoutLine.status, payoutLine.payout ?? null)
               : null
 
+            const lifecycle = deriveSellerLifecycleSummary({
+              submission: { status: sub.status },
+              agreements: sub.agreements.map((a) => ({ id: a.id, type: a.type, status: a.status })),
+              intakeDrafts: sub.intakeDrafts,
+              items: sub.agreements.flatMap((a) => a.items),
+              payoutLines: sub.agreements.flatMap((a) =>
+                a.payoutLines.map((l) => ({
+                  status: l.status,
+                  payoutId: l.payoutId,
+                  payout: l.payout,
+                })),
+              ),
+              openCases: sub.lifecycleCases,
+            })
+
             return (
               <Link
                 key={sub.id}
@@ -181,9 +215,19 @@ export default async function SellRequestsPage() {
                       )}
                     </div>
 
+                    {/* Lifecycle stage summary */}
+                    <div className="flex flex-wrap items-center gap-2 mt-1.5">
+                      <span className="text-xs font-medium text-gray-700">{lifecycle.label}</span>
+                      {lifecycle.attention !== 'none' && (
+                        <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
+                          {ATTENTION_LABELS[lifecycle.attention]}
+                        </span>
+                      )}
+                    </div>
+
                     {/* Agreement status summary */}
                     {agreement && (
-                      <p className="text-xs text-gray-500 mt-1.5">
+                      <p className="text-xs text-gray-500 mt-1">
                         {AGREEMENT_STATUS_LABELS[agreement.status] ?? agreement.status}
                       </p>
                     )}

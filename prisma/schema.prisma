@@ -316,6 +316,9 @@ model SellerSubmission {
   intakeDrafts IntakeDraft[]
   agreements   SellerAgreement[]
 
+  lifecycleEvents SellerLifecycleEvent[]
+  lifecycleCases  SellerLifecycleCase[]
+
   @@index([profileId])
   @@index([status])
   @@index([collectionItemId])
@@ -364,6 +367,10 @@ model IntakeDraft {
 
   sellerSubmissionId String?
   sellerSubmission   SellerSubmission? @relation(fields: [sellerSubmissionId], references: [id], onDelete: SetNull)
+
+  rejectedAt            DateTime?
+  rejectionReason       String?
+  sellerRejectionReason String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -485,4 +492,62 @@ model SellerPayout {
   @@index([customerProfileId])
   @@index([sellerProfileId])
   @@index([status])
+}
+
+model SellerLifecycleEvent {
+  id                 String           @id @default(cuid())
+  eventKey           String           @unique
+  sellerSubmissionId String
+  sellerSubmission   SellerSubmission @relation(fields: [sellerSubmissionId], references: [id], onDelete: Restrict)
+  eventType          String
+  sourceEntityType   String?
+  sourceEntityId     String?
+  sellerVisible      Boolean          @default(false)
+  sellerTitle        String?
+  sellerDescription  String?
+  adminDescription   String?
+  metadata           Json?
+  occurredAt         DateTime
+  createdAt          DateTime         @default(now())
+
+  @@index([sellerSubmissionId])
+  @@index([eventType])
+  @@index([sourceEntityType, sourceEntityId])
+  @@index([occurredAt])
+}
+
+model SellerLifecycleCase {
+  id                 String           @id @default(cuid())
+  sellerSubmissionId String
+  sellerSubmission   SellerSubmission @relation(fields: [sellerSubmissionId], references: [id], onDelete: Restrict)
+  caseType           String
+  status             String           @default("open")
+  agreementId        String?
+  intakeDraftId      String?
+  itemInstanceId     String?
+  listingId          String?
+  orderId            String?
+  orderItemId        String?
+  sellerPayoutLineId String?
+  sellerVisible      Boolean          @default(false)
+  sellerMessage      String?
+  adminNotes         String?
+  resolutionSummary  String?
+  openedAt           DateTime         @default(now())
+  resolvedAt         DateTime?
+  cancelledAt        DateTime?
+  returnCarrier        String?
+  returnTrackingNumber String?
+  returnShippedAt      DateTime?
+  returnedAt           DateTime?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  @@index([sellerSubmissionId])
+  @@index([caseType])
+  @@index([status])
+  @@index([orderId])
+  @@index([orderItemId])
+  @@index([itemInstanceId])
+  @@index([sellerPayoutLineId])
 }

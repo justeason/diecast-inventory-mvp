@@ -7,6 +7,12 @@ import {
   MarkPayoutPaidForm,
 } from '@/components/admin/SellerPayoutForms'
 import { derivePayoutLineDisplayStatus } from '@/lib/sellerPayoutCalculation'
+import {
+  adminCaseTypeLabel,
+  adminCaseStatusLabel,
+  ADMIN_CASE_STATUS_COLORS,
+  isOpenCaseStatus,
+} from '@/lib/adminLifecycleDisplay'
 
 export const dynamic = 'force-dynamic'
 
@@ -60,6 +66,38 @@ export default async function PayoutDetailPage({
   })
 
   if (!payout) notFound()
+
+  // Linked lifecycle cases: any case tied to a payout line in this batch, or to an
+  // order that contributed a line to this batch.
+  const lineIds = payout.lines.map((l) => l.id)
+  const orderIds = Array.from(
+    new Set(
+      payout.lines
+        .map((l) => l.orderItem?.order?.id)
+        .filter((v): v is string => !!v),
+    ),
+  )
+  const linkedCases =
+    lineIds.length === 0 && orderIds.length === 0
+      ? []
+      : await prisma.sellerLifecycleCase.findMany({
+          where: {
+            OR: [
+              { sellerPayoutLineId: { in: lineIds } },
+              ...(orderIds.length > 0 ? [{ orderId: { in: orderIds } }] : []),
+            ],
+          },
+          select: {
+            id: true,
+            caseType: true,
+            status: true,
+            returnedAt: true,
+            openedAt: true,
+            sellerSubmissionId: true,
+          },
+          orderBy: { openedAt: 'desc' as const },
+        })
+  const openLinkedCases = linkedCases.filter((c) => isOpenCaseStatus(c.status))
 
   const isDraft = payout.status === 'draft'
   const isApproved = payout.status === 'approved'
@@ -171,6 +209,62 @@ export default async function PayoutDetailPage({
             </p>
           )}
         </div>
+      )}
+
+      {/* Linked lifecycle cases */}
+      {linkedCases.length > 0 && (
+        <section className="mb-6">
+          <h2 className="text-lg font-semibold text-gray-900 mb-3">Linked cases</h2>
+
+          {openLinkedCases.length > 0 && (isApproved || isPaid) && (
+            <div className="mb-3 rounded-md border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800">
+              <p className="font-semibold mb-1">
+                Critical: open seller case while payout is {isPaid ? 'paid' : 'approved'}.
+              </p>
+              <p>
+                {isPaid
+                  ? 'This payout is already recorded as paid. An open return or dispute may require manual recovery. No payout fields are changed automatically.'
+                  : 'This payout is already approved. Do not record payment until the open case is resolved. Approval is not reversed automatically.'}
+              </p>
+            </div>
+          )}
+          {openLinkedCases.length > 0 && isDraft && (
+            <div className="mb-3 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              <p className="font-semibold mb-1">Open seller case on this draft payout.</p>
+              <p>
+                Remove the affected line from this draft and hold it before approval. Lines are not
+                removed automatically.
+              </p>
+            </div>
+          )}
+
+          <div className="space-y-2">
+            {linkedCases.map((c) => (
+              <div
+                key={c.id}
+                className="flex items-center gap-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-xs"
+              >
+                <span className="font-medium text-gray-700">{adminCaseTypeLabel(c.caseType)}</span>
+                <span
+                  className={`inline-flex items-center rounded-full px-2 py-0.5 font-medium ${
+                    ADMIN_CASE_STATUS_COLORS[c.status] ?? 'bg-gray-100 text-gray-600'
+                  }`}
+                >
+                  {adminCaseStatusLabel(c.status)}
+                </span>
+                {c.returnedAt && (
+                  <span className="text-gray-500">Returned {c.returnedAt.toLocaleDateString()}</span>
+                )}
+                <Link
+                  href={`/admin/seller-cases/${c.id}`}
+                  className="ml-auto text-blue-600 hover:underline"
+                >
+                  View case →
+                </Link>
+              </div>
+            ))}
+          </div>
+        </section>
       )}
 
       {/* Lines table */}

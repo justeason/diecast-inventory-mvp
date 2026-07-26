@@ -8,6 +8,12 @@ import { StripePaymentPanel } from '@/components/admin/StripePaymentPanel'
 import { PhotoThumbnail } from '@/components/shared/PhotoThumbnail'
 import { GeneratePayoutLinesForm } from '@/components/admin/GeneratePayoutLinesForm'
 import { derivePayoutLineDisplayStatus } from '@/lib/sellerPayoutCalculation'
+import { OpenPostSaleCaseForm } from '@/components/admin/SellerLifecycleForms'
+import {
+  adminCaseTypeLabel,
+  adminCaseStatusLabel,
+  ADMIN_CASE_STATUS_COLORS,
+} from '@/lib/adminLifecycleDisplay'
 
 const CONDITION_LABELS: Record<string, string> = {
   mint: 'Mint',
@@ -79,6 +85,36 @@ export default async function AdminOrderDetailPage({
   })
 
   if (!order) notFound()
+
+  // Seller lifecycle cases scoped to this order, keyed by orderItemId so each
+  // case stays bound to its own OrderItem / seller submission (multi-seller safe).
+  const orderCases = await prisma.sellerLifecycleCase.findMany({
+    where: { orderId: order.id },
+    select: {
+      id: true,
+      caseType: true,
+      status: true,
+      orderItemId: true,
+      sellerSubmissionId: true,
+      returnedAt: true,
+      openedAt: true,
+    },
+    orderBy: { openedAt: 'desc' as const },
+  })
+  const casesByOrderItem = new Map<string, typeof orderCases>()
+  for (const c of orderCases) {
+    if (!c.orderItemId) continue
+    const list = casesByOrderItem.get(c.orderItemId) ?? []
+    list.push(c)
+    casesByOrderItem.set(c.orderItemId, list)
+  }
+  // Seller-sourced OrderItems eligible for a post-sale case (exclude company-owned).
+  const sellerSourcedOrderItems = order.orderItems.filter(
+    (oi) =>
+      oi.item.sourceType &&
+      oi.item.sourceType !== 'company_owned' &&
+      oi.item.sellerAgreement?.submissionId,
+  )
 
   const subtotal = order.orderItems.reduce((sum, oi) => sum + oi.price, 0)
 
@@ -539,6 +575,94 @@ export default async function AdminOrderDetailPage({
           </div>
         )
       })()}
+
+      {/* Seller cases — seller-sourced items only (excludes company-owned) */}
+      {sellerSourcedOrderItems.length > 0 && (
+        <div className="mb-8 rounded-md border border-gray-200 bg-white p-6">
+          <h2 className="text-lg font-semibold text-gray-900 mb-1">Seller cases</h2>
+          <p className="text-xs text-gray-500 mb-4">
+            Admin-only. Open a post-sale case (return, dispute, lost/damaged) for a seller-sourced
+            item. Opening a case may place a hold on the related unbatched payout line. Each case is
+            scoped to its own order item and seller submission.
+          </p>
+          <div className="space-y-6">
+            {sellerSourcedOrderItems.map((oi) => {
+              const cases = casesByOrderItem.get(oi.id) ?? []
+              const line = oi.sellerPayoutLine
+              const submissionId = oi.item.sellerAgreement!.submissionId
+              return (
+                <div key={oi.id} className="rounded-md border border-gray-200 p-4">
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <Link
+                      href={`/admin/items/${oi.item.id}/edit`}
+                      className="font-mono text-xs text-blue-600 hover:underline"
+                    >
+                      {oi.item.sku}
+                    </Link>
+                    <span className="text-xs text-gray-400 capitalize">{oi.item.sourceType}</span>
+                  </div>
+
+                  {line && (
+                    <p className="mb-3 text-xs text-gray-500">
+                      Payout line: {derivePayoutLineDisplayStatus(line.status, line.payout)}
+                      {line.payout && (
+                        <>
+                          {' · '}
+                          <Link
+                            href={`/admin/seller-payouts/${line.payout.id}`}
+                            className="text-blue-600 hover:underline"
+                          >
+                            View payout →
+                          </Link>
+                        </>
+                      )}
+                    </p>
+                  )}
+
+                  {cases.length > 0 && (
+                    <div className="mb-3 space-y-1">
+                      {cases.map((c) => (
+                        <div key={c.id} className="flex items-center gap-2 text-xs">
+                          <span className="font-medium text-gray-700">
+                            {adminCaseTypeLabel(c.caseType)}
+                          </span>
+                          <span
+                            className={`inline-flex items-center rounded-full px-2 py-0.5 font-medium ${
+                              ADMIN_CASE_STATUS_COLORS[c.status] ?? 'bg-gray-100 text-gray-600'
+                            }`}
+                          >
+                            {adminCaseStatusLabel(c.status)}
+                          </span>
+                          <Link
+                            href={`/admin/seller-cases/${c.id}`}
+                            className="ml-auto text-blue-600 hover:underline"
+                          >
+                            View case →
+                          </Link>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <details className="text-sm">
+                    <summary className="cursor-pointer text-xs font-medium text-gray-600 hover:text-gray-900">
+                      Open a post-sale case
+                    </summary>
+                    <div className="mt-3">
+                      <OpenPostSaleCaseForm
+                        sellerSubmissionId={submissionId}
+                        orderItemId={oi.id}
+                        lineStatus={line?.status ?? null}
+                        payoutStatus={line?.payout?.status ?? null}
+                      />
+                    </div>
+                  </details>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Status update */}
       <div className="border-t border-gray-200 pt-6">

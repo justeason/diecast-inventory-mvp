@@ -13,6 +13,7 @@ import {
 } from '@/components/admin/SellerSubmissionIntakeContext'
 import { resolveConversionEligibility } from '@/lib/sellerAgreementInventory'
 import { ACCEPTANCE_METHOD_LABELS } from '@/lib/sellerAgreementDisplay'
+import { RejectIntakeForm } from '@/components/admin/SellerLifecycleForms'
 import {
   updateIntakeDraft,
   markDraftReviewed,
@@ -304,7 +305,17 @@ export default async function EditIntakeDraftPage({
       {/* Rejected notice */}
       {draft.status === 'rejected' && (
         <div className="mb-6 rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-800">
-          This draft has been rejected and cannot be edited or converted.
+          <p>This draft has been rejected and cannot be edited or converted.</p>
+          {draft.rejectedAt && (
+            <p className="mt-1 text-xs text-red-600">
+              Rejected {draft.rejectedAt.toLocaleString()}
+            </p>
+          )}
+          {draft.sellerRejectionReason && (
+            <p className="mt-2">
+              <span className="font-medium">Seller-facing reason:</span> {draft.sellerRejectionReason}
+            </p>
+          )}
         </div>
       )}
 
@@ -487,17 +498,29 @@ export default async function EditIntakeDraftPage({
 
             <div>
               <h3 className="text-sm font-semibold text-gray-700 mb-2">Reject Draft</h3>
-              <p className="text-xs text-gray-500 mb-3">
-                Marks this draft as rejected. This cannot be undone.
-              </p>
-              <form action={rejectAction}>
-                <button
-                  type="submit"
-                  className="rounded-md border border-red-300 bg-white px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-50 transition-colors"
-                >
-                  Reject Draft
-                </button>
-              </form>
+              {draft.sellerSubmissionId && !draft.convertedItemId ? (
+                <>
+                  <p className="text-xs text-gray-500 mb-3">
+                    Rejects this seller intake, records the reasons, and opens a seller-visible
+                    lifecycle case. This cannot be undone.
+                  </p>
+                  <RejectIntakeForm intakeDraftId={id} />
+                </>
+              ) : (
+                <>
+                  <p className="text-xs text-gray-500 mb-3">
+                    Marks this draft as rejected. This cannot be undone.
+                  </p>
+                  <form action={rejectAction}>
+                    <button
+                      type="submit"
+                      className="rounded-md border border-red-300 bg-white px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-50 transition-colors"
+                    >
+                      Reject Draft
+                    </button>
+                  </form>
+                </>
+              )}
             </div>
           </div>
         </div>

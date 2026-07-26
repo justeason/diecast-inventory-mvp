@@ -15,6 +15,7 @@ import {
   buildBuyoutSourceKey,
   calculateBuyoutPayoutSnapshot,
 } from '@/lib/sellerPayoutCalculation'
+import { ensureSellerLifecycleEvent } from '@/lib/actions/sellerLifecycle'
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -154,9 +155,28 @@ export async function updateIntakeDraft(
 // ─── Mark reviewed ─────────────────────────────────────────────────────────────
 
 export async function markDraftReviewed(id: string, _formData: FormData): Promise<void> {
-  const draft = await prisma.intakeDraft.findUnique({ where: { id }, select: { status: true } })
+  const draft = await prisma.intakeDraft.findUnique({
+    where: { id },
+    select: { status: true, sellerSubmissionId: true },
+  })
   if (draft?.status === 'draft') {
     await prisma.intakeDraft.update({ where: { id }, data: { status: 'reviewed' } })
+    if (draft.sellerSubmissionId) {
+      try {
+        await ensureSellerLifecycleEvent({
+          eventKey: `intake-reviewed:${id}`,
+          sellerSubmissionId: draft.sellerSubmissionId,
+          eventType: 'intake_reviewed',
+          sourceEntityType: 'intake_draft',
+          sourceEntityId: id,
+          sellerVisible: false,
+          adminDescription: 'Intake draft marked reviewed.',
+          occurredAt: new Date(),
+        })
+      } catch (err) {
+        console.error('[markDraftReviewed] lifecycle event failed:', err instanceof Error ? err.message : 'UnknownError')
+      }
+    }
   }
   redirect(`/admin/intake/${id}/edit`)
 }
@@ -247,6 +267,7 @@ export async function convertDraft(
   // happen inside a single transaction so no intermediate state can be observed.
   let newItemId: string | undefined
   let newListingId: string | undefined
+  let newBuyoutLineId: string | undefined
   let sellerSubmissionId: string | null = null
   let txError: { errors: Record<string, string[]> } | null = null
 
@@ -386,7 +407,7 @@ export async function convertDraft(
         const existingLine = await tx.sellerPayoutLine.findUnique({ where: { sourceKey } })
         if (!existingLine) {
           const snap = calculateBuyoutPayoutSnapshot(conversionBuyoutAgreedAmount)
-          await tx.sellerPayoutLine.create({
+          const buyoutLine = await tx.sellerPayoutLine.create({
             data: {
               sourceKey,
               lineType: 'buyout',
@@ -399,6 +420,7 @@ export async function convertDraft(
               eligibleAt: new Date(),
             },
           })
+          newBuyoutLineId = buyoutLine.id
         }
       }
 
@@ -432,6 +454,37 @@ export async function convertDraft(
       return { errors: { sku: ['SKU is already in use.'] } }
     }
     throw error
+  }
+
+  // Non-blocking lifecycle events after the conversion transaction commits.
+  if (sellerSubmissionId) {
+    try {
+      await ensureSellerLifecycleEvent({
+        eventKey: `intake-converted:${id}`,
+        sellerSubmissionId,
+        eventType: 'intake_converted',
+        sourceEntityType: 'intake_draft',
+        sourceEntityId: id,
+        sellerVisible: true,
+        sellerTitle: 'Item received',
+        sellerDescription: 'Your item has been received and added to inventory.',
+        occurredAt: new Date(),
+      })
+      if (newBuyoutLineId) {
+        await ensureSellerLifecycleEvent({
+          eventKey: `payout-line-created:${newBuyoutLineId}`,
+          sellerSubmissionId,
+          eventType: 'payout_line_created',
+          sourceEntityType: 'payout_line',
+          sourceEntityId: newBuyoutLineId,
+          sellerVisible: false,
+          adminDescription: 'Buyout payout eligibility line created.',
+          occurredAt: new Date(),
+        })
+      }
+    } catch (err) {
+      console.error('[convertDraft] lifecycle event failed:', err instanceof Error ? err.message : 'UnknownError')
+    }
   }
 
   revalidatePath('/admin/intake')

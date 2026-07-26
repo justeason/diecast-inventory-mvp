@@ -14,6 +14,7 @@ const navLinks = [
   { href: '/admin/intake', label: 'Intake' },
   { href: '/admin/catalog-suggestions', label: 'Suggestions' },
   { href: '/admin/seller-submissions', label: 'Sell Requests' },
+  { href: '/admin/seller-lifecycle', label: 'Lifecycle' },
   { href: '/admin/analytics', label: 'Analytics' },
 ]
 

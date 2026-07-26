@@ -154,6 +154,15 @@ export default async function AdminSellerSubmissionDetailPage({
         orderBy: { createdAt: 'desc' },
         take: 1,
       },
+      lifecycleCases: {
+        select: { id: true, caseType: true, status: true, openedAt: true },
+        orderBy: { openedAt: 'desc' },
+      },
+      lifecycleEvents: {
+        select: { id: true, eventType: true, sellerTitle: true, occurredAt: true },
+        orderBy: { occurredAt: 'desc' },
+        take: 5,
+      },
     },
   })
   if (!submission) notFound()
@@ -550,6 +559,48 @@ export default async function AdminSellerSubmissionDetailPage({
             </dl>
           </div>
         )}
+      </div>
+
+      {/* Lifecycle */}
+      <div className="mb-6">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-semibold text-gray-900">Lifecycle</h2>
+          <Link href="/admin/seller-lifecycle" className="text-xs text-blue-600 hover:underline">
+            Lifecycle dashboard →
+          </Link>
+        </div>
+        {(() => {
+          const openCases = submission.lifecycleCases.filter(
+            (c) => c.status === 'open' || c.status === 'action_required',
+          )
+          return (
+            <div className="rounded-md border border-gray-200 bg-gray-50 p-4 text-sm space-y-2">
+              <p className="text-gray-700">
+                {openCases.length} open case{openCases.length !== 1 ? 's' : ''} ·{' '}
+                {submission.lifecycleCases.length} total
+              </p>
+              {openCases.map((c) => (
+                <Link
+                  key={c.id}
+                  href={`/admin/seller-cases/${c.id}`}
+                  className="block text-xs text-blue-600 hover:underline"
+                >
+                  {c.caseType} ({c.status}) — opened {c.openedAt.toLocaleDateString()}
+                </Link>
+              ))}
+              {submission.lifecycleEvents.length > 0 && (
+                <div className="pt-2 border-t border-gray-200">
+                  <p className="text-xs font-medium text-gray-500 mb-1">Recent events</p>
+                  {submission.lifecycleEvents.map((e) => (
+                    <p key={e.id} className="text-xs text-gray-500">
+                      {e.sellerTitle ?? e.eventType} · {e.occurredAt.toLocaleDateString()}
+                    </p>
+                  ))}
+                </div>
+              )}
+            </div>
+          )
+        })()}
       </div>
 
       {/* Admin review */}

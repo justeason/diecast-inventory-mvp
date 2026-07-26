@@ -5,6 +5,12 @@ import { ItemInstanceForm } from '@/components/admin/ItemInstanceForm'
 import { PhotoThumbnail } from '@/components/shared/PhotoThumbnail'
 import { formatCommissionDisplay } from '@/lib/sellerAgreementDisplay'
 import { derivePayoutLineDisplayStatus } from '@/lib/sellerPayoutCalculation'
+import {
+  adminCaseTypeLabel,
+  adminCaseStatusLabel,
+  ADMIN_CASE_STATUS_COLORS,
+  isOpenCaseStatus,
+} from '@/lib/adminLifecycleDisplay'
 
 export default async function EditItemPage({
   params,
@@ -70,6 +76,24 @@ export default async function EditItemPage({
   ])
 
   if (!item) notFound()
+
+  // Seller lifecycle cases scoped to this item instance.
+  const lifecycleCases = await prisma.sellerLifecycleCase.findMany({
+    where: { itemInstanceId: item.id },
+    select: {
+      id: true,
+      caseType: true,
+      status: true,
+      returnedAt: true,
+      openedAt: true,
+      sellerSubmissionId: true,
+    },
+    orderBy: { openedAt: 'desc' as const },
+  })
+  const openCases = lifecycleCases.filter((c) => isOpenCaseStatus(c.status))
+  const returnedCase = lifecycleCases.find((c) => c.returnedAt)
+  // Inconsistency: item physically returned but listing still active.
+  const returnedWithActiveListing = !!returnedCase && item.listing?.status === 'active'
 
   return (
     <>
@@ -263,6 +287,57 @@ export default async function EditItemPage({
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* Seller lifecycle */}
+      {(lifecycleCases.length > 0 || returnedWithActiveListing) && (
+        <div className="mb-6 max-w-2xl rounded-md border border-gray-200 bg-white px-4 py-3 text-sm">
+          <p className="font-semibold text-gray-700 mb-2">Seller lifecycle</p>
+
+          {returnedWithActiveListing && (
+            <div className="mb-3 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-800">
+              <span className="font-semibold">Inconsistency: </span>
+              This item is marked as returned to the seller but its listing is still active.
+              Archive the listing to prevent it from selling.
+            </div>
+          )}
+
+          {returnedCase?.returnedAt && (
+            <p className="text-xs text-gray-600 mb-2">
+              Return confirmed on {returnedCase.returnedAt.toLocaleDateString()}.
+            </p>
+          )}
+
+          {lifecycleCases.length === 0 ? (
+            <p className="text-xs text-gray-400">No lifecycle cases for this item.</p>
+          ) : openCases.length === 0 ? (
+            <p className="text-xs text-gray-400">No open lifecycle cases for this item.</p>
+          ) : (
+            <div className="space-y-2">
+              {openCases.map((c) => (
+                <div
+                  key={c.id}
+                  className="flex items-center gap-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-xs"
+                >
+                  <span className="font-medium text-gray-700">{adminCaseTypeLabel(c.caseType)}</span>
+                  <span
+                    className={`inline-flex items-center rounded-full px-2 py-0.5 font-medium ${
+                      ADMIN_CASE_STATUS_COLORS[c.status] ?? 'bg-gray-100 text-gray-600'
+                    }`}
+                  >
+                    {adminCaseStatusLabel(c.status)}
+                  </span>
+                  <Link
+                    href={`/admin/seller-cases/${c.id}`}
+                    className="ml-auto text-blue-600 hover:underline"
+                  >
+                    View case →
+                  </Link>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
