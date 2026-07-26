@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation'
 import { prisma } from '@/lib/prisma'
 import { CatalogModelForm } from '@/components/admin/CatalogModelForm'
 import { CatalogPhotoUpload } from '@/components/admin/CatalogPhotoUpload'
+import { ResaleEstimatorPanel } from '@/components/admin/ResaleEstimatorPanel'
 
 export default async function EditCatalogModelPage({
   params,
@@ -32,6 +33,9 @@ export default async function EditCatalogModelPage({
       <CatalogModelForm model={model} />
       <div className="mt-8 pt-6 border-t border-gray-200 max-w-lg">
         <CatalogPhotoUpload catalogId={model.id} photos={model.photos} />
+      </div>
+      <div className="mt-8 pt-6 border-t border-gray-200 max-w-2xl">
+        <ResaleEstimatorPanel catalogId={model.id} />
       </div>
     </>
   )

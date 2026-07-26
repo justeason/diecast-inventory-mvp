@@ -16,6 +16,7 @@ const navLinks = [
   { href: '/admin/seller-submissions', label: 'Sell Requests' },
   { href: '/admin/seller-lifecycle', label: 'Lifecycle' },
   { href: '/admin/analytics', label: 'Analytics' },
+  { href: '/admin/resale-estimator', label: 'Resale Est.' },
 ]
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {

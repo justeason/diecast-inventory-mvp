@@ -11,6 +11,7 @@ import {
   ADMIN_CASE_STATUS_COLORS,
   isOpenCaseStatus,
 } from '@/lib/adminLifecycleDisplay'
+import { ResaleEstimatorPanel } from '@/components/admin/ResaleEstimatorPanel'
 
 export default async function EditItemPage({
   params,
@@ -340,6 +341,10 @@ export default async function EditItemPage({
           )}
         </div>
       )}
+
+      <div className="mb-6 max-w-2xl">
+        <ResaleEstimatorPanel catalogId={item.catalogId} />
+      </div>
 
       <ItemInstanceForm item={item} catalogModels={catalogModels} locations={locations} />
     </>
