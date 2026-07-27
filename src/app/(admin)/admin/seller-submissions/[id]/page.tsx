@@ -108,6 +108,21 @@ export default async function AdminSellerSubmissionDetailPage({
       catalogId:          true,
       profile: { select: { id: true, name: true, email: true } },
       catalog: { select: { brand: true, name: true } },
+      pricingPreference: {
+        select: {
+          strategy: true,
+          selectedTargetPrice: true,
+          customDesiredPrice: true,
+          suggestedFastPrice: true,
+          suggestedMaxPrice: true,
+          estimatedDaysToSell: true,
+          estimatedSellerProceeds: true,
+          confidence: true,
+          matchLevel: true,
+          comparableCount: true,
+          capturedAt: true,
+        },
+      },
       photos: {
         select: { id: true, url: true, sortOrder: true },
         orderBy: { sortOrder: 'asc' },
@@ -494,6 +509,39 @@ export default async function AdminSellerSubmissionDetailPage({
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Seller pricing preference */}
+      {submission.pricingPreference && (
+        <div className="mb-6 pt-6 border-t border-gray-200">
+          <h2 className="text-sm font-semibold text-gray-900 mb-3">Seller pricing preference</h2>
+          <p className="text-xs text-gray-400 mb-3">
+            Advisory only. Does not automatically affect agreement terms, listing price, or payout
+            values.
+          </p>
+          <div className="rounded-md border border-gray-200 bg-gray-50 p-3 text-xs space-y-1">
+            {(() => {
+              const p = submission.pricingPreference!
+              const fmt = (d: { toString(): string } | null) =>
+                d ? `$${parseFloat(d.toString()).toFixed(2)}` : '—'
+              return (
+                <>
+                  <div className="flex gap-3"><dt className="text-gray-500 w-36 shrink-0">Strategy</dt><dd className="text-gray-900">{p.strategy}</dd></div>
+                  <div className="flex gap-3"><dt className="text-gray-500 w-36 shrink-0">Target price</dt><dd className="font-semibold text-gray-900">{fmt(p.selectedTargetPrice)}</dd></div>
+                  {p.customDesiredPrice && <div className="flex gap-3"><dt className="text-gray-500 w-36 shrink-0">Custom desired</dt><dd>{fmt(p.customDesiredPrice)}</dd></div>}
+                  {p.suggestedFastPrice && <div className="flex gap-3"><dt className="text-gray-500 w-36 shrink-0">Suggested fast</dt><dd>{fmt(p.suggestedFastPrice)}</dd></div>}
+                  {p.suggestedMaxPrice && <div className="flex gap-3"><dt className="text-gray-500 w-36 shrink-0">Suggested max</dt><dd>{fmt(p.suggestedMaxPrice)}</dd></div>}
+                  {p.estimatedDaysToSell !== null && <div className="flex gap-3"><dt className="text-gray-500 w-36 shrink-0">Est. days to sell</dt><dd>~{p.estimatedDaysToSell}d</dd></div>}
+                  {p.estimatedSellerProceeds && <div className="flex gap-3"><dt className="text-gray-500 w-36 shrink-0">Est. proceeds</dt><dd>{fmt(p.estimatedSellerProceeds)}</dd></div>}
+                  <div className="flex gap-3"><dt className="text-gray-500 w-36 shrink-0">Confidence</dt><dd>{p.confidence}</dd></div>
+                  <div className="flex gap-3"><dt className="text-gray-500 w-36 shrink-0">Match level</dt><dd>{p.matchLevel}</dd></div>
+                  <div className="flex gap-3"><dt className="text-gray-500 w-36 shrink-0">Comparables</dt><dd>{p.comparableCount}</dd></div>
+                  <div className="flex gap-3"><dt className="text-gray-500 w-36 shrink-0">Captured</dt><dd>{p.capturedAt.toLocaleDateString()}</dd></div>
+                </>
+              )
+            })()}
+          </div>
         </div>
       )}
 

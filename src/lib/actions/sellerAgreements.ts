@@ -185,13 +185,28 @@ export async function recordSellerAgreementAcceptance(
   })
   if (!agreement) return { errors: { _form: ['Agreement not found'] } }
 
-  const transition = canTransitionStatus(agreement.status, 'accepted')
-  if (!transition.allowed) return { errors: { _form: [transition.reason] } }
+  // Eager status check (fast path before acquiring lock)
+  const earlyTransition = canTransitionStatus(agreement.status, 'accepted')
+  if (!earlyTransition.allowed) return { errors: { _form: [earlyTransition.reason] } }
 
-  await prisma.sellerAgreement.update({
-    where: { id: agreementId },
-    data: { status: 'accepted', acceptedAt: new Date(), acceptanceMethod },
+  // Lock SellerSubmission row then re-validate inside transaction. Serializes against
+  // concurrent pricing-preference saves and intake conversions that lock the same row.
+  const txResult = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "SellerSubmission" WHERE id = ${agreement.submissionId} FOR UPDATE`
+    const fresh = await tx.sellerAgreement.findUnique({
+      where: { id: agreementId },
+      select: { status: true },
+    })
+    if (!fresh) return { errors: { _form: ['Agreement not found'] } }
+    const transition = canTransitionStatus(fresh.status, 'accepted')
+    if (!transition.allowed) return { errors: { _form: [transition.reason] } }
+    await tx.sellerAgreement.update({
+      where: { id: agreementId },
+      data: { status: 'accepted', acceptedAt: new Date(), acceptanceMethod },
+    })
+    return null
   })
+  if (txResult !== null) return txResult
 
   try {
     await ensureSellerLifecycleEvent({

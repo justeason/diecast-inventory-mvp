@@ -293,6 +293,14 @@ export async function convertDraft(
 
       sellerSubmissionId = draft.sellerSubmissionId
 
+      // Lock SellerSubmission row (if this draft belongs to a submission) before resolving
+      // commercial provenance. Serializes against concurrent pricing-preference saves that
+      // also lock the same row, so a late pricing save waits and then re-reads the converted
+      // intakeDraft state and fails as locked.
+      if (draft.sellerSubmissionId) {
+        await tx.$queryRaw`SELECT id FROM "SellerSubmission" WHERE id = ${draft.sellerSubmissionId} FOR UPDATE`
+      }
+
       // 2. Resolve commercial provenance inside the transaction.
       //    sourceType, sellerAgreementId, and purchasePrice are derived exclusively
       //    from the transaction-fetched agreement records — never from pre-transaction state.

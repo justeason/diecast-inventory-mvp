@@ -20,6 +20,10 @@ import {
   ATTENTION_LABELS,
   ATTENTION_DESCRIPTIONS,
 } from '@/lib/sellerLifecycle'
+import { fetchComparableSales } from '@/lib/resaleEstimatorQuery'
+import { computeEstimate, type TargetModel } from '@/lib/resaleEstimator'
+import { computeGuidance, isSubmissionPricingLocked } from '@/lib/sellerPricingGuidance'
+import { PricingGuidanceForm, type SerializedGuidance, type SerializedPreference } from '@/components/store/PricingGuidanceForm'
 
 export const dynamic = 'force-dynamic'
 
@@ -97,8 +101,22 @@ export default async function SellRequestDetailPage({
       userNotes:          true,
       userMessage:        true,
       collectionItemId:   true,
+      catalogId:          true,
       createdAt:          true,
       updatedAt:          true,
+      pricingPreference: {
+        select: {
+          strategy:               true,
+          selectedTargetPrice:    true,
+          customDesiredPrice:     true,
+          estimatedDaysToSell:    true,
+          estimatedSellerProceeds: true,
+          confidence:             true,
+          matchLevel:             true,
+          comparableCount:        true,
+          capturedAt:             true,
+        },
+      },
       photos: {
         select: { id: true, url: true, sortOrder: true },
         orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
@@ -277,6 +295,70 @@ export default async function SellRequestDetailPage({
 
   const itemTitle =
     [submission.brand, submission.name].filter(Boolean).join(' ') || 'Untitled item'
+
+  // Pricing guidance — computed server-side; browser never supplies these values
+  const pricingLocked = isSubmissionPricingLocked({
+    agreements: submission.agreements,
+    intakeDrafts,
+  })
+  const activeConsignmentAgreement =
+    activeAgreement?.type === 'consignment' ? activeAgreement : null
+  const consignmentTerms = activeConsignmentAgreement
+    ? {
+        commissionPercent: activeConsignmentAgreement.commissionPercent,
+        fixedFee: activeConsignmentAgreement.fixedFee,
+        minimumSellerPayout: activeConsignmentAgreement.minimumSellerPayout,
+      }
+    : null
+
+  const pricingTargetModel: TargetModel = {
+    id: submission.catalogId ?? '__unlinked__',
+    brand: submission.brand ?? '',
+    name: submission.name ?? '',
+    series: submission.series ?? null,
+    year: submission.year ?? null,
+  }
+  const pricingComparables = await fetchComparableSales(pricingTargetModel)
+  const pricingEstimate = computeEstimate(pricingTargetModel, pricingComparables)
+  const hasEstimate = pricingEstimate.estimatedPrice !== null
+
+  function toSerializedGuidance(g: ReturnType<typeof computeGuidance>): SerializedGuidance {
+    return {
+      targetPriceCents: g.targetPriceCents,
+      estimatedDaysToSell: g.estimatedDaysToSell,
+      estimatedSellerProceedsCents: g.estimatedSellerProceedsCents,
+      confidence: g.confidence,
+      comparableCount: g.comparableCount,
+      matchLevel: g.matchLevel,
+      warnings: g.warnings,
+    }
+  }
+
+  const sellFastGuidance = hasEstimate
+    ? toSerializedGuidance(computeGuidance({ strategy: 'sell_fast', estimateResult: pricingEstimate, consignmentTerms }))
+    : null
+  const maximizeGuidance = hasEstimate
+    ? toSerializedGuidance(computeGuidance({ strategy: 'maximize_proceeds', estimateResult: pricingEstimate, consignmentTerms }))
+    : null
+
+  const rawPref = submission.pricingPreference
+  const savedPreference: SerializedPreference = rawPref
+    ? {
+        strategy: rawPref.strategy,
+        selectedTargetPriceCents: Math.round(parseFloat(rawPref.selectedTargetPrice.toString()) * 100),
+        customDesiredPriceCents: rawPref.customDesiredPrice
+          ? Math.round(parseFloat(rawPref.customDesiredPrice.toString()) * 100)
+          : null,
+        estimatedDaysToSell: rawPref.estimatedDaysToSell,
+        estimatedSellerProceedsCents: rawPref.estimatedSellerProceeds
+          ? Math.round(parseFloat(rawPref.estimatedSellerProceeds.toString()) * 100)
+          : null,
+        confidence: rawPref.confidence,
+        matchLevel: rawPref.matchLevel,
+        comparableCount: rawPref.comparableCount,
+        capturedAt: rawPref.capturedAt.toISOString(),
+      }
+    : null
 
   return (
     <div className="max-w-lg">
@@ -506,6 +588,21 @@ export default async function SellRequestDetailPage({
             )}
           </dl>
         </div>
+      </div>
+
+      {/* Pricing preference */}
+      <div className="mb-6">
+        <h2 className="text-sm font-semibold text-gray-900 mb-3">Pricing preference</h2>
+        <PricingGuidanceForm
+          key={rawPref?.capturedAt.getTime() ?? 0}
+          submissionId={submission.id}
+          sellFastGuidance={sellFastGuidance}
+          maximizeGuidance={maximizeGuidance}
+          hasEstimate={hasEstimate}
+          savedPreference={savedPreference}
+          isLocked={pricingLocked}
+          hasConsignmentTerms={!!consignmentTerms}
+        />
       </div>
 
       {/* Submission photos */}

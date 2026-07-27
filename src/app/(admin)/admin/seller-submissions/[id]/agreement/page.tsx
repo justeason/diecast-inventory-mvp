@@ -54,6 +54,21 @@ export default async function SellerAgreementPage({
       brand: true,
       name: true,
       profile: { select: { id: true, name: true, email: true } },
+      pricingPreference: {
+        select: {
+          strategy: true,
+          selectedTargetPrice: true,
+          customDesiredPrice: true,
+          suggestedFastPrice: true,
+          suggestedMaxPrice: true,
+          estimatedDaysToSell: true,
+          estimatedSellerProceeds: true,
+          confidence: true,
+          matchLevel: true,
+          comparableCount: true,
+          capturedAt: true,
+        },
+      },
       agreements: {
         select: {
           id: true,
@@ -512,6 +527,82 @@ export default async function SellerAgreementPage({
               intake has been converted to inventory.
             </p>
             <CancelAgreementForm action={cancelAction} />
+          </div>
+        </section>
+      )}
+
+      {/* Seller pricing preference */}
+      {submission.pricingPreference && (
+        <section className="mb-8 pt-6 border-t border-gray-200">
+          <h2 className="text-sm font-semibold text-gray-900 mb-3">Seller pricing preference</h2>
+          <div className="rounded-md border border-gray-200 bg-gray-50 p-4 text-xs text-gray-600 space-y-1">
+            <p className="text-xs text-amber-700 mb-2">
+              Advisory only — estimates are based on prior CollectNTrades sales and are not guaranteed.
+            </p>
+            <dl className="space-y-1">
+              <div className="flex gap-3">
+                <dt className="text-gray-500 w-40 shrink-0">Strategy</dt>
+                <dd>
+                  {submission.pricingPreference.strategy === 'sell_fast'
+                    ? 'Sell faster'
+                    : submission.pricingPreference.strategy === 'maximize_proceeds'
+                      ? 'Maximize proceeds'
+                      : 'Custom price'}
+                </dd>
+              </div>
+              <div className="flex gap-3">
+                <dt className="text-gray-500 w-40 shrink-0">Selected target price</dt>
+                <dd className="font-semibold text-gray-900">
+                  ${parseFloat(submission.pricingPreference.selectedTargetPrice.toString()).toFixed(2)}
+                </dd>
+              </div>
+              {submission.pricingPreference.customDesiredPrice && (
+                <div className="flex gap-3">
+                  <dt className="text-gray-500 w-40 shrink-0">Custom desired price</dt>
+                  <dd>${parseFloat(submission.pricingPreference.customDesiredPrice.toString()).toFixed(2)}</dd>
+                </div>
+              )}
+              {submission.pricingPreference.suggestedFastPrice && (
+                <div className="flex gap-3">
+                  <dt className="text-gray-500 w-40 shrink-0">Suggested fast price</dt>
+                  <dd>${parseFloat(submission.pricingPreference.suggestedFastPrice.toString()).toFixed(2)}</dd>
+                </div>
+              )}
+              {submission.pricingPreference.suggestedMaxPrice && (
+                <div className="flex gap-3">
+                  <dt className="text-gray-500 w-40 shrink-0">Suggested max price</dt>
+                  <dd>${parseFloat(submission.pricingPreference.suggestedMaxPrice.toString()).toFixed(2)}</dd>
+                </div>
+              )}
+              {submission.pricingPreference.estimatedDaysToSell !== null && (
+                <div className="flex gap-3">
+                  <dt className="text-gray-500 w-40 shrink-0">Est. days to sell</dt>
+                  <dd>~{submission.pricingPreference.estimatedDaysToSell}d</dd>
+                </div>
+              )}
+              {submission.pricingPreference.estimatedSellerProceeds && (
+                <div className="flex gap-3">
+                  <dt className="text-gray-500 w-40 shrink-0">Est. seller proceeds</dt>
+                  <dd>${parseFloat(submission.pricingPreference.estimatedSellerProceeds.toString()).toFixed(2)}</dd>
+                </div>
+              )}
+              <div className="flex gap-3">
+                <dt className="text-gray-500 w-40 shrink-0">Confidence</dt>
+                <dd>{submission.pricingPreference.confidence}</dd>
+              </div>
+              <div className="flex gap-3">
+                <dt className="text-gray-500 w-40 shrink-0">Match level</dt>
+                <dd>{submission.pricingPreference.matchLevel}</dd>
+              </div>
+              <div className="flex gap-3">
+                <dt className="text-gray-500 w-40 shrink-0">Comparable count</dt>
+                <dd>{submission.pricingPreference.comparableCount}</dd>
+              </div>
+              <div className="flex gap-3">
+                <dt className="text-gray-500 w-40 shrink-0">Captured</dt>
+                <dd>{submission.pricingPreference.capturedAt.toLocaleDateString()}</dd>
+              </div>
+            </dl>
           </div>
         </section>
       )}

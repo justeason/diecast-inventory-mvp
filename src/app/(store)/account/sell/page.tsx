@@ -116,6 +116,9 @@ export default async function SellRequestsPage() {
         orderBy: { createdAt: 'desc' as const },
         take: 1,
       },
+      pricingPreference: {
+        select: { strategy: true, selectedTargetPrice: true },
+      },
     },
   })
 
@@ -244,6 +247,19 @@ export default async function SellRequestsPage() {
                             · ${parseFloat(payoutLine.netAmount.toString()).toFixed(2)}
                           </span>
                         )}
+                      </p>
+                    )}
+                    {sub.pricingPreference && (
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        Pricing:{' '}
+                        <span className="text-gray-600">
+                          {sub.pricingPreference.strategy === 'sell_fast'
+                            ? 'Sell faster'
+                            : sub.pricingPreference.strategy === 'maximize_proceeds'
+                              ? 'Maximize'
+                              : 'Custom'}{' '}
+                          · ${parseFloat(sub.pricingPreference.selectedTargetPrice.toString()).toFixed(2)}
+                        </span>
                       </p>
                     )}
                   </div>

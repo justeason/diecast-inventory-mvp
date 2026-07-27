@@ -316,8 +316,9 @@ model SellerSubmission {
   intakeDrafts IntakeDraft[]
   agreements   SellerAgreement[]
 
-  lifecycleEvents SellerLifecycleEvent[]
-  lifecycleCases  SellerLifecycleCase[]
+  lifecycleEvents   SellerLifecycleEvent[]
+  lifecycleCases    SellerLifecycleCase[]
+  pricingPreference SellerPricingPreference?
 
   @@index([profileId])
   @@index([status])
@@ -550,4 +551,25 @@ model SellerLifecycleCase {
   @@index([orderItemId])
   @@index([itemInstanceId])
   @@index([sellerPayoutLineId])
+}
+
+model SellerPricingPreference {
+  id                      String           @id @default(cuid())
+  sellerSubmissionId      String           @unique
+  sellerSubmission        SellerSubmission @relation(fields: [sellerSubmissionId], references: [id], onDelete: Cascade)
+
+  strategy                String
+  selectedTargetPrice     Decimal          @db.Decimal(10, 2)
+  customDesiredPrice      Decimal?         @db.Decimal(10, 2)
+  suggestedFastPrice      Decimal?         @db.Decimal(10, 2)
+  suggestedMaxPrice       Decimal?         @db.Decimal(10, 2)
+  estimatedDaysToSell     Int?
+  estimatedSellerProceeds Decimal?         @db.Decimal(10, 2)
+  confidence              String
+  matchLevel              String
+  comparableCount         Int
+  capturedAt              DateTime
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
