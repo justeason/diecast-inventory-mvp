@@ -17,3 +17,6 @@ export function formatCatalogResult(m: CatalogSearchResult): string {
   if (m.series) parts.push(`[${m.series}]`)
   return parts.join(' ')
 }
+
+// Re-export richer result type so consumers can import from either location.
+export type { CatalogMatchResult } from '@/lib/catalogMatching'

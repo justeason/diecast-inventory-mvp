@@ -1,40 +1,34 @@
 import { prisma } from '@/lib/prisma'
-import type { CatalogSearchResult } from '@/lib/catalogFormat'
+import { tokenize, rankCandidates } from '@/lib/catalogMatching'
+import type { CatalogMatchResult } from '@/lib/catalogMatching'
 
-function rankResult(m: CatalogSearchResult, qLower: string): number {
-  const b = m.brand.toLowerCase()
-  const n = m.name.toLowerCase()
-  if (`${b} ${n}` === qLower || b === qLower || n === qLower) return 0
-  if (b.startsWith(qLower) || n.startsWith(qLower)) return 1
-  if (b.includes(qLower) || n.includes(qLower)) return 2
-  return 3
-}
+export type { CatalogMatchResult }
 
-export async function searchCatalogModels(rawQuery: string): Promise<CatalogSearchResult[]> {
+const TEXT_FIELDS = ['brand', 'name', 'series', 'color', 'scale'] as const
+
+export async function searchCatalogModels(rawQuery: string): Promise<CatalogMatchResult[]> {
   const q = rawQuery.trim().slice(0, 100)
   if (q.length < 2) return []
 
-  // Escape LIKE special characters so user input is treated literally
-  const escaped = q.replace(/[%_\\]/g, (c) => `\\${c}`)
-  const yearNum = /^\d{4}$/.test(q) ? parseInt(q, 10) : null
+  const tokens = tokenize(q)
+  if (tokens.length === 0) return []
 
-  const candidates = await prisma.catalogModel.findMany({
-    where: {
-      OR: [
-        { brand:  { contains: escaped, mode: 'insensitive' } },
-        { name:   { contains: escaped, mode: 'insensitive' } },
-        { series: { contains: escaped, mode: 'insensitive' } },
-        { color:  { contains: escaped, mode: 'insensitive' } },
-        { scale:  { contains: escaped, mode: 'insensitive' } },
-        ...(yearNum !== null ? [{ year: yearNum }] : []),
-      ],
-    },
-    select: { id: true, brand: true, name: true, series: true, year: true, color: true, scale: true },
-    take: 30,
+  // AND of per-token OR conditions: every token must appear in at least one candidate field.
+  // This keeps DB candidates bounded and relevant without loading the full catalog.
+  const perTokenConditions = tokens.map((token) => {
+    const yearNum = /^\d{4}$/.test(token) ? parseInt(token, 10) : null
+    const fieldMatches = TEXT_FIELDS.map((field) => ({
+      [field]: { contains: token, mode: 'insensitive' as const },
+    }))
+    if (yearNum !== null) (fieldMatches as Array<Record<string, unknown>>).push({ year: yearNum })
+    return { OR: fieldMatches }
   })
 
-  const qLower = q.toLowerCase()
-  return candidates
-    .sort((a, b) => rankResult(a, qLower) - rankResult(b, qLower))
-    .slice(0, 10)
+  const candidates = await prisma.catalogModel.findMany({
+    where: { AND: perTokenConditions },
+    select: { id: true, brand: true, name: true, series: true, year: true, color: true, scale: true },
+    take: 60,
+  })
+
+  return rankCandidates(candidates, q).slice(0, 20)
 }

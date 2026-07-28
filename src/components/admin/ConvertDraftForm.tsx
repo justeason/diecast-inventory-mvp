@@ -10,6 +10,8 @@ import {
   type ConsignmentPreview,
 } from '@/lib/sellerAgreementInventory'
 import { formatCommissionDisplay } from '@/lib/sellerAgreementDisplay'
+import { CatalogModelCombobox } from '@/components/admin/CatalogModelCombobox'
+import { formatCandidateLabel } from '@/lib/catalogMatching'
 
 type CatalogModelSummary = {
   id: string
@@ -42,6 +44,7 @@ type Props = {
   suggestedPrice?: number | null
   exactCatalogMatch?: CatalogModelSummary | null
   similarCatalogModels?: CatalogModelSummary[]
+  catalogInitialQuery?: string
   sellerSubmissionId?: string | null
   acceptedAgreement?: AgreementConversionData | null
   agreementBlockReason?: string | null
@@ -115,6 +118,7 @@ export function ConvertDraftForm({
   suggestedPrice,
   exactCatalogMatch,
   similarCatalogModels = [],
+  catalogInitialQuery,
   sellerSubmissionId,
   acceptedAgreement,
   agreementBlockReason,
@@ -174,48 +178,33 @@ export function ConvertDraftForm({
         </div>
       )}
 
-      {/* Catalog model match status */}
-      {exactCatalogMatch ? (
-        <div className="rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm">
-          <p className="font-medium text-green-800 mb-0.5">✓ Will reuse existing catalog model</p>
-          <p className="text-green-700 font-mono text-xs">{formatModel(exactCatalogMatch)}</p>
-          <input type="hidden" name="catalogModelId" value={exactCatalogMatch.id} />
-        </div>
-      ) : similarCatalogModels.length > 0 ? (
-        <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm space-y-3">
-          <p className="font-medium text-amber-800">
-            ⚠ No exact match — will create a new catalog model unless you select one below.
+      {/* Catalog model — search and select, or leave blank to create new */}
+      <div className="space-y-2">
+        <p className="text-sm font-medium text-gray-700">Catalog model</p>
+        {exactCatalogMatch && (
+          <p className="text-xs text-green-700 bg-green-50 border border-green-200 rounded-md px-2 py-1">
+            Auto-matched: {formatCandidateLabel(exactCatalogMatch)}
           </p>
-          <div className="space-y-2">
-            {similarCatalogModels.map((m) => (
-              <label key={m.id} className="flex items-start gap-2 cursor-pointer">
-                <input
-                  type="radio"
-                  name="catalogModelId"
-                  value={m.id}
-                  className="mt-0.5 accent-amber-700"
-                />
-                <span className="text-amber-900 font-mono text-xs">{formatModel(m)}</span>
-              </label>
-            ))}
-            <label className="flex items-start gap-2 cursor-pointer">
-              <input
-                type="radio"
-                name="catalogModelId"
-                value=""
-                defaultChecked
-                className="mt-0.5 accent-amber-700"
-              />
-              <span className="text-amber-900 font-medium">Create a new catalog model</span>
-            </label>
-          </div>
-        </div>
-      ) : (
-        <div className="rounded-md border border-gray-200 bg-gray-50 px-4 py-3 text-sm">
-          <p className="text-gray-500">○ No existing catalog model found — a new one will be created.</p>
-          <input type="hidden" name="catalogModelId" value="" />
-        </div>
-      )}
+        )}
+        {!exactCatalogMatch && similarCatalogModels.length > 0 && (
+          <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">
+            No exact match found. Select a similar model below or leave blank to create a new one.
+          </p>
+        )}
+        {!exactCatalogMatch && similarCatalogModels.length === 0 && (
+          <p className="text-xs text-gray-400">
+            No existing match found. Leave blank to create a new catalog model automatically.
+          </p>
+        )}
+        <CatalogModelCombobox
+          name="catalogModelId"
+          defaultValue={exactCatalogMatch?.id ?? ''}
+          defaultLabel={exactCatalogMatch ? formatCandidateLabel(exactCatalogMatch) : ''}
+          initialQuery={!exactCatalogMatch ? (catalogInitialQuery ?? '') : ''}
+          placeholder="Search to override catalog model…"
+        />
+        <p className="text-xs text-gray-400">Leave blank to auto-create a new catalog model.</p>
+      </div>
 
       {/* Storage location — required to convert */}
       <div className="max-w-xs space-y-1">

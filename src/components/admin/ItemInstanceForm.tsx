@@ -3,15 +3,17 @@
 import { useState } from 'react'
 import { useActionState } from 'react'
 import Link from 'next/link'
-import { CatalogModel, ItemInstance, StorageLocation } from '@prisma/client'
+import { ItemInstance, StorageLocation } from '@prisma/client'
 import { createItemInstance, updateItemInstance, ItemActionState } from '@/lib/actions/items'
+import { CatalogModelCombobox } from '@/components/admin/CatalogModelCombobox'
 import { Button } from '@/components/admin/ui/Button'
 import { Input } from '@/components/admin/ui/Input'
 import { Select } from '@/components/admin/ui/Select'
 
 type Props = {
   item?: ItemInstance
-  catalogModels: CatalogModel[]
+  defaultCatalogId?: string
+  defaultCatalogLabel?: string
   locations: StorageLocation[]
   prefill?: ItemInstance
   suggestedSku?: string
@@ -39,7 +41,7 @@ const CARDED_OPTIONS = [
   { value: 'loose', label: 'Loose' },
 ]
 
-export function ItemInstanceForm({ item, catalogModels, locations, prefill, suggestedSku }: Props) {
+export function ItemInstanceForm({ item, defaultCatalogId, defaultCatalogLabel, locations, prefill, suggestedSku }: Props) {
   const action = item ? updateItemInstance.bind(null, item.id) : createItemInstance
   const [state, formAction, isPending] = useActionState<ItemActionState, FormData>(action, null)
 
@@ -48,11 +50,6 @@ export function ItemInstanceForm({ item, catalogModels, locations, prefill, sugg
 
   // Controlled SKU state in create mode so we can offer a clickable suggestion.
   const [sku, setSku] = useState(prefill ? '' : (item?.sku ?? ''))
-
-  const catalogOptions = catalogModels.map((m) => ({
-    value: m.id,
-    label: `${m.brand} – ${m.name}${m.year ? ` (${m.year})` : ''}`,
-  }))
 
   const locationOptions = [
     { value: '', label: '— No location —' },
@@ -89,15 +86,19 @@ export function ItemInstanceForm({ item, catalogModels, locations, prefill, sugg
         />
       </div>
 
-      <Select
-        label="Catalog Model"
-        name="catalogId"
-        required
-        options={catalogOptions}
-        defaultValue={src?.catalogId ?? ''}
-        placeholder="Select a model…"
-        error={state?.errors?.catalogId?.[0]}
-      />
+      <div className="flex flex-col gap-1">
+        <label className="text-sm font-medium text-gray-700">
+          Catalog Model <span className="text-red-500">*</span>
+        </label>
+        <CatalogModelCombobox
+          name="catalogId"
+          defaultValue={defaultCatalogId ?? src?.catalogId ?? ''}
+          defaultLabel={defaultCatalogLabel ?? ''}
+        />
+        {state?.errors?.catalogId?.[0] && (
+          <p className="text-xs text-red-600">{state.errors.catalogId[0]}</p>
+        )}
+      </div>
 
       {isCreate && locations.length === 0 ? (
         <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm">

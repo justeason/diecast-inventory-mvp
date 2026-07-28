@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { prisma } from '@/lib/prisma'
 import { getNextHwSku } from '@/lib/sku'
 import { ItemInstanceForm } from '@/components/admin/ItemInstanceForm'
+import { formatCandidateLabel } from '@/lib/catalogMatching'
 
 export default async function NewItemPage({
   searchParams,
@@ -10,12 +11,19 @@ export default async function NewItemPage({
 }) {
   const { from } = await searchParams
 
-  const [catalogModels, locations, sourceItem, suggestedSku] = await Promise.all([
-    prisma.catalogModel.findMany({ orderBy: [{ brand: 'asc' }, { name: 'asc' }] }),
+  const [locations, sourceItem, suggestedSku] = await Promise.all([
     prisma.storageLocation.findMany({ orderBy: { label: 'asc' } }),
-    from ? prisma.itemInstance.findUnique({ where: { id: from } }) : Promise.resolve(null),
+    from
+      ? prisma.itemInstance.findUnique({
+          where: { id: from },
+          include: { catalog: { select: { id: true, brand: true, name: true, year: true, color: true, series: true, scale: true } } },
+        })
+      : Promise.resolve(null),
     getNextHwSku(),
   ])
+
+  const defaultCatalogId = sourceItem?.catalog?.id ?? undefined
+  const defaultCatalogLabel = sourceItem?.catalog ? formatCandidateLabel(sourceItem.catalog) : undefined
 
   return (
     <>
@@ -33,7 +41,8 @@ export default async function NewItemPage({
         )}
       </div>
       <ItemInstanceForm
-        catalogModels={catalogModels}
+        defaultCatalogId={defaultCatalogId}
+        defaultCatalogLabel={defaultCatalogLabel}
         locations={locations}
         prefill={sourceItem ?? undefined}
         suggestedSku={suggestedSku}

@@ -353,7 +353,12 @@ export async function convertDraft(
       // 3. Resolve catalog model.
       let catalog: { id: string }
       if (selectedCatalogId) {
-        catalog = { id: selectedCatalogId }
+        const found = await tx.catalogModel.findUnique({ where: { id: selectedCatalogId }, select: { id: true } })
+        if (!found) {
+          txError = { errors: { form: ['Selected catalog model no longer exists. Please refresh and try again.'] } }
+          throw new Error('TX_VALIDATION')
+        }
+        catalog = found
       } else {
         let found = await tx.catalogModel.findFirst({
           where: {

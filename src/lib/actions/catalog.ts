@@ -4,6 +4,8 @@ import { z } from 'zod'
 import { del } from '@vercel/blob'
 import { prisma } from '@/lib/prisma'
 import { redirect } from 'next/navigation'
+import { searchCatalogModels } from '@/lib/catalogSearch'
+import { DUPLICATE_SCORE_THRESHOLD } from '@/lib/catalogMatching'
 
 export type MergeActionState = { errors: Record<string, string[]> } | null
 
@@ -37,6 +39,24 @@ export async function createCatalogModel(
 ): Promise<CatalogActionState> {
   const result = CatalogSchema.safeParse(Object.fromEntries(formData))
   if (!result.success) return { errors: result.error.flatten().fieldErrors as Record<string, string[]> }
+
+  const createAnyway = formData.get('createAnyway') === 'true'
+
+  if (!createAnyway) {
+    const q = [result.data.brand, result.data.name].filter(Boolean).join(' ')
+    const dupes = await searchCatalogModels(q)
+    const top = dupes[0]
+    if (top && top.score >= DUPLICATE_SCORE_THRESHOLD) {
+      return {
+        errors: {
+          _duplicate: [
+            `Potential duplicate: ${top.brand} ${top.name} (score ${top.score}/100). ` +
+            `Check the catalog before saving. Check "Create anyway" only if this is a genuinely distinct model.`,
+          ],
+        },
+      }
+    }
+  }
 
   await prisma.catalogModel.create({ data: toDbData(result.data) })
   redirect('/admin/catalog')

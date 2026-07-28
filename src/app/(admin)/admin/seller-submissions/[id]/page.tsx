@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { prisma } from '@/lib/prisma'
 import { SellerSubmissionStatusForm } from '@/components/admin/SellerSubmissionStatusForm'
+import { SubmissionCatalogLinkForm } from '@/components/admin/SubmissionCatalogLinkForm'
 import { startIntakeDraftFromSubmission } from '@/lib/actions/intake'
 import {
   AGREEMENT_TYPE_LABELS,
@@ -544,6 +545,29 @@ export default async function AdminSellerSubmissionDetailPage({
           </div>
         </div>
       )}
+
+      {/* Catalog link */}
+      <div className="mb-6 pt-6 border-t border-gray-200">
+        <h2 className="text-sm font-semibold text-gray-900 mb-3">Catalog link</h2>
+        {submission.catalogId && submission.catalog ? (
+          <div className="mb-3 rounded-md border border-green-200 bg-green-50 px-3 py-2 text-xs text-green-800">
+            Linked:{' '}
+            <Link
+              href={`/admin/catalog/${submission.catalogId}`}
+              className="font-medium hover:underline"
+            >
+              {submission.catalog.brand} {submission.catalog.name}
+            </Link>
+          </div>
+        ) : (
+          <p className="text-xs text-gray-400 mb-3">No catalog model linked yet.</p>
+        )}
+        <SubmissionCatalogLinkForm
+          submissionId={submission.id}
+          initialQuery={[submission.brand, submission.name, submission.year?.toString()].filter(Boolean).join(' ')}
+          currentCatalogLabel={submission.catalog ? `${submission.catalog.brand} ${submission.catalog.name}` : undefined}
+        />
+      </div>
 
       {/* Commercial agreement */}
       <div className="mb-6 pt-6 border-t border-gray-200">

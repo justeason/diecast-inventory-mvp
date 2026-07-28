@@ -12,6 +12,7 @@ import {
   isOpenCaseStatus,
 } from '@/lib/adminLifecycleDisplay'
 import { ResaleEstimatorPanel } from '@/components/admin/ResaleEstimatorPanel'
+import { formatCandidateLabel } from '@/lib/catalogMatching'
 
 export default async function EditItemPage({
   params,
@@ -20,10 +21,11 @@ export default async function EditItemPage({
 }) {
   const { id } = await params
 
-  const [item, catalogModels, locations] = await Promise.all([
+  const [item, locations] = await Promise.all([
     prisma.itemInstance.findUnique({
       where: { id },
       include: {
+        catalog: { select: { id: true, brand: true, name: true, year: true, color: true, series: true, scale: true } },
         photos: { select: { url: true, type: true }, orderBy: { sortOrder: 'asc' } },
         listing: { select: { id: true, status: true } },
         intakeDraft: { select: { id: true, sellerSubmissionId: true } },
@@ -72,7 +74,6 @@ export default async function EditItemPage({
         },
       },
     }),
-    prisma.catalogModel.findMany({ orderBy: [{ brand: 'asc' }, { name: 'asc' }] }),
     prisma.storageLocation.findMany({ orderBy: { label: 'asc' } }),
   ])
 
@@ -346,7 +347,12 @@ export default async function EditItemPage({
         <ResaleEstimatorPanel catalogId={item.catalogId} />
       </div>
 
-      <ItemInstanceForm item={item} catalogModels={catalogModels} locations={locations} />
+      <ItemInstanceForm
+        item={item}
+        defaultCatalogId={item.catalog?.id}
+        defaultCatalogLabel={item.catalog ? formatCandidateLabel(item.catalog) : undefined}
+        locations={locations}
+      />
     </>
   )
 }

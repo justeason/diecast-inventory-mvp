@@ -300,6 +300,61 @@ export async function updateSellerSubmissionStatus(
   redirect(`/admin/seller-submissions/${submissionId}`)
 }
 
+export async function adminLinkSubmissionCatalog(
+  submissionId: string,
+  _prev: SellerSubmissionActionState,
+  formData: FormData
+): Promise<SellerSubmissionActionState> {
+  const rawCatalogId = formData.get('catalogId')?.toString().trim() ?? ''
+
+  if (!rawCatalogId) {
+    return { errors: { catalogId: ['Select a catalog model to link.'] } }
+  }
+
+  type TxResult = SellerSubmissionActionState
+  let txResult: TxResult = null
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      // Acquire the same row-level lock used by convertDraft — serializes relink
+      // against concurrent conversion so only one can win after reading fresh state.
+      await tx.$queryRaw`SELECT id FROM "SellerSubmission" WHERE id = ${submissionId} FOR UPDATE`
+
+      const [submission, catalog] = await Promise.all([
+        tx.sellerSubmission.findUnique({
+          where: { id: submissionId },
+          select: { id: true, intakeDrafts: { select: { convertedItemId: true } } },
+        }),
+        tx.catalogModel.findUnique({ where: { id: rawCatalogId }, select: { id: true } }),
+      ])
+
+      if (!submission) {
+        txResult = { errors: { form: ['Seller submission not found.'] } }
+        throw new Error('TX_VALIDATION')
+      }
+      if (!catalog) {
+        txResult = { errors: { catalogId: ['Catalog model not found.'] } }
+        throw new Error('TX_VALIDATION')
+      }
+      if (submission.intakeDrafts.some((d) => d.convertedItemId !== null)) {
+        txResult = { errors: { form: ['Cannot relink: this submission has converted inventory. Edit the item directly if needed.'] } }
+        throw new Error('TX_VALIDATION')
+      }
+
+      await tx.sellerSubmission.update({
+        where: { id: submissionId },
+        data: { catalogId: rawCatalogId },
+      })
+    })
+  } catch (err) {
+    if ((err as Error).message === 'TX_VALIDATION') return txResult
+    throw err
+  }
+
+  revalidatePath(`/admin/seller-submissions/${submissionId}`)
+  return null
+}
+
 export async function withdrawSellerSubmission(
   _prev: SellerSubmissionActionState,
   formData: FormData
