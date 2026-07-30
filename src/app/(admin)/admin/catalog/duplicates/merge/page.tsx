@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { prisma } from '@/lib/prisma'
-import { CatalogMergeForm } from '@/components/admin/CatalogMergeForm'
+import { PairMergeForm } from '@/components/admin/PairMergeForm'
 import { mergeCatalogModels } from '@/lib/actions/catalog'
 
 export const dynamic = 'force-dynamic'
@@ -9,74 +9,79 @@ export const dynamic = 'force-dynamic'
 export default async function CatalogMergePage({
   searchParams,
 }: {
-  searchParams: Promise<{ representativeId?: string }>
+  searchParams: Promise<{ canonicalId?: string; duplicateId?: string }>
 }) {
-  const { representativeId } = await searchParams
-  if (!representativeId) notFound()
+  const { canonicalId, duplicateId } = await searchParams
+  if (!canonicalId || !duplicateId) notFound()
+  if (canonicalId === duplicateId) notFound()
 
-  const representative = await prisma.catalogModel.findUnique({
-    where: { id: representativeId },
-    select: { brand: true, name: true },
-  })
-  if (!representative) notFound()
+  const [canonical, duplicate] = await Promise.all([
+    prisma.catalogModel.findUnique({
+      where: { id: canonicalId },
+      include: {
+        _count: { select: { items: true, collectionItems: true, sellerSubmissions: true } },
+        items: { select: { listing: { select: { id: true } }, status: true } },
+      },
+    }),
+    prisma.catalogModel.findUnique({
+      where: { id: duplicateId },
+      include: {
+        _count: { select: { items: true, collectionItems: true, sellerSubmissions: true } },
+        items: { select: { listing: { select: { id: true } }, status: true } },
+      },
+    }),
+  ])
 
-  // Find all catalog models with the same brand + name (case-insensitive).
-  const allModels = await prisma.catalogModel.findMany({
-    where: {
-      brand: { equals: representative.brand, mode: 'insensitive' },
-      name:  { equals: representative.name,  mode: 'insensitive' },
-    },
-    include: {
-      items: { select: { listing: { select: { id: true } } } },
-    },
-    orderBy: { createdAt: 'asc' },
-  })
+  if (!canonical || !duplicate) notFound()
 
-  if (allModels.length < 2) {
-    return (
-      <>
-        <div className="mb-6">
-          <Link href="/admin/catalog/duplicates" className="text-sm text-gray-500 hover:text-gray-900">
-            ← Back to Duplicates
-          </Link>
-        </div>
-        <div className="rounded-md bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-800">
-          This group no longer has duplicates — it may have already been merged.
-        </div>
-      </>
-    )
-  }
+  const activeListings = duplicate.items.filter((i) => i.listing && i.status !== 'sold').length
+  const soldItems = duplicate.items.filter((i) => i.status === 'sold').length
 
-  const models = allModels.map((m) => ({
-    id:           m.id,
-    brand:        m.brand,
-    name:         m.name,
-    year:         m.year,
-    series:       m.series,
-    color:        m.color,
-    scale:        m.scale,
-    notes:        m.notes,
-    itemCount:    m.items.length,
-    listingCount: m.items.filter((i) => i.listing).length,
-    createdAt:    m.createdAt.toISOString(),
-  }))
+  const canonicalLabel = [canonical.brand, canonical.name, canonical.year ? `(${canonical.year})` : null, canonical.color].filter(Boolean).join(' ')
+  const duplicateLabel = [duplicate.brand, duplicate.name, duplicate.year ? `(${duplicate.year})` : null, duplicate.color].filter(Boolean).join(' ')
 
   return (
     <>
       <div className="mb-6">
-        <Link href="/admin/catalog/duplicates" className="text-sm text-gray-500 hover:text-gray-900">
-          ← Back to Duplicates
+        <Link
+          href={`/admin/catalog/duplicates/review?idA=${canonicalId}&idB=${duplicateId}`}
+          className="text-sm text-gray-500 hover:text-gray-900"
+        >
+          ← Back to Review
         </Link>
-        <h1 className="text-2xl font-bold text-gray-900 mt-2">
-          Merge: {representative.brand} · {representative.name}
-        </h1>
-        <p className="text-sm text-gray-500 mt-1">
-          {allModels.length} catalog records share this brand and name. Select one to keep as
-          canonical, check the ones to merge away, then confirm.
-        </p>
+        <h1 className="text-2xl font-bold text-gray-900 mt-2">Confirm Merge</h1>
       </div>
 
-      <CatalogMergeForm action={mergeCatalogModels} models={models} />
+      <div className="rounded-md border border-gray-200 bg-white p-4 mb-6 space-y-3 text-sm">
+        <div>
+          <p className="text-xs text-gray-500 uppercase tracking-wide font-medium mb-1">Keep (canonical)</p>
+          <p className="font-medium text-gray-900">{canonicalLabel}</p>
+          <p className="text-xs text-gray-400">{canonicalId}</p>
+        </div>
+        <div>
+          <p className="text-xs text-gray-500 uppercase tracking-wide font-medium mb-1">Delete (duplicate)</p>
+          <p className="font-medium text-gray-900">{duplicateLabel}</p>
+          <p className="text-xs text-gray-400">{duplicateId}</p>
+        </div>
+        <div className="border-t border-gray-100 pt-3 space-y-1 text-gray-600">
+          <p>Items to reassign: <strong>{duplicate._count.items}</strong></p>
+          <p>Collection items to reassign: <strong>{duplicate._count.collectionItems}</strong></p>
+          <p>Sell requests to reassign: <strong>{duplicate._count.sellerSubmissions}</strong></p>
+          {activeListings > 0 && (
+            <p className="text-amber-700 font-medium">⚠ {activeListings} active listing{activeListings !== 1 ? 's' : ''} will be reassigned to canonical.</p>
+          )}
+          {soldItems > 0 && (
+            <p className="text-gray-500">ℹ {soldItems} sold item{soldItems !== 1 ? 's' : ''} will be reassigned (historical record).</p>
+          )}
+        </div>
+      </div>
+
+      <PairMergeForm
+        action={mergeCatalogModels}
+        canonicalId={canonicalId}
+        duplicateId={duplicateId}
+        canonicalLabel={canonicalLabel}
+      />
     </>
   )
 }

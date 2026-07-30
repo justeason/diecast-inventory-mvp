@@ -4,6 +4,7 @@ import { logoutAdmin } from '@/lib/actions/auth'
 const navLinks = [
   { href: '/admin', label: 'Dashboard' },
   { href: '/admin/catalog', label: 'Catalog' },
+  { href: '/admin/catalog/duplicates', label: 'Cat. Dups' },
   { href: '/admin/items', label: 'Items' },
   { href: '/admin/locations', label: 'Locations' },
   { href: '/admin/listings', label: 'Listings' },

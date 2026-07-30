@@ -1,7 +1,7 @@
 'use server'
 
 import { z } from 'zod'
-import { del } from '@vercel/blob'
+
 import { prisma } from '@/lib/prisma'
 import { redirect } from 'next/navigation'
 import { searchCatalogModels } from '@/lib/catalogSearch'
@@ -88,54 +88,97 @@ export async function mergeCatalogModels(
   if (duplicateIds.includes(canonicalId))
     return { errors: { form: ['The canonical model cannot also be in the merge list.'] } }
 
-  // Load all involved models — validates they exist and share the same normalized brand+name.
+  // Optimistic pre-flight existence check — re-verified inside TX after acquiring locks.
   const allIds = [canonicalId, ...duplicateIds]
-  const models = await prisma.catalogModel.findMany({
-    where: { id: { in: allIds } },
-    select: { id: true, brand: true, name: true },
-  })
-
-  if (models.length !== allIds.length)
+  const existCount = await prisma.catalogModel.count({ where: { id: { in: allIds } } })
+  if (existCount !== allIds.length)
     return { errors: { form: ['One or more selected models no longer exist. Please refresh and try again.'] } }
 
-  const canonical = models.find((m) => m.id === canonicalId)!
-  const targetBrand = canonical.brand.trim().toLowerCase()
-  const targetName  = canonical.name.trim().toLowerCase()
+  let mergeError: MergeActionState = null
 
-  for (const m of models) {
-    if (m.brand.trim().toLowerCase() !== targetBrand || m.name.trim().toLowerCase() !== targetName)
-      return { errors: { form: ['All selected models must share the same brand and name.'] } }
-  }
-
-  // Collect duplicate catalog image URLs before the transaction — cascade delete removes the rows.
-  const duplicatePhotoUrls = await prisma.catalogModelPhoto.findMany({
-    where: { catalogId: { in: duplicateIds } },
-    select: { url: true },
-  })
-
-  // Move items then delete duplicates — all in one transaction.
   try {
     await prisma.$transaction(async (tx) => {
-      for (const dupeId of duplicateIds) {
-        await tx.itemInstance.updateMany({
-          where: { catalogId: dupeId },
-          data:  { catalogId: canonicalId },
+      // Acquire row locks on both canonical and each duplicate in deterministic ID order
+      // so concurrent merges targeting the same models always lock in the same order.
+      const lockIds = [...new Set([canonicalId, ...duplicateIds])].sort()
+      for (const id of lockIds) {
+        await tx.$queryRaw`SELECT id FROM "CatalogModel" WHERE id = ${id} FOR UPDATE`
+      }
+
+      // Capture snapshots INSIDE the transaction after acquiring locks.
+      // This guarantees the snapshot reflects the true committed state at merge time.
+      const [canonicalSnapshot, ...dupeSnapshotsOrNull] = await Promise.all([
+        tx.catalogModel.findUnique({ where: { id: canonicalId } }),
+        ...duplicateIds.map((id) => tx.catalogModel.findUnique({ where: { id } })),
+      ])
+
+      if (!canonicalSnapshot) {
+        mergeError = { errors: { form: ['Canonical model was deleted. Please refresh and try again.'] } }
+        throw new Error('TX_VALIDATION')
+      }
+      if (dupeSnapshotsOrNull.some((s) => s === null)) {
+        mergeError = { errors: { form: ['One or more duplicate models were deleted. Please refresh and try again.'] } }
+        throw new Error('TX_VALIDATION')
+      }
+
+      for (let i = 0; i < duplicateIds.length; i++) {
+        const dupeId = duplicateIds[i]
+        const dupSnap = dupeSnapshotsOrNull[i]!
+
+        const [items, collItems, suggestions, submissions, photos] = await Promise.all([
+          tx.itemInstance.updateMany({ where: { catalogId: dupeId }, data: { catalogId: canonicalId } }),
+          tx.collectionItem.updateMany({ where: { catalogId: dupeId }, data: { catalogId: canonicalId } }),
+          tx.catalogSuggestion.updateMany({ where: { approvedCatalogId: dupeId }, data: { approvedCatalogId: canonicalId } }),
+          tx.sellerSubmission.updateMany({ where: { catalogId: dupeId }, data: { catalogId: canonicalId } }),
+          tx.catalogModelPhoto.updateMany({ where: { catalogId: dupeId }, data: { catalogId: canonicalId } }),
+        ])
+
+        await tx.catalogModelMergeAudit.create({
+          data: {
+            canonicalCatalogModelId: canonicalId,
+            duplicateCatalogModelId: dupeId,
+            canonicalSnapshot: canonicalSnapshot as object,
+            duplicateSnapshot: dupSnap as object,
+            movedItemInstances:      items.count,
+            movedCollectionItems:    collItems.count,
+            movedCatalogSuggestions: suggestions.count,
+            movedSellerSubmissions:  submissions.count,
+            movedPhotos:             photos.count,
+          },
         })
+
+        // Pre-delete integrity check: all FK references to dupeId must have been moved.
+        // The FOR UPDATE lock on this CatalogModel row blocks concurrent FK inserts/updates
+        // (Postgres acquires FOR KEY SHARE on the referenced row for any FK write, which
+        // conflicts with FOR UPDATE). So remaining should always be 0. If non-zero, roll back.
+        const [ri, rc, rs, rsub, rp] = await Promise.all([
+          tx.itemInstance.count({ where: { catalogId: dupeId } }),
+          tx.collectionItem.count({ where: { catalogId: dupeId } }),
+          tx.catalogSuggestion.count({ where: { approvedCatalogId: dupeId } }),
+          tx.sellerSubmission.count({ where: { catalogId: dupeId } }),
+          tx.catalogModelPhoto.count({ where: { catalogId: dupeId } }),
+        ])
+        const remaining = ri + rc + rs + rsub + rp
+        if (remaining > 0) {
+          mergeError = {
+            errors: {
+              form: [
+                `Merge aborted: ${remaining} reference(s) still point to the duplicate after reassignment. Please retry.`,
+              ],
+            },
+          }
+          throw new Error('TX_VALIDATION')
+        }
+
         await tx.catalogModel.delete({ where: { id: dupeId } })
       }
     })
-  } catch {
+  } catch (err) {
+    if ((err as Error).message === 'TX_VALIDATION') return mergeError
     return { errors: { form: ['Merge failed. Please try again.'] } }
   }
 
-  // Best-effort blob cleanup after successful transaction — never blocks the merge.
-  for (const { url } of duplicatePhotoUrls) {
-    try {
-      await del(url)
-    } catch (err) {
-      console.error('[mergeCatalogModels] Failed to delete catalog image blob:', err)
-    }
-  }
+  // Photos are re-assigned to canonical via updateMany — blobs remain valid and are preserved.
 
   redirect('/admin/catalog/duplicates')
 }

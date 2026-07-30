@@ -341,6 +341,9 @@ export async function adminLinkSubmissionCatalog(
         throw new Error('TX_VALIDATION')
       }
 
+      // Postgres acquires FOR KEY SHARE on the CatalogModel row when writing this FK.
+      // If a merge TX holds FOR UPDATE on that row, this update blocks until the merge
+      // commits. If the merge deleted the model, this throws P2003 (FK constraint failed).
       await tx.sellerSubmission.update({
         where: { id: submissionId },
         data: { catalogId: rawCatalogId },
@@ -348,6 +351,10 @@ export async function adminLinkSubmissionCatalog(
     })
   } catch (err) {
     if ((err as Error).message === 'TX_VALIDATION') return txResult
+    // FK constraint failed: the catalog model was deleted by a concurrent merge.
+    if ((err as { code?: string }).code === 'P2003') {
+      return { errors: { catalogId: ['The selected catalog model was just deleted. Please refresh and select another.'] } }
+    }
     throw err
   }
 

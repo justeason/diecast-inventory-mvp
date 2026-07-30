@@ -29,6 +29,33 @@ model CatalogModel {
   @@index([name])
 }
 
+model CatalogModelMergeAudit {
+  id                      String   @id @default(cuid())
+  // Stored as plain strings — not FK relations — so audit survives duplicate deletion.
+  canonicalCatalogModelId String
+  duplicateCatalogModelId String
+  canonicalSnapshot       Json
+  duplicateSnapshot       Json
+  movedItemInstances      Int      @default(0)
+  movedCollectionItems    Int      @default(0)
+  movedSellerSubmissions  Int      @default(0)
+  movedCatalogSuggestions Int      @default(0)
+  movedPhotos             Int      @default(0)
+  adminNote               String?
+  mergedAt                DateTime @default(now())
+
+  @@index([canonicalCatalogModelId])
+  @@index([duplicateCatalogModelId])
+}
+
+model CatalogDuplicateSuppression {
+  id        String   @id @default(cuid())
+  // Stable pair key: smaller id + "|" + larger id (lexicographic). Unique per pair.
+  pairKey   String   @unique
+  adminNote String?
+  createdAt DateTime @default(now())
+}
+
 model CatalogModelPhoto {
   id        String       @id @default(cuid())
   catalogId String
