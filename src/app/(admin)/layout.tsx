@@ -13,6 +13,7 @@ const navLinks = [
   { href: '/admin/seller-profiles', label: 'Sellers' },
   { href: '/admin/seller-payouts', label: 'Payouts' },
   { href: '/admin/intake', label: 'Intake' },
+  { href: '/admin/intake/operations', label: 'Intake Ops' },
   { href: '/admin/catalog-suggestions', label: 'Suggestions' },
   { href: '/admin/seller-submissions', label: 'Sell Requests' },
   { href: '/admin/seller-lifecycle', label: 'Lifecycle' },

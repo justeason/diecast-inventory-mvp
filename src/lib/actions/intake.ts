@@ -155,27 +155,34 @@ export async function updateIntakeDraft(
 // ─── Mark reviewed ─────────────────────────────────────────────────────────────
 
 export async function markDraftReviewed(id: string, _formData: FormData): Promise<void> {
-  const draft = await prisma.intakeDraft.findUnique({
-    where: { id },
-    select: { status: true, sellerSubmissionId: true },
+  let sellerSubmissionId: string | null = null
+
+  await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "IntakeDraft" WHERE id = ${id} FOR UPDATE`
+    const draft = await tx.intakeDraft.findUnique({
+      where: { id },
+      select: { status: true, sellerSubmissionId: true },
+    })
+    if (draft?.status === 'draft') {
+      sellerSubmissionId = draft.sellerSubmissionId
+      await tx.intakeDraft.update({ where: { id }, data: { status: 'reviewed' } })
+    }
   })
-  if (draft?.status === 'draft') {
-    await prisma.intakeDraft.update({ where: { id }, data: { status: 'reviewed' } })
-    if (draft.sellerSubmissionId) {
-      try {
-        await ensureSellerLifecycleEvent({
-          eventKey: `intake-reviewed:${id}`,
-          sellerSubmissionId: draft.sellerSubmissionId,
-          eventType: 'intake_reviewed',
-          sourceEntityType: 'intake_draft',
-          sourceEntityId: id,
-          sellerVisible: false,
-          adminDescription: 'Intake draft marked reviewed.',
-          occurredAt: new Date(),
-        })
-      } catch (err) {
-        console.error('[markDraftReviewed] lifecycle event failed:', err instanceof Error ? err.message : 'UnknownError')
-      }
+
+  if (sellerSubmissionId) {
+    try {
+      await ensureSellerLifecycleEvent({
+        eventKey: `intake-reviewed:${id}`,
+        sellerSubmissionId,
+        eventType: 'intake_reviewed',
+        sourceEntityType: 'intake_draft',
+        sourceEntityId: id,
+        sellerVisible: false,
+        adminDescription: 'Intake draft marked reviewed.',
+        occurredAt: new Date(),
+      })
+    } catch (err) {
+      console.error('[markDraftReviewed] lifecycle event failed:', err instanceof Error ? err.message : 'UnknownError')
     }
   }
   redirect(`/admin/intake/${id}/edit`)
@@ -184,10 +191,13 @@ export async function markDraftReviewed(id: string, _formData: FormData): Promis
 // ─── Reject draft ─────────────────────────────────────────────────────────────
 
 export async function rejectDraft(id: string, _formData: FormData): Promise<void> {
-  const draft = await prisma.intakeDraft.findUnique({ where: { id }, select: { status: true } })
-  if (draft && draft.status !== 'converted' && draft.status !== 'rejected') {
-    await prisma.intakeDraft.update({ where: { id }, data: { status: 'rejected' } })
-  }
+  await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "IntakeDraft" WHERE id = ${id} FOR UPDATE`
+    const draft = await tx.intakeDraft.findUnique({ where: { id }, select: { status: true } })
+    if (draft && draft.status !== 'converted' && draft.status !== 'rejected') {
+      await tx.intakeDraft.update({ where: { id }, data: { status: 'rejected' } })
+    }
+  })
   redirect(`/admin/intake/${id}/edit`)
 }
 
@@ -242,6 +252,8 @@ export async function convertDraft(
   if (!preflight.condition || !preflight.cardedOrLoose) {
     return { errors: { form: ['Condition and type (carded/loose) are required to convert.'] } }
   }
+  // Extract submissionId for canonical lock ordering (SellerSubmission → IntakeDraft)
+  const sellerSubmissionIdForLock = preflight.sellerSubmissionId
 
   const locationRecord = await prisma.storageLocation.findUnique({
     where: { id: locationId },
@@ -273,7 +285,14 @@ export async function convertDraft(
 
   try {
     await prisma.$transaction(async (tx) => {
-      // 1. Re-fetch draft through the transaction client for authoritative state.
+      // 1. Acquire locks in canonical order: SellerSubmission → IntakeDraft
+      //    Serializes against concurrent receipt, storage assignment, and second conversion.
+      if (sellerSubmissionIdForLock) {
+        await tx.$queryRaw`SELECT id FROM "SellerSubmission" WHERE id = ${sellerSubmissionIdForLock} FOR UPDATE`
+      }
+      await tx.$queryRaw`SELECT id FROM "IntakeDraft" WHERE id = ${id} FOR UPDATE`
+
+      // Re-fetch draft (now locked) for authoritative state.
       const draft = await tx.intakeDraft.findUnique({ where: { id } })
       if (!draft) {
         txError = { errors: { form: ['Draft not found.'] } }
@@ -293,12 +312,25 @@ export async function convertDraft(
 
       sellerSubmissionId = draft.sellerSubmissionId
 
-      // Lock SellerSubmission row (if this draft belongs to a submission) before resolving
-      // commercial provenance. Serializes against concurrent pricing-preference saves that
-      // also lock the same row, so a late pricing save waits and then re-reads the converted
-      // intakeDraft state and fails as locked.
-      if (draft.sellerSubmissionId) {
-        await tx.$queryRaw`SELECT id FROM "SellerSubmission" WHERE id = ${draft.sellerSubmissionId} FOR UPDATE`
+      // Detect conflict between pre-assigned draft storage and the submitted locationId.
+      // Both are admin-set; disagreement means the form is stale — force a reload.
+      if (draft.storageLocationId && draft.storageLocationId !== locationId) {
+        txError = {
+          errors: {
+            locationId: [
+              'The pre-assigned storage location on this draft differs from the selected location. Reload the form and try again.',
+            ],
+          },
+        }
+        throw new Error('TX_VALIDATION')
+      }
+
+      // Re-validate location inside TX: closes the race between the pre-flight check and
+      // transaction execution (concurrent deletion would be missed by the pre-flight).
+      const locInTx = await tx.storageLocation.findUnique({ where: { id: locationId }, select: { id: true } })
+      if (!locInTx) {
+        txError = { errors: { locationId: ['Storage location was deleted. Please select another.'] } }
+        throw new Error('TX_VALIDATION')
       }
 
       // 2. Resolve commercial provenance inside the transaction.

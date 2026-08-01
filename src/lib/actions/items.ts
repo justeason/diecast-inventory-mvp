@@ -60,12 +60,16 @@ export async function createItemInstance(
 
   const { sku, catalogId } = result.data
 
-  const [existingItem, catalog] = await Promise.all([
+  const locationId = result.data.locationId
+
+  const [existingItem, catalog, location] = await Promise.all([
     prisma.itemInstance.findUnique({ where: { sku }, select: { id: true } }),
     prisma.catalogModel.findUnique({ where: { id: catalogId }, select: { id: true } }),
+    locationId ? prisma.storageLocation.findUnique({ where: { id: locationId }, select: { id: true } }) : null,
   ])
   if (existingItem) return { errors: { sku: ['SKU is already in use.'] } }
   if (!catalog) return { errors: { catalogId: ['Catalog model not found.'] } }
+  if (locationId && !location) return { errors: { locationId: ['Storage location not found.'] } }
 
   try {
     await prisma.itemInstance.create({ data: toDbData(result.data) })
@@ -87,14 +91,16 @@ export async function updateItemInstance(
   const result = ItemSchema.safeParse(Object.fromEntries(formData))
   if (!result.success) return { errors: result.error.flatten().fieldErrors as Record<string, string[]> }
 
-  const { sku, catalogId } = result.data
+  const { sku, catalogId, locationId: newLocationId } = result.data
 
-  const [conflict, catalog] = await Promise.all([
+  const [conflict, catalog, location] = await Promise.all([
     prisma.itemInstance.findFirst({ where: { sku, NOT: { id } }, select: { id: true } }),
     prisma.catalogModel.findUnique({ where: { id: catalogId }, select: { id: true } }),
+    newLocationId ? prisma.storageLocation.findUnique({ where: { id: newLocationId }, select: { id: true } }) : null,
   ])
   if (conflict) return { errors: { sku: ['SKU is already in use.'] } }
   if (!catalog) return { errors: { catalogId: ['Catalog model not found.'] } }
+  if (newLocationId && !location) return { errors: { locationId: ['Storage location not found.'] } }
 
   try {
     await prisma.itemInstance.update({ where: { id }, data: toDbData(result.data) })

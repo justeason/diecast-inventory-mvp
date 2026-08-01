@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useActionState } from 'react'
 import { useFormStatus } from 'react-dom'
+import Link from 'next/link'
 import type { StorageLocation } from '@prisma/client'
 import type { ConvertActionState } from '@/lib/actions/intake'
 import {
@@ -145,9 +146,9 @@ export function ConvertDraftForm({
       <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-4 text-sm">
         <p className="font-medium text-amber-800 mb-1">No storage locations exist.</p>
         <p className="text-amber-700">
-          <a href="/admin/locations/new" className="underline hover:no-underline">
+          <Link href="/admin/locations/new" className="underline hover:no-underline">
             Create a storage location
-          </a>{' '}
+          </Link>{' '}
           before converting this draft.
         </p>
       </div>

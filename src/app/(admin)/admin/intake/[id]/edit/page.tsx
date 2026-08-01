@@ -22,6 +22,7 @@ import {
   extractDraftFields,
   uploadIntakePhoto,
 } from '@/lib/actions/intake'
+import { IntakeReceiptForm } from '@/components/admin/IntakeReceiptForm'
 
 const STATUS_LABELS: Record<string, string> = {
   draft: 'Draft',
@@ -75,6 +76,7 @@ export default async function EditIntakeDraftPage({
     prisma.intakeDraft.findUnique({
       where: { id },
       include: {
+        intakeLocation: { select: { id: true, label: true } },
         convertedItem: { select: { id: true, sku: true, listing: { select: { id: true } } } },
         sellerSubmission: {
           select: {
@@ -405,6 +407,38 @@ export default async function EditIntakeDraftPage({
       ) : (
         /* ── Editable: upload + form + actions ────────────────────────────── */
         <div className="max-w-2xl space-y-8">
+          {/* Receipt summary / form */}
+          <div className="rounded-md border border-gray-200 bg-white p-4">
+            <h2 className="text-sm font-semibold text-gray-700 mb-3">Receipt</h2>
+            {draft.receivedAt ? (
+              <div className="space-y-1 text-sm text-gray-700">
+                <p>
+                  <span className="text-gray-500">Received:</span>{' '}
+                  {draft.receivedAt.toLocaleDateString()}
+                  {draft.receivedBy && ` by ${draft.receivedBy}`}
+                </p>
+                {draft.receivedQuantity != null && (
+                  <p>
+                    <span className="text-gray-500">Qty received:</span> {draft.receivedQuantity}
+                    {draft.expectedQuantity != null && draft.expectedQuantity !== draft.receivedQuantity && (
+                      <span className="ml-2 text-amber-600">(expected {draft.expectedQuantity})</span>
+                    )}
+                  </p>
+                )}
+                {draft.intakeLocation && (
+                  <p>
+                    <span className="text-gray-500">Storage:</span> {draft.intakeLocation.label}
+                  </p>
+                )}
+                {draft.receivingNotes && (
+                  <p className="text-gray-500 italic">{draft.receivingNotes}</p>
+                )}
+              </div>
+            ) : (
+              <IntakeReceiptForm intakeId={id} expectedQuantity={draft.expectedQuantity} />
+            )}
+          </div>
+
           {/* Photo upload */}
           <div>
             <h2 className="text-sm font-semibold text-gray-700 mb-4">Photos</h2>

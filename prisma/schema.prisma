@@ -106,12 +106,13 @@ model Photo {
 }
 
 model StorageLocation {
-  id        String         @id @default(cuid())
-  label     String
-  notes     String?
-  createdAt DateTime       @default(now())
-  updatedAt DateTime       @updatedAt
-  items     ItemInstance[]
+  id           String         @id @default(cuid())
+  label        String
+  notes        String?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  items        ItemInstance[]
+  intakeDrafts IntakeDraft[]  @relation("IntakeDraftLocation")
 }
 
 model Listing {
@@ -386,6 +387,15 @@ model IntakeDraft {
   storageLocation String?
   notes           String?
 
+  expectedQuantity Int?
+  receivedQuantity Int?
+  receivedAt       DateTime?
+  receivedBy       String?
+  receivingNotes   String?
+
+  storageLocationId String?
+  intakeLocation    StorageLocation? @relation("IntakeDraftLocation", fields: [storageLocationId], references: [id], onDelete: SetNull)
+
   convertedItemId String?       @unique
   convertedItem   ItemInstance? @relation(fields: [convertedItemId], references: [id])
 
@@ -404,6 +414,7 @@ model IntakeDraft {
   updatedAt DateTime @updatedAt
 
   @@index([sellerSubmissionId])
+  @@index([storageLocationId])
 }
 
 model SellerAgreement {
