@@ -80,6 +80,10 @@ const DRAFT_SELECT = {
       lifecycleCases: {
         select: { status: true, caseType: true, intakeDraftId: true, returnedAt: true },
       },
+      inboundShipments: {
+        where: { status: { not: 'cancelled' } },
+        select: { id: true, status: true, trackingNumber: true, expectedQuantity: true, receivedQuantity: true },
+      },
     },
   },
   createdAt: true,
@@ -96,13 +100,17 @@ export default async function IntakeOperationsPage({
     agreementType?: string
     catalogMatch?: string
     attention?: string
+    shipmentStatus?: string
+    trackingSearch?: string
+    issueOnly?: string
     page?: string
     showAll?: string
   }>
 }) {
   const {
     stage, seller, ageBucket, storageStatus, agreementType,
-    catalogMatch, attention, page, showAll,
+    catalogMatch, attention, shipmentStatus, trackingSearch, issueOnly,
+    page, showAll,
   } = await searchParams
   const now = new Date()
   const sevenDaysAgo  = new Date(now.getTime() - 7  * 86_400_000)
@@ -141,6 +149,17 @@ export default async function IntakeOperationsPage({
       : catalogMatch === 'unlinked'
       ? { sellerSubmissionId: { not: null }, sellerSubmission: { catalogId: null } }
       : {}
+
+  // Shipment filters (applied via sellerSubmission.inboundShipments relation)
+  const draftShipmentStatusWhere = shipmentStatus
+    ? { sellerSubmission: { inboundShipments: { some: { status: shipmentStatus } } } }
+    : {}
+  const draftTrackingWhere = trackingSearch?.trim()
+    ? { sellerSubmission: { inboundShipments: { some: { trackingNumber: { contains: trackingSearch.trim(), mode: 'insensitive' as const } } } } }
+    : {}
+  const draftIssueOnlyWhere = issueOnly
+    ? { sellerSubmission: { inboundShipments: { some: { status: 'issue' } } } }
+    : {}
 
   // Attention pre-filter: narrows DB candidates before in-memory refinement
   const attentionWhere = attention
@@ -251,6 +270,9 @@ export default async function IntakeOperationsPage({
       draftAgreementWhere,
       ageBucketWhere,
       draftCatalogMatchWhere,
+      draftShipmentStatusWhere,
+      draftTrackingWhere,
+      draftIssueOnlyWhere,
       attentionWhere,
       { OR: statusOr },
     ]
@@ -397,6 +419,7 @@ export default async function IntakeOperationsPage({
     const p = new URLSearchParams()
     const current: Record<string, string | undefined> = {
       stage, seller, ageBucket, storageStatus, agreementType, catalogMatch, attention, showAll,
+      shipmentStatus, trackingSearch, issueOnly,
     }
     const merged = { ...current, ...overrides }
     for (const [k, v] of Object.entries(merged)) {
@@ -405,7 +428,21 @@ export default async function IntakeOperationsPage({
     return `/admin/intake/operations${p.size ? '?' + p.toString() : ''}`
   }
 
-  const isFiltered = !!(stage || seller?.trim() || ageBucket || storageStatus || agreementType || catalogMatch || attention)
+  const isFiltered = !!(stage || seller?.trim() || ageBucket || storageStatus || agreementType || catalogMatch || attention || shipmentStatus || trackingSearch?.trim() || issueOnly)
+
+  function getShipmentNote(shipments: Array<{ id: string; status: string; trackingNumber: string | null; expectedQuantity: number; receivedQuantity: number | null }> | undefined): string | undefined {
+    if (!shipments || shipments.length === 0) return undefined
+    const issueCount = shipments.filter((s) => s.status === 'issue').length
+    const shippedCount = shipments.filter((s) => s.status === 'shipped').length
+    const receivedCount = shipments.filter((s) => s.status === 'received').length
+    const parts: string[] = [`${shipments.length} pkg`]
+    if (issueCount > 0) parts.push(`${issueCount} issue`)
+    else if (shippedCount > 0) parts.push(`${shippedCount} shipped`)
+    else if (receivedCount > 0) parts.push(`${receivedCount} received`)
+    const tracking = shipments.find((s) => s.trackingNumber)?.trackingNumber
+    if (tracking) parts.push(tracking)
+    return parts.join(' · ')
+  }
 
   return (
     <>
@@ -493,6 +530,31 @@ export default async function IntakeOperationsPage({
           className="rounded-md border border-gray-200 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
 
+        <select
+          name="shipmentStatus"
+          defaultValue={shipmentStatus ?? ''}
+          className="rounded-md border border-gray-200 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        >
+          <option value="">Any shipment status</option>
+          <option value="draft">Shipment: draft</option>
+          <option value="shipped">Shipment: shipped</option>
+          <option value="received">Shipment: received</option>
+          <option value="issue">Shipment: issue</option>
+        </select>
+
+        <input
+          type="text"
+          name="trackingSearch"
+          defaultValue={trackingSearch ?? ''}
+          placeholder="Tracking #…"
+          className="rounded-md border border-gray-200 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+
+        <label className="flex items-center gap-1.5 text-sm text-gray-600 cursor-pointer">
+          <input type="checkbox" name="issueOnly" value="1" defaultChecked={!!issueOnly} />
+          Issues only
+        </label>
+
         <label className="flex items-center gap-1.5 text-sm text-gray-600 cursor-pointer">
           <input type="checkbox" name="attention" value="1" defaultChecked={!!attention} />
           Needs attention
@@ -568,6 +630,7 @@ export default async function IntakeOperationsPage({
                     ? 'Catalog: linked'
                     : undefined
                 }
+                shipmentNote={getShipmentNote(draft.sellerSubmission?.inboundShipments)}
                 submissionHref={
                   draft.sellerSubmissionId
                     ? `/admin/seller-submissions/${draft.sellerSubmissionId}`
@@ -648,6 +711,7 @@ function Row({
   linkLabel,
   storageLabel,
   note,
+  shipmentNote,
   submissionHref,
 }: {
   stage: IntakeOperationalStage
@@ -659,6 +723,7 @@ function Row({
   linkLabel: string
   storageLabel?: string | null
   note?: string
+  shipmentNote?: string
   submissionHref?: string
 }) {
   return (
@@ -675,6 +740,7 @@ function Row({
           {ageDays}d old
           {storageLabel && <span className="ml-2">· {storageLabel}</span>}
           {note && <span className="ml-2 text-gray-400">· {note}</span>}
+          {shipmentNote && <span className="ml-2 text-blue-600">· {shipmentNote}</span>}
         </p>
         {warnings.length > 0 && (
           <div className="flex flex-wrap gap-1 mt-1">

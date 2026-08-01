@@ -340,9 +340,10 @@ model SellerSubmission {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  photos       SellerSubmissionPhoto[]
-  intakeDrafts IntakeDraft[]
-  agreements   SellerAgreement[]
+  photos           SellerSubmissionPhoto[]
+  intakeDrafts     IntakeDraft[]
+  agreements       SellerAgreement[]
+  inboundShipments SellerInboundShipment[]
 
   lifecycleEvents   SellerLifecycleEvent[]
   lifecycleCases    SellerLifecycleCase[]
@@ -396,8 +397,9 @@ model IntakeDraft {
   storageLocationId String?
   intakeLocation    StorageLocation? @relation("IntakeDraftLocation", fields: [storageLocationId], references: [id], onDelete: SetNull)
 
-  convertedItemId String?       @unique
-  convertedItem   ItemInstance? @relation(fields: [convertedItemId], references: [id])
+  convertedItemId  String?       @unique
+  convertedItem    ItemInstance? @relation(fields: [convertedItemId], references: [id])
+  inboundShipments SellerInboundShipment[]
 
   aiExtractionRaw        String?
   aiExtractionNotes      String?
@@ -589,6 +591,38 @@ model SellerLifecycleCase {
   @@index([orderItemId])
   @@index([itemInstanceId])
   @@index([sellerPayoutLineId])
+}
+
+model SellerInboundShipment {
+  id                 String           @id @default(cuid())
+  sellerSubmissionId String
+  sellerSubmission   SellerSubmission @relation(fields: [sellerSubmissionId], references: [id], onDelete: Restrict)
+  intakeDraftId      String?
+  intakeDraft        IntakeDraft?     @relation(fields: [intakeDraftId], references: [id], onDelete: SetNull)
+
+  status           String   @default("draft")
+  carrier          String?
+  trackingNumber   String?
+  expectedQuantity Int
+  receivedQuantity Int?
+
+  shippedAt   DateTime?
+  deliveredAt DateTime?
+  receivedAt  DateTime?
+  receivedBy  String?
+
+  sellerNotes     String?
+  adminNotes      String?
+  conditionStatus String?
+  issueSummary    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([sellerSubmissionId])
+  @@index([trackingNumber])
+  @@index([status])
+  @@index([receivedAt])
 }
 
 model SellerPricingPreference {

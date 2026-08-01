@@ -4,6 +4,9 @@ import { prisma } from '@/lib/prisma'
 import { SellerSubmissionStatusForm } from '@/components/admin/SellerSubmissionStatusForm'
 import { SubmissionCatalogLinkForm } from '@/components/admin/SubmissionCatalogLinkForm'
 import { startIntakeDraftFromSubmission } from '@/lib/actions/intake'
+import { ReceiveShipmentForm } from '@/components/admin/ReceiveShipmentForm'
+import { SHIPMENT_WARNING_LABELS, deriveShipmentWarnings, deriveShipmentTotals } from '@/lib/sellerShipmentWarnings'
+import { SHIPMENT_STATUS_LABELS, CONDITION_LABELS as SHIPMENT_CONDITION_LABELS, type ConditionStatus } from '@/lib/sellerInboundShipmentConstants'
 import {
   AGREEMENT_TYPE_LABELS,
   AGREEMENT_STATUS_LABELS,
@@ -182,6 +185,27 @@ export default async function AdminSellerSubmissionDetailPage({
     },
   })
   if (!submission) notFound()
+
+  const inboundShipments = await prisma.sellerInboundShipment.findMany({
+    where: { sellerSubmissionId: id },
+    select: {
+      id: true,
+      status: true,
+      carrier: true,
+      trackingNumber: true,
+      expectedQuantity: true,
+      receivedQuantity: true,
+      shippedAt: true,
+      receivedAt: true,
+      receivedBy: true,
+      conditionStatus: true,
+      issueSummary: true,
+      adminNotes: true,
+      sellerNotes: true,
+      intakeDraftId: true,
+    },
+    orderBy: { createdAt: 'asc' },
+  })
 
   const itemTitle =
     [submission.brand, submission.name].filter(Boolean).join(' ') || 'Untitled item'
@@ -512,6 +536,156 @@ export default async function AdminSellerSubmissionDetailPage({
           )}
         </div>
       )}
+
+      {/* Inbound shipments */}
+      {(() => {
+        if (inboundShipments.length === 0) return null
+        const totals = deriveShipmentTotals(inboundShipments)
+        const activeAgreement = submission.agreements[0] ?? null
+        const openCaseTypes = submission.lifecycleCases
+          .filter((c) => c.status === 'open' || c.status === 'action_required')
+          .map((c) => c.caseType)
+        const shipmentWarnings = deriveShipmentWarnings({
+          hasAcceptedAgreement: activeAgreement?.status === 'accepted',
+          agreementAcceptedAt: activeAgreement?.acceptedAt ?? null,
+          shipments: inboundShipments,
+          intakeDrafts: submission.intakeDrafts.map((d) => ({
+            id: d.id,
+            status: d.status,
+            receivedAt: null,
+            receivedQuantity: null,
+          })),
+          openCaseTypes,
+        })
+        const availableDrafts = submission.intakeDrafts
+          .filter((d) => d.status !== 'rejected' && d.status !== 'converted')
+          .map((d) => ({ id: d.id, status: d.status, createdAt: d.createdAt }))
+
+        return (
+          <div className="mb-6 pt-6 border-t border-gray-200">
+            <h2 className="text-sm font-semibold text-gray-900 mb-3">Inbound shipments</h2>
+
+            {shipmentWarnings.length > 0 && (
+              <div className="mb-4 rounded-md bg-amber-50 border border-amber-200 px-3 py-2 space-y-1">
+                {shipmentWarnings.map((w) => (
+                  <p key={w} className="text-xs text-amber-800">⚠ {SHIPMENT_WARNING_LABELS[w]}</p>
+                ))}
+              </div>
+            )}
+
+            <dl className="grid grid-cols-4 gap-3 text-center mb-4">
+              {[
+                { label: 'Expected', value: totals.totalExpectedQuantity },
+                { label: 'Received', value: totals.totalReceivedQuantity },
+                { label: 'Open pkgs', value: totals.openPackageCount },
+                { label: 'Issues', value: totals.issuePackageCount },
+              ].map(({ label, value }) => (
+                <div key={label} className="rounded-md border border-gray-200 bg-gray-50 p-2">
+                  <dd className="text-lg font-semibold text-gray-900">{value}</dd>
+                  <dt className="text-xs text-gray-500">{label}</dt>
+                </div>
+              ))}
+            </dl>
+
+            <div className="space-y-4">
+              {inboundShipments.map((s) => (
+                <div key={s.id} className="rounded-md border border-gray-200 bg-white p-4 text-sm space-y-3">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-700">
+                      {SHIPMENT_STATUS_LABELS[s.status] ?? s.status}
+                    </span>
+                    {s.carrier && <span className="text-gray-700">{s.carrier}</span>}
+                    {s.trackingNumber && (
+                      <span className="font-mono text-xs text-gray-600">{s.trackingNumber}</span>
+                    )}
+                  </div>
+
+                  <dl className="space-y-1 text-xs">
+                    <div className="flex gap-3">
+                      <dt className="text-gray-500 w-32 shrink-0">Expected qty</dt>
+                      <dd>{s.expectedQuantity}</dd>
+                    </div>
+                    {s.receivedQuantity != null && (
+                      <div className="flex gap-3">
+                        <dt className="text-gray-500 w-32 shrink-0">Received qty</dt>
+                        <dd className={s.receivedQuantity !== s.expectedQuantity ? 'text-amber-700 font-medium' : ''}>
+                          {s.receivedQuantity}
+                          {s.receivedQuantity !== s.expectedQuantity && ' ⚠ mismatch'}
+                        </dd>
+                      </div>
+                    )}
+                    {s.shippedAt && (
+                      <div className="flex gap-3">
+                        <dt className="text-gray-500 w-32 shrink-0">Shipped</dt>
+                        <dd>{s.shippedAt.toLocaleDateString()}</dd>
+                      </div>
+                    )}
+                    {s.receivedAt && (
+                      <div className="flex gap-3">
+                        <dt className="text-gray-500 w-32 shrink-0">Received</dt>
+                        <dd>{s.receivedAt.toLocaleDateString()}</dd>
+                      </div>
+                    )}
+                    {s.receivedBy && (
+                      <div className="flex gap-3">
+                        <dt className="text-gray-500 w-32 shrink-0">Received by</dt>
+                        <dd>{s.receivedBy}</dd>
+                      </div>
+                    )}
+                    {s.conditionStatus && (
+                      <div className="flex gap-3">
+                        <dt className="text-gray-500 w-32 shrink-0">Condition</dt>
+                        <dd>{SHIPMENT_CONDITION_LABELS[s.conditionStatus as ConditionStatus] ?? s.conditionStatus}</dd>
+                      </div>
+                    )}
+                    {s.issueSummary && (
+                      <div className="flex gap-3">
+                        <dt className="text-gray-500 w-32 shrink-0">Issue summary</dt>
+                        <dd className="text-amber-700">{s.issueSummary}</dd>
+                      </div>
+                    )}
+                    {s.intakeDraftId && (
+                      <div className="flex gap-3">
+                        <dt className="text-gray-500 w-32 shrink-0">Linked intake</dt>
+                        <dd>
+                          <Link href={`/admin/intake/${s.intakeDraftId}/edit`} className="text-blue-600 hover:underline">
+                            View intake →
+                          </Link>
+                        </dd>
+                      </div>
+                    )}
+                    {s.adminNotes && (
+                      <div className="flex gap-3">
+                        <dt className="text-gray-500 w-32 shrink-0">Admin notes</dt>
+                        <dd className="whitespace-pre-wrap text-gray-600">{s.adminNotes}</dd>
+                      </div>
+                    )}
+                    {s.sellerNotes && (
+                      <div className="flex gap-3">
+                        <dt className="text-gray-500 w-32 shrink-0">Seller notes</dt>
+                        <dd className="whitespace-pre-wrap text-gray-600">{s.sellerNotes}</dd>
+                      </div>
+                    )}
+                  </dl>
+
+                  {(s.status === 'shipped' || s.status === 'draft') && (
+                    <div className="pt-2 border-t border-gray-100">
+                      <ReceiveShipmentForm
+                        shipmentId={s.id}
+                        shipmentStatus={s.status}
+                        expectedQuantity={s.expectedQuantity}
+                        carrier={s.carrier}
+                        trackingNumber={s.trackingNumber}
+                        availableDrafts={availableDrafts}
+                      />
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )
+      })()}
 
       {/* Seller pricing preference */}
       {submission.pricingPreference && (

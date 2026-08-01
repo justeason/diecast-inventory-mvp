@@ -20,6 +20,7 @@ import {
   ATTENTION_LABELS,
   ATTENTION_DESCRIPTIONS,
 } from '@/lib/sellerLifecycle'
+import { AddShipmentForm } from '@/components/store/AddShipmentForm'
 import { fetchComparableSales } from '@/lib/resaleEstimatorQuery'
 import { computeEstimate, type TargetModel } from '@/lib/resaleEstimator'
 import { computeGuidance, isSubmissionPricingLocked } from '@/lib/sellerPricingGuidance'
@@ -173,7 +174,7 @@ export default async function SellRequestDetailPage({
   if (!submission) notFound()
 
   // Lifecycle data — events (seller-visible), cases (seller-visible), and intake drafts.
-  const [lifecycleEvents, lifecycleCases, intakeDrafts] = await Promise.all([
+  const [lifecycleEvents, lifecycleCases, intakeDrafts, inboundShipments] = await Promise.all([
     prisma.sellerLifecycleEvent.findMany({
       where: { sellerSubmissionId: id, sellerVisible: true },
       select: {
@@ -213,6 +214,22 @@ export default async function SellRequestDetailPage({
         rejectedAt: true,
         sellerRejectionReason: true,
       },
+    }),
+    prisma.sellerInboundShipment.findMany({
+      where: { sellerSubmissionId: id },
+      select: {
+        id: true,
+        status: true,
+        carrier: true,
+        trackingNumber: true,
+        expectedQuantity: true,
+        shippedAt: true,
+        receivedAt: true,
+        sellerNotes: true,
+        conditionStatus: true,
+        issueSummary: true,
+      },
+      orderBy: { createdAt: 'asc' },
     }),
   ])
 
@@ -773,6 +790,18 @@ export default async function SellRequestDetailPage({
           </div>
         )
       })()}
+
+      {/* Shipping to CollectNTrades */}
+      {activeAgreement?.status === 'accepted' && (
+        <div className="mb-6">
+          <h2 className="text-sm font-semibold text-gray-900 mb-3">Shipping to CollectNTrades</h2>
+          <p className="text-xs text-gray-500 mb-4">
+            Please ship your item(s) and add the tracking information below. You can add
+            multiple packages if shipping in separate boxes.
+          </p>
+          <AddShipmentForm submissionId={submission.id} shipments={inboundShipments} />
+        </div>
+      )}
 
       {/* Actions */}
       {canWithdraw && (
