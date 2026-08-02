@@ -269,9 +269,14 @@ export default async function EditIntakeDraftPage({
 
       {/* Header */}
       <div className="flex items-start justify-between mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">
-          {isTerminal ? 'Intake Draft' : 'Edit Intake Draft'}
-        </h1>
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">
+            {isTerminal ? 'Intake Draft' : 'Edit Intake Draft'}
+          </h1>
+          <Link href={`/admin/reconciliation?entityId=${draft.id}`} className="text-xs text-blue-600 hover:underline mt-0.5 inline-block">
+            Reconciliation issues →
+          </Link>
+        </div>
         <span
           className={`inline-flex items-center rounded-full px-3 py-1 text-sm font-medium ${STATUS_COLORS[draft.status] ?? 'bg-gray-100 text-gray-600'}`}
         >

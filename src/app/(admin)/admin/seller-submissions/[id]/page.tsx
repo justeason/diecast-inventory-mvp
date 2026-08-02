@@ -241,6 +241,9 @@ export default async function AdminSellerSubmissionDetailPage({
         </span>
       </div>
       <p className="text-base text-gray-600 mb-1">{itemTitle}</p>
+      <Link href={`/admin/reconciliation?entityId=${submission.id}`} className="text-xs text-blue-600 hover:underline mb-1 inline-block">
+        Reconciliation issues →
+      </Link>
       <p className="text-xs text-gray-400 mb-6">
         Submitted {submission.createdAt.toLocaleDateString()}
         {submission.updatedAt > submission.createdAt &&

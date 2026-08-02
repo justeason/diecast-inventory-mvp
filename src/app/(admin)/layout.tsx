@@ -17,6 +17,7 @@ const navLinks = [
   { href: '/admin/catalog-suggestions', label: 'Suggestions' },
   { href: '/admin/seller-submissions', label: 'Sell Requests' },
   { href: '/admin/seller-lifecycle', label: 'Lifecycle' },
+  { href: '/admin/reconciliation', label: 'Reconciliation' },
   { href: '/admin/analytics', label: 'Analytics' },
   { href: '/admin/resale-estimator', label: 'Resale Est.' },
 ]

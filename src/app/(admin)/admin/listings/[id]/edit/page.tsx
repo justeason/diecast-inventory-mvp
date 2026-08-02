@@ -78,13 +78,16 @@ export default async function EditListingPage({
         <Link href="/admin/listings" className="text-sm text-gray-500 hover:text-gray-900">
           ← Back to Listings
         </Link>
-        <div className="flex items-baseline gap-4 mt-2">
+        <div className="flex items-baseline gap-4 mt-2 flex-wrap">
           <h1 className="text-2xl font-bold text-gray-900">Edit Listing</h1>
           <Link
             href={`/admin/items/${listing.item.id}/edit`}
             className="text-sm text-blue-600 hover:underline"
           >
             View Item →
+          </Link>
+          <Link href={`/admin/reconciliation?entityId=${listing.id}`} className="text-xs text-blue-600 hover:underline">
+            Reconciliation issues →
           </Link>
         </div>
       </div>

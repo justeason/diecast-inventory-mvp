@@ -645,3 +645,20 @@ model SellerPricingPreference {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
+
+model OperationalReconciliationAudit {
+  id             String   @id @default(cuid())
+  issueKey       String
+  repairType     String
+  entityType     String
+  entityId       String
+  beforeSnapshot Json
+  afterSnapshot  Json
+  result         String
+  adminInfo      String?
+  createdAt      DateTime @default(now())
+
+  @@index([issueKey])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}

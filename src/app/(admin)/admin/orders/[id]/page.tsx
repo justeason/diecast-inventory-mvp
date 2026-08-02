@@ -140,6 +140,9 @@ export default async function AdminOrderDetailPage({
             Submitted {order.createdAt.toLocaleDateString()}
           </p>
           <p className="text-xs text-gray-400 font-mono mt-1 break-all">ID: {order.id}</p>
+          <Link href={`/admin/reconciliation?entityId=${order.id}`} className="text-xs text-blue-600 hover:underline mt-1 inline-block">
+            Reconciliation issues →
+          </Link>
         </div>
         <span
           className={`inline-flex items-center rounded-full px-3 py-1 text-sm font-medium ${STATUS_COLORS[order.status] ?? 'bg-gray-100 text-gray-600'}`}

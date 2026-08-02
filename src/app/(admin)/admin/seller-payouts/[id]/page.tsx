@@ -109,11 +109,14 @@ export default async function PayoutDetailPage({
         <Link href="/admin/seller-payouts" className="text-sm text-gray-500 hover:text-gray-900">
           ← Seller Payouts
         </Link>
-        <div className="flex items-center gap-4 mt-2">
+        <div className="flex items-center gap-4 mt-2 flex-wrap">
           <h1 className="text-2xl font-bold text-gray-900">Payout Detail</h1>
           <span className={`inline-flex items-center rounded-full px-3 py-1 text-sm font-medium ${PAYOUT_STATUS_COLORS[payout.status] ?? 'bg-gray-100 text-gray-600'}`}>
             {payout.status.charAt(0).toUpperCase() + payout.status.slice(1)}
           </span>
+          <Link href={`/admin/reconciliation?entityId=${payout.id}`} className="text-xs text-blue-600 hover:underline">
+            Reconciliation issues →
+          </Link>
         </div>
       </div>
 
