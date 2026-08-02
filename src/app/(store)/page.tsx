@@ -1,5 +1,10 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
+import { getMerchandisingData } from '@/lib/marketplaceMerchandisingQuery'
+import { ListingCard } from '@/components/store/ListingCard'
+import { CatalogSummaryCard } from '@/components/store/CatalogSummaryCard'
+
+export const dynamic = 'force-dynamic'
 
 export const metadata: Metadata = {
   title: 'CollectNTrades | Die-Cast Cars, Collectibles & Trading Cards',
@@ -7,7 +12,12 @@ export const metadata: Metadata = {
     'Shop collectible die-cast cars, Hot Wheels, Matchbox, Pokémon cards, and more from CollectNTrades.',
 }
 
-export default function HomePage() {
+export default async function HomePage() {
+  const data = await getMerchandisingData()
+
+  const trendingPreview = data.trendingModels.slice(0, 4)
+  const recentPreview = data.recentlyListed.slice(0, 4)
+
   return (
     <div className="space-y-16">
       {/* Hero */}
@@ -19,13 +29,71 @@ export default function HomePage() {
           Hand-picked Hot Wheels, Matchbox, and Pokémon cards — individually listed with photos and
           condition notes.
         </p>
-        <Link
-          href="/browse"
-          className="inline-block rounded-md bg-gray-900 px-6 py-3 text-sm font-medium text-white hover:bg-gray-700 transition-colors"
-        >
-          Browse Listings →
-        </Link>
+        <div className="flex gap-3 justify-center flex-wrap">
+          <Link
+            href="/browse"
+            className="inline-block rounded-md bg-gray-900 px-6 py-3 text-sm font-medium text-white hover:bg-gray-700 transition-colors"
+          >
+            Browse Listings →
+          </Link>
+          <Link
+            href="/market"
+            className="inline-block rounded-md border border-gray-300 px-6 py-3 text-sm font-medium text-gray-700 hover:border-gray-500 transition-colors"
+          >
+            Marketplace →
+          </Link>
+        </div>
       </section>
+
+      {/* Trending preview */}
+      {trendingPreview.length > 0 && (
+        <section>
+          <div className="flex items-baseline justify-between mb-4">
+            <h2 className="text-base font-semibold text-gray-900">Trending now</h2>
+            <Link href="/market#trending" className="text-sm text-gray-500 hover:text-gray-900">
+              See all →
+            </Link>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            {trendingPreview.map((m) => (
+              <CatalogSummaryCard
+                key={m.catalogModelId}
+                catalogBrand={m.catalogBrand}
+                catalogName={m.catalogName}
+                catalogYear={m.catalogYear}
+                catalogSeries={m.catalogSeries}
+                photoUrl={m.photoUrl}
+                primaryMetric={{
+                  label: m.saleCount === 1 ? 'sale in 30 days' : 'sales in 30 days',
+                  value: `${m.saleCount}`,
+                }}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Recently listed preview */}
+      {recentPreview.length > 0 && (
+        <section>
+          <div className="flex items-baseline justify-between mb-4">
+            <h2 className="text-base font-semibold text-gray-900">Recently listed</h2>
+            <Link href="/browse?sort=newest" className="text-sm text-gray-500 hover:text-gray-900">
+              See all →
+            </Link>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            {recentPreview.map((item) => (
+              <ListingCard
+                key={item.id}
+                listing={item}
+                photoUrl={item.photoUrl}
+                imageSource={item.imageSource}
+              />
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* How it works */}
       <section className="max-w-2xl mx-auto">
