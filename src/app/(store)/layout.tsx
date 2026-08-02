@@ -26,6 +26,9 @@ export default function StoreLayout({ children }: { children: React.ReactNode })
           <Link href="/account/collection" className="text-sm text-gray-600 hover:text-gray-900 transition-colors">
             My Collection
           </Link>
+          <Link href="/community" className="text-sm text-gray-600 hover:text-gray-900 transition-colors">
+            Community
+          </Link>
           <Link href="/account/sell" className="text-sm text-gray-600 hover:text-gray-900 transition-colors">
             Sell
           </Link>

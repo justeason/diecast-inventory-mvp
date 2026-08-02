@@ -144,6 +144,7 @@ model CustomerProfile {
   sellerSubmissions   SellerSubmission[]
   sellerPayoutLines   SellerPayoutLine[]
   sellerPayouts       SellerPayout[]
+  communityProfile    CustomerCommunityProfile?
 }
 
 model SellerProfile {
@@ -185,6 +186,22 @@ model CustomerSession {
 
   @@index([profileId])
   @@index([expiresAt])
+}
+
+model CustomerCommunityProfile {
+  id                 String          @id @default(cuid())
+  profileId          String          @unique
+  profile            CustomerProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  handle             String          @unique
+  displayName        String
+  bio                String?
+  isPublic           Boolean         @default(false)
+  showOnLeaderboards Boolean         @default(false)
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+
+  @@index([isPublic, showOnLeaderboards])
+  @@index([handle])
 }
 
 model Order {
