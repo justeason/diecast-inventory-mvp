@@ -3,8 +3,8 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { getBuyerSession } from '@/lib/buyerSession'
 import { prisma } from '@/lib/prisma'
-import { deleteCollectionItem } from '@/lib/actions/collectionItems'
 import { deleteCollectionPhoto } from '@/lib/actions/collectionPhotos'
+import { ConfirmDeleteItemButton } from '@/components/store/ConfirmDeleteItemButton'
 import { CollectionPhotoUpload } from '@/components/store/CollectionPhotoUpload'
 import { CollectionAiScan } from '@/components/store/CollectionAiScan'
 import { CatalogSuggestionForm } from '@/components/store/CatalogSuggestionForm'
@@ -89,7 +89,6 @@ export default async function CollectionItemDetailPage({
   })
   if (!item) notFound()
 
-  const deleteItemAction = deleteCollectionItem.bind(null, item.id)
   const activeSubmission = item.sellerSubmissions[0] ?? null
 
   return (
@@ -326,14 +325,7 @@ export default async function CollectionItemDetailPage({
         <p className="text-xs text-gray-500 mb-3">
           This will permanently delete this item and all its photos. This cannot be undone.
         </p>
-        <form action={deleteItemAction}>
-          <button
-            type="submit"
-            className="rounded-md border border-red-300 bg-white px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-50 transition-colors"
-          >
-            Delete item
-          </button>
-        </form>
+        <ConfirmDeleteItemButton id={item.id} />
       </div>
     </div>
   )

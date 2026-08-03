@@ -74,7 +74,6 @@ export type LeaderboardData = {
 }
 
 export type PublicCollectionItem = {
-  id: string
   catalogId: string
   catalogBrand: string
   catalogName: string
@@ -82,7 +81,6 @@ export type PublicCollectionItem = {
   catalogSeries: string | null
   catalogColor: string | null
   photoUrl: string | null
-  addedAt: Date
 }
 
 export type PublicProfileData = {

@@ -49,7 +49,7 @@ async function scanCollectionItems(
 
   for (;;) {
     const batch = await prisma.collectionItem.findMany({
-      where: { profileId: { in: profileIds } },
+      where: { profileId: { in: profileIds }, isPublic: true, quantity: { gt: 0 } },
       select: { id: true, profileId: true, catalogId: true, quantity: true },
       orderBy: { id: 'asc' },
       take: SCAN_BATCH,
@@ -72,7 +72,7 @@ async function scanRecentCollectionItems(
 
   for (;;) {
     const batch = await prisma.collectionItem.findMany({
-      where: { profileId: { in: profileIds }, createdAt: { gte: windowStart } },
+      where: { profileId: { in: profileIds }, isPublic: true, createdAt: { gte: windowStart } },
       select: { id: true, profileId: true, catalogId: true, createdAt: true },
       orderBy: { id: 'asc' },
       take: SCAN_BATCH,
@@ -233,7 +233,7 @@ export async function getPublicProfile(handle: string): Promise<PublicProfileDat
 
   const [recentRows, allCatalogRows, recentCount, totalItems, verifiedCount] = await Promise.all([
     prisma.collectionItem.findMany({
-      where: { profileId: community.profileId, catalogId: { not: null } },
+      where: { profileId: community.profileId, isPublic: true, catalogId: { not: null } },
       orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
       take: PROFILE_RECENT_LIMIT,
       select: {
@@ -253,14 +253,14 @@ export async function getPublicProfile(handle: string): Promise<PublicProfileDat
       },
     }),
     prisma.collectionItem.findMany({
-      where: { profileId: community.profileId, catalogId: { not: null } },
+      where: { profileId: community.profileId, isPublic: true, catalogId: { not: null } },
       select: { catalogId: true },
     }),
     prisma.collectionItem.count({
-      where: { profileId: community.profileId, createdAt: { gte: windowStart } },
+      where: { profileId: community.profileId, isPublic: true, createdAt: { gte: windowStart } },
     }),
     prisma.collectionItem.aggregate({
-      where: { profileId: community.profileId },
+      where: { profileId: community.profileId, isPublic: true },
       _sum: { quantity: true },
     }),
     // Verified buyer: at least one completed OrderItem via authoritative FK
@@ -280,7 +280,6 @@ export async function getPublicProfile(handle: string): Promise<PublicProfileDat
   const recentItems: PublicCollectionItem[] = recentRows
     .filter((ci): ci is typeof ci & { catalog: NonNullable<typeof ci.catalog> } => ci.catalog != null)
     .map(ci => ({
-      id: ci.id,
       catalogId: ci.catalogId!,
       catalogBrand: ci.catalog.brand,
       catalogName: ci.catalog.name,
@@ -288,7 +287,6 @@ export async function getPublicProfile(handle: string): Promise<PublicProfileDat
       catalogSeries: ci.catalog.series,
       catalogColor: ci.catalog.color,
       photoUrl: ci.catalog.photos[0]?.url ?? null,
-      addedAt: ci.createdAt,
     }))
 
   return {

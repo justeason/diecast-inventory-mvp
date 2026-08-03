@@ -81,7 +81,7 @@ export default async function PublicProfilePage({ params }: Props) {
             {profile.collection.recentItems.map(item => {
               const name = `${item.catalogBrand} ${item.catalogName}${item.catalogYear ? ` (${item.catalogYear})` : ''}`
               return (
-                <div key={item.id} className="rounded-lg border border-gray-200 overflow-hidden bg-white">
+                <div key={item.catalogId} className="rounded-lg border border-gray-200 overflow-hidden bg-white">
                   <div className="aspect-square overflow-hidden">
                     <PhotoThumbnail photoUrl={item.photoUrl} alt={name} size="fill" />
                   </div>

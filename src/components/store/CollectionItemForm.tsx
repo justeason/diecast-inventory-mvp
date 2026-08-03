@@ -97,6 +97,9 @@ export function CollectionItemForm(props: Props) {
 
   return (
     <form action={formAction} className="space-y-8 max-w-lg">
+      {!isCreate && item && (
+        <input type="hidden" name="expectedUpdatedAt" value={item.updatedAt.toISOString()} />
+      )}
       {/* Global form error */}
       {errors.form && (
         <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -279,6 +282,26 @@ export function CollectionItemForm(props: Props) {
           />
           <FieldError message={errors.conditionNotes?.[0]} />
         </div>
+      </section>
+
+      {/* ── Visibility ────────────────────────────────────────────── */}
+      <section className="space-y-4 pt-4 border-t border-gray-100">
+        <h2 className="text-sm font-semibold text-gray-900">Visibility</h2>
+        <label className="flex items-start gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            name="isPublic"
+            value="on"
+            defaultChecked={item?.isPublic ?? false}
+            className="mt-0.5 h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-900"
+          />
+          <span className="text-sm text-gray-700">
+            Show on my public community profile
+            <span className="block text-xs text-gray-400 mt-0.5">
+              Only visible if you have a public community profile.
+            </span>
+          </span>
+        </label>
       </section>
 
       {/* ── Personal details ──────────────────────────────────────── */}

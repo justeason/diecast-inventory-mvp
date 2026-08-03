@@ -32,7 +32,8 @@ export default async function CommunityPage({
       {/* Largest collections */}
       {leaderboards.largestCollections.length > 0 && (
         <section>
-          <h2 className="text-base font-semibold text-gray-900 mb-4">Largest collections</h2>
+          <h2 className="text-base font-semibold text-gray-900 mb-1">Largest collections</h2>
+          <p className="text-xs text-gray-400 mb-4">Based on public collection items only.</p>
           <div className="rounded-lg border border-gray-200 overflow-hidden">
             <table className="w-full text-sm">
               <thead className="bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">

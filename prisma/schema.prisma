@@ -24,6 +24,7 @@ model CatalogModel {
   suggestionsApproved CatalogSuggestion[] @relation("SuggestionApproval")
   photos          CatalogModelPhoto[]
   sellerSubmissions SellerSubmission[]
+  wantedBy        WantedCatalogModel[]
 
   @@index([brand])
   @@index([name])
@@ -145,6 +146,7 @@ model CustomerProfile {
   sellerPayoutLines   SellerPayoutLine[]
   sellerPayouts       SellerPayout[]
   communityProfile    CustomerCommunityProfile?
+  wantedList          WantedCatalogModel[]
 }
 
 model SellerProfile {
@@ -267,6 +269,7 @@ model CollectionItem {
   purchasePrice  Float?
   purchaseDate   DateTime?
   notes          String?
+  isPublic       Boolean              @default(false)
 
   aiExtractionConfidence Float?
   aiExtractionNotes      String?
@@ -661,6 +664,22 @@ model SellerPricingPreference {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model WantedCatalogModel {
+  id                String          @id @default(cuid())
+  customerProfileId String
+  catalogModelId    String
+  maxDesiredPrice   Decimal?        @db.Decimal(10, 2)
+  notes             String?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  customerProfile   CustomerProfile @relation(fields: [customerProfileId], references: [id], onDelete: Cascade)
+  catalogModel      CatalogModel    @relation(fields: [catalogModelId], references: [id], onDelete: Cascade)
+
+  @@unique([customerProfileId, catalogModelId])
+  @@index([customerProfileId])
 }
 
 model OperationalReconciliationAudit {

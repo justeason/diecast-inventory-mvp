@@ -6,6 +6,22 @@ import { prisma } from '@/lib/prisma'
 import { getBuyerSession } from '@/lib/buyerSession'
 import { redirect } from 'next/navigation'
 import { revalidatePath } from 'next/cache'
+import { updateTag } from 'next/cache'
+
+export async function toggleCollectionItemPublic(id: string, isPublic: boolean): Promise<void> {
+  const session = await getBuyerSession()
+  if (!session) return
+
+  const existing = await prisma.collectionItem.findFirst({
+    where: { id, profileId: session.profileId },
+    select: { id: true },
+  })
+  if (!existing) return
+
+  await prisma.collectionItem.update({ where: { id }, data: { isPublic } })
+  updateTag('community-leaderboards')
+  revalidatePath('/account/collection')
+}
 
 const VALID_CONDITIONS   = ['mint', 'near_mint', 'good', 'fair', 'poor', 'damaged'] as const
 const VALID_CARDED_LOOSE = ['carded', 'loose'] as const
@@ -24,7 +40,7 @@ function isValidYear(v: string | undefined): boolean {
 function isValidQuantity(v: string | undefined): boolean {
   if (!v || !v.trim()) return true
   const n = parseInt(v.trim(), 10)
-  return !isNaN(n) && n >= 1
+  return !isNaN(n) && n >= 1 && n <= 999
 }
 
 function isValidPurchasePrice(v: string | undefined): boolean {
@@ -113,6 +129,8 @@ export async function createCollectionItem(
   const enumErrors = validateEnums(result.data)
   if (Object.keys(enumErrors).length > 0) return { errors: enumErrors }
 
+  const isPublic = formData.get('isPublic') === 'on'
+
   let resolvedCatalogId: string | null = null
   if (catalogIdRaw) {
     const found = await prisma.catalogModel.findUnique({
@@ -123,16 +141,28 @@ export async function createCollectionItem(
       return { errors: { catalogId: ['Selected catalog model not found. Please refresh and try again.'] } }
     }
     resolvedCatalogId = found.id
+
+    const dupe = await prisma.collectionItem.findFirst({
+      where: { profileId: session.profileId, catalogId: resolvedCatalogId },
+      select: { id: true },
+    })
+    if (dupe) {
+      return {
+        errors: { catalogId: ['You already have this model in your collection. Edit the existing item to adjust the quantity.'] },
+      }
+    }
   }
 
   const item = await prisma.collectionItem.create({
     data: {
       profileId: session.profileId,
       catalogId: resolvedCatalogId ?? undefined,
+      isPublic,
       ...toDbFields(result.data),
     },
   })
 
+  if (isPublic) updateTag('community-leaderboards')
   redirect(`/account/collection/${item.id}`)
 }
 
@@ -146,12 +176,21 @@ export async function updateCollectionItem(
     return { errors: { form: ['You must be signed in to edit collection items.'] } }
   }
 
+  const expectedUpdatedAtRaw = formData.get('expectedUpdatedAt')?.toString() ?? ''
+  if (!expectedUpdatedAtRaw) {
+    return { errors: { form: ['Please refresh the page and try again.'] } }
+  }
+  const expectedUpdatedAt = new Date(expectedUpdatedAtRaw)
+  if (isNaN(expectedUpdatedAt.getTime())) {
+    return { errors: { form: ['Please refresh the page and try again.'] } }
+  }
+
   const existing = await prisma.collectionItem.findFirst({
     where: { id, profileId: session.profileId },
-    select: { id: true },
+    select: { id: true, isPublic: true },
   })
   if (!existing) {
-    return { errors: { form: ['Collection item not found.'] } }
+    return { errors: { form: ['This collection item no longer exists.'] } }
   }
 
   const result = CollectionItemSchema.safeParse(Object.fromEntries(formData))
@@ -184,14 +223,31 @@ export async function updateCollectionItem(
     resolvedCatalogId = found.id
   }
 
-  await prisma.collectionItem.update({
-    where: { id },
+  const isPublic = formData.get('isPublic') === 'on'
+
+  const updateResult = await prisma.collectionItem.updateMany({
+    where: { id, profileId: session.profileId, updatedAt: expectedUpdatedAt },
     data: {
       catalogId: resolvedCatalogId,
+      isPublic,
       ...toDbFields(result.data),
     },
   })
 
+  if (updateResult.count === 0) {
+    const stillExists = await prisma.collectionItem.findFirst({
+      where: { id, profileId: session.profileId },
+      select: { id: true },
+    })
+    if (stillExists) {
+      return { errors: { form: ['This collection item was changed elsewhere. Refresh and try again.'] } }
+    }
+    return { errors: { form: ['This collection item no longer exists.'] } }
+  }
+
+  if (existing.isPublic || isPublic) {
+    updateTag('community-leaderboards')
+  }
   revalidatePath(`/account/collection/${id}`)
   revalidatePath('/account/collection')
   redirect(`/account/collection/${id}`)
@@ -201,17 +257,24 @@ export async function deleteCollectionItem(id: string): Promise<void> {
   const session = await getBuyerSession()
   if (!session) redirect('/account/orders')
 
-  // Fetch the item's photos before deletion so we can clean up blobs afterward
+  // Fetch the item's photos and visibility before deletion so we can clean up blobs afterward
   const item = await prisma.collectionItem.findFirst({
     where: { id, profileId: session.profileId },
-    select: { photos: { select: { url: true } } },
+    select: { isPublic: true, photos: { select: { url: true } } },
   })
   if (!item) redirect('/account/collection')
 
   // Delete the item — cascade removes CollectionItemPhoto rows from DB
-  await prisma.collectionItem.deleteMany({
+  const deleteResult = await prisma.collectionItem.deleteMany({
     where: { id, profileId: session.profileId },
   })
+
+  if (deleteResult.count === 0) {
+    // Race: item was already deleted by another request
+    redirect('/account/collection')
+  }
+
+  if (item.isPublic) updateTag('community-leaderboards')
 
   // Best-effort blob cleanup after DB deletion
   for (const photo of item.photos) {
