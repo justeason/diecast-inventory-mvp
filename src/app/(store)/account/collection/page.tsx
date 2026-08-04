@@ -107,6 +107,10 @@ export default async function CollectionListPage({
           <h1 className="text-2xl font-bold text-gray-900">My Collection</h1>
           <p className="text-sm text-gray-500 mt-1">
             {cursor ? `Page 2+` : `${items.length}${hasMore ? '+' : ''} item${items.length !== 1 ? 's' : ''}`}
+            {' · '}
+            <Link href="/account/collection/valuation" className="underline underline-offset-2 hover:text-gray-700">
+              Estimate value
+            </Link>
           </p>
         </div>
         <Link
