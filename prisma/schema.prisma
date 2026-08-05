@@ -25,6 +25,7 @@ model CatalogModel {
   photos          CatalogModelPhoto[]
   sellerSubmissions SellerSubmission[]
   wantedBy        WantedCatalogModel[]
+  externalObservations ExternalMarketObservation[]
 
   @@index([brand])
   @@index([name])
@@ -680,6 +681,80 @@ model WantedCatalogModel {
 
   @@unique([customerProfileId, catalogModelId])
   @@index([customerProfileId])
+}
+
+model ExternalMarketImportBatch {
+  id               String   @id @default(cuid())
+  provider         String
+  sourceType       String
+  originalFileName String?
+  importHash       String   @unique
+  rowCount         Int      @default(0)
+  importedCount    Int      @default(0)
+  duplicateCount   Int      @default(0)
+  errorCount       Int      @default(0)
+  adminInfo        String?
+  createdAt        DateTime @default(now())
+
+  observations ExternalMarketObservation[]
+
+  @@index([provider])
+  @@index([createdAt])
+}
+
+model ExternalMarketObservation {
+  id              String   @id @default(cuid())
+  importBatchId   String?
+  provider        String
+  externalId      String?
+  fingerprint     String   @unique
+  observationType String
+  catalogModelId  String?
+  matchStatus     String   @default("unmatched")
+  matchMethod     String?
+  title           String
+  sourceUrl       String?
+  currency        String
+  price           Decimal  @db.Decimal(12, 4)
+  shippingPrice   Decimal? @db.Decimal(12, 4)
+  totalPrice      Decimal  @db.Decimal(12, 4)
+  soldAt          DateTime?
+  listedAt        DateTime?
+  observedAt      DateTime
+  condition       String?
+  locationText    String?
+  rawSnapshot     Json?
+  rejectionReason String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  importBatch  ExternalMarketImportBatch? @relation(fields: [importBatchId], references: [id])
+  catalogModel CatalogModel?              @relation(fields: [catalogModelId], references: [id])
+  audits       ExternalMarketObservationAudit[]
+
+  @@unique([provider, externalId])
+  @@index([provider])
+  @@index([observationType])
+  @@index([catalogModelId])
+  @@index([observedAt])
+  @@index([soldAt])
+  @@index([matchStatus])
+  @@index([importBatchId])
+}
+
+model ExternalMarketObservationAudit {
+  id             String   @id @default(cuid())
+  observationId  String
+  action         String
+  beforeSnapshot Json
+  afterSnapshot  Json
+  adminInfo      String?
+  createdAt      DateTime @default(now())
+
+  observation ExternalMarketObservation @relation(fields: [observationId], references: [id])
+
+  @@index([observationId])
+  @@index([createdAt])
 }
 
 model OperationalReconciliationAudit {

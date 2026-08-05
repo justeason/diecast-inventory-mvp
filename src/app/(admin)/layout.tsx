@@ -20,6 +20,7 @@ const navLinks = [
   { href: '/admin/reconciliation', label: 'Reconciliation' },
   { href: '/admin/analytics', label: 'Analytics' },
   { href: '/admin/resale-estimator', label: 'Resale Est.' },
+  { href: '/admin/market-research', label: 'Mkt Research' },
 ]
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {

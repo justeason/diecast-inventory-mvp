@@ -4,6 +4,8 @@ import { notFound } from 'next/navigation'
 import { getBuyerSession } from '@/lib/buyerSession'
 import { getCollectionValuation } from '@/lib/advancedValuationQuery'
 import type { TrendDirection, MatchTier, AdvancedConfidence } from '@/lib/advancedValuation'
+import { getExternalMarketSummaries } from '@/lib/externalMarketResearch'
+import type { ExternalMarketSummary } from '@/lib/externalMarketResearch'
 
 export const dynamic = 'force-dynamic'
 
@@ -50,6 +52,14 @@ export default async function CollectionValuationPage() {
 
   const result = await getCollectionValuation(session.profileId)
 
+  const matchedCatalogIds = result.items
+    .map(i => i.catalogModelId)
+    .filter((id): id is string => id !== null)
+
+  const extSummaries = matchedCatalogIds.length > 0
+    ? await getExternalMarketSummaries(matchedCatalogIds, result.asOf)
+    : new Map<string, ExternalMarketSummary>()
+
   return (
     <div className="max-w-4xl">
       <div className="mb-6">
@@ -94,6 +104,7 @@ export default async function CollectionValuationPage() {
         <p>Fallback matches (Family, Series) are labeled — exact model data is preferred.</p>
         <p>Sample size, recency, and price dispersion affect confidence ratings.</p>
         <p>These estimates are not guarantees, appraisals, or financial advice.</p>
+        <p>Ext. ref. shows the median total price from voluntarily imported external market observations where available. It is for reference only and does not affect the estimated value.</p>
       </div>
 
       {/* Per-item table */}
@@ -112,6 +123,7 @@ export default async function CollectionValuationPage() {
                 <th className="py-2 pr-4 font-medium text-center">Match</th>
                 <th className="py-2 pr-4 font-medium text-center">Trend</th>
                 <th className="py-2 font-medium text-right">Lowest ask</th>
+                <th className="py-2 pl-4 font-medium text-right text-gray-400" title="External market reference data — not included in estimated value">Ext. ref.</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
@@ -124,6 +136,9 @@ export default async function CollectionValuationPage() {
                 const cBadge = confidenceBadge(conf)
                 const lowestAsk = v?.activeAskContext.lowestActiveAsk
 
+                const ext = item.catalogModelId ? extSummaries.get(item.catalogModelId) : null
+                const extSold = ext?.soldSummary ?? null
+                const extFreshness = ext?.researchFreshness ?? null
                 return (
                   <tr key={item.collectionItemId} className="hover:bg-gray-50">
                     <td className="py-3 pr-4">
@@ -164,6 +179,13 @@ export default async function CollectionValuationPage() {
                       {lowestAsk != null
                         ? <span title="Active ask — not a sold price">{centsToDisplay(lowestAsk)} ask</span>
                         : <span className="text-gray-300">—</span>}
+                    </td>
+                    <td className="py-3 pl-4 text-right text-xs text-gray-400">
+                      {extSold && extSold.medianCents != null
+                        ? <span title={`External market reference: ${extSold.sampleSize} sample${extSold.sampleSize !== 1 ? 's' : ''}, ${extFreshness ?? 'unknown'} data`}>
+                            {centsToDisplay(extSold.medianCents)} med
+                          </span>
+                        : <span className="text-gray-200">—</span>}
                     </td>
                   </tr>
                 )
