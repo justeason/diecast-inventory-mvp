@@ -7,6 +7,11 @@ import { getBuyerSession } from '@/lib/buyerSession'
 import { redirect } from 'next/navigation'
 import { revalidatePath } from 'next/cache'
 import { updateTag } from 'next/cache'
+import { checkRateLimit } from '@/lib/rateLimit'
+
+// 30 new items per 10 minutes per profile (instance-local)
+const CREATE_MAX    = 30
+const CREATE_WINDOW = 10 * 60 * 1000
 
 export async function toggleCollectionItemPublic(id: string, isPublic: boolean): Promise<void> {
   const session = await getBuyerSession()
@@ -109,6 +114,16 @@ export async function createCollectionItem(
   const session = await getBuyerSession()
   if (!session) {
     return { errors: { form: ['You must be signed in to add collection items.'] } }
+  }
+
+  const { allowed, resetMs } = checkRateLimit(
+    `create_collection:${session.profileId}`,
+    CREATE_MAX,
+    CREATE_WINDOW,
+  )
+  if (!allowed) {
+    const secs = Math.ceil(resetMs / 1000)
+    return { errors: { form: [`Too many items added. Please wait ${secs} seconds.`] } }
   }
 
   const result = CollectionItemSchema.safeParse(Object.fromEntries(formData))

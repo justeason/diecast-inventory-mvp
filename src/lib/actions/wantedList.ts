@@ -5,6 +5,11 @@ import { getBuyerSession } from '@/lib/buyerSession'
 import { Prisma } from '@prisma/client'
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
+import { checkRateLimit } from '@/lib/rateLimit'
+
+// 30 new entries per 10 minutes per profile (instance-local)
+const CREATE_MAX    = 30
+const CREATE_WINDOW = 10 * 60 * 1000
 
 export type WantedListActionState = { errors: Record<string, string[]> } | null
 
@@ -27,6 +32,16 @@ export async function addToWantedList(
 ): Promise<WantedListActionState> {
   const session = await getBuyerSession()
   if (!session) return { errors: { _form: ['You must be signed in.'] } }
+
+  const { allowed, resetMs } = checkRateLimit(
+    `create_wanted:${session.profileId}`,
+    CREATE_MAX,
+    CREATE_WINDOW,
+  )
+  if (!allowed) {
+    const secs = Math.ceil(resetMs / 1000)
+    return { errors: { _form: [`Too many entries added. Please wait ${secs} seconds.`] } }
+  }
 
   const catalogModelId = formData.get('catalogModelId')?.toString().trim() ?? ''
   if (!catalogModelId) return { errors: { catalogModelId: ['Select a catalog model.'] } }

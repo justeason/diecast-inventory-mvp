@@ -82,15 +82,27 @@ export async function requestBuyerOrderLink(
         verifyUrl,
         appUrl,
       })
-      const { error } = await resend.emails.send({
-        from: process.env.ORDER_DIGEST_FROM_EMAIL,
-        to:   email,
-        subject,
-        html,
-        text,
+      // Bounded timeout. The Resend SDK does not expose an AbortSignal, so we
+      // race against a local timer. The sendPromise gets a terminal .catch() to
+      // prevent an unhandled rejection when the timeout fires first and the send
+      // resolves/rejects later. Note: the underlying HTTP request is not aborted —
+      // only the application-level wait is bounded.
+      const sendPromise = resend.emails.send({
+        from: process.env.ORDER_DIGEST_FROM_EMAIL, to: email, subject, html, text,
       })
-      if (error) {
-        console.error('[buyerAuth] Resend error sending magic link:', error.name)
+      let timeoutHandle: ReturnType<typeof setTimeout> | undefined
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutHandle = setTimeout(() => reject(new Error('email_timeout')), 8_000)
+      })
+      // Attach terminal handler to the loser to suppress unhandled rejection.
+      sendPromise.catch(() => {})
+      try {
+        const { error } = await Promise.race([sendPromise, timeoutPromise])
+        if (error) {
+          console.error('[buyerAuth] Resend error sending magic link:', error.name)
+        }
+      } finally {
+        clearTimeout(timeoutHandle)
       }
     } catch (err) {
       console.error('[buyerAuth] Unexpected error sending magic link:', err instanceof Error ? err.name : 'UnknownError')

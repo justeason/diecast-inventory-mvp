@@ -5,6 +5,8 @@ import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { isAdminAuthenticated } from '@/lib/adminAuth'
 import { ingestCsvImport, type ImportBatchResult } from '@/lib/externalMarketImport'
+import { normalizeError } from '@/lib/errors'
+import { getRequestId } from '@/lib/requestId'
 
 export type ImportActionState = {
   errors?: Record<string, string[]>
@@ -17,6 +19,8 @@ export async function importMarketDataCsv(
   formData: FormData,
 ): Promise<ImportActionState> {
   if (!await isAdminAuthenticated()) return { errors: { form: ['Unauthorized'] } }
+
+  const requestId = await getRequestId()
 
   const provider  = formData.get('provider')?.toString().trim() ?? ''
   const adminInfo = formData.get('adminInfo')?.toString().trim() || null
@@ -33,7 +37,8 @@ export async function importMarketDataCsv(
     const result = await ingestCsvImport(csvText, provider, (file as File).name || null, adminInfo)
     return { result }
   } catch (e) {
-    return { batchError: e instanceof Error ? e.message : 'Import failed' }
+    const norm = normalizeError(e, { event: 'market_research.csv_import_failed', requestId })
+    return { batchError: norm.userMessage }
   }
 }
 

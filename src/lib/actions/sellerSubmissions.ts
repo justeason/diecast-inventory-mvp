@@ -4,6 +4,11 @@ import { prisma } from '@/lib/prisma'
 import { getBuyerSession } from '@/lib/buyerSession'
 import { redirect } from 'next/navigation'
 import { revalidatePath } from 'next/cache'
+import { checkRateLimit } from '@/lib/rateLimit'
+
+// 10 new submissions per hour per profile (instance-local)
+const SUBMIT_MAX    = 10
+const SUBMIT_WINDOW = 60 * 60 * 1000
 
 const VALID_SALE_TYPE_PREFS = ['consignment', 'buyout', 'unsure'] as const
 const VALID_CONDITIONS = ['mint', 'near_mint', 'good', 'fair', 'poor', 'damaged'] as const
@@ -28,6 +33,16 @@ export async function submitCollectionItemForSale(
   const session = await getBuyerSession()
   if (!session) {
     return { errors: { form: ['You must be signed in to submit a sell request.'] } }
+  }
+
+  const { allowed, resetMs } = checkRateLimit(
+    `seller_submit:${session.profileId}`,
+    SUBMIT_MAX,
+    SUBMIT_WINDOW,
+  )
+  if (!allowed) {
+    const secs = Math.ceil(resetMs / 1000)
+    return { errors: { form: [`Too many submissions. Please wait ${secs} seconds.`] } }
   }
 
   const item = await prisma.collectionItem.findFirst({
@@ -145,6 +160,16 @@ export async function submitManualSellRequest(
   const session = await getBuyerSession()
   if (!session) {
     return { errors: { form: ['You must be signed in to submit a sell request.'] } }
+  }
+
+  const { allowed: submitAllowed, resetMs: submitResetMs } = checkRateLimit(
+    `seller_submit:${session.profileId}`,
+    SUBMIT_MAX,
+    SUBMIT_WINDOW,
+  )
+  if (!submitAllowed) {
+    const secs = Math.ceil(submitResetMs / 1000)
+    return { errors: { form: [`Too many submissions. Please wait ${secs} seconds.`] } }
   }
 
   const rawBrand = trimOrNull(formData.get('brand')?.toString())
