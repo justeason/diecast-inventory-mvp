@@ -26,6 +26,7 @@ model CatalogModel {
   sellerSubmissions SellerSubmission[]
   wantedBy        WantedCatalogModel[]
   externalObservations ExternalMarketObservation[]
+  photoFingerprints    CatalogPhotoFingerprint[]
 
   @@index([brand])
   @@index([name])
@@ -59,14 +60,15 @@ model CatalogDuplicateSuppression {
 }
 
 model CatalogModelPhoto {
-  id        String       @id @default(cuid())
-  catalogId String
-  catalog   CatalogModel @relation(fields: [catalogId], references: [id], onDelete: Cascade)
-  url       String
-  altText   String?
-  sortOrder Int          @default(0)
-  createdAt DateTime     @default(now())
-  updatedAt DateTime     @updatedAt
+  id          String       @id @default(cuid())
+  catalogId   String
+  catalog     CatalogModel @relation(fields: [catalogId], references: [id], onDelete: Cascade)
+  url         String
+  altText     String?
+  sortOrder   Int          @default(0)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  fingerprints CatalogPhotoFingerprint[]
 }
 
 model ItemInstance {
@@ -755,6 +757,34 @@ model ExternalMarketObservationAudit {
 
   @@index([observationId])
   @@index([createdAt])
+}
+
+model CatalogPhotoFingerprint {
+  id               String   @id @default(cuid())
+  catalogModelId   String
+  catalogPhotoId   String
+  contentSha256    String
+  perceptualHash   String
+  hashBand0        String
+  hashBand1        String
+  hashBand2        String
+  hashBand3        String
+  width            Int
+  height           Int
+  algorithmVersion String   @default("dhash-v1")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  catalogModel CatalogModel      @relation(fields: [catalogModelId], references: [id], onDelete: Cascade)
+  catalogPhoto CatalogModelPhoto @relation(fields: [catalogPhotoId],  references: [id], onDelete: Cascade)
+
+  @@unique([catalogPhotoId, algorithmVersion])
+  @@index([catalogModelId])
+  @@index([contentSha256])
+  @@index([hashBand0])
+  @@index([hashBand1])
+  @@index([hashBand2])
+  @@index([hashBand3])
 }
 
 model OperationalReconciliationAudit {

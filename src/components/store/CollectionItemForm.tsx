@@ -9,6 +9,8 @@ import {
   type CollectionItemActionState,
 } from '@/lib/actions/collectionItems'
 import { CatalogModelSearch } from '@/components/shared/CatalogModelSearch'
+import { CatalogImageSearch } from '@/components/store/CatalogImageSearch'
+import { searchCatalogByImage } from '@/lib/actions/catalogImageMatching'
 import type { CatalogSearchResult } from '@/lib/catalogFormat'
 
 const CONDITION_OPTIONS = [
@@ -55,10 +57,13 @@ export function CollectionItemForm(props: Props) {
 
   const initialCatalogId = initialCatalog?.id ?? ''
   const initialCatalogLabel = initialCatalog?.label ?? ''
-  // Pre-fill search query from item fields when no catalog is linked yet
   const initialQuery = !isCreate && !initialCatalogId
     ? (item?.brand || item?.name || '')
     : ''
+
+  const [catalogDefaultId, setCatalogDefaultId] = useState(initialCatalogId)
+  const [catalogDefaultLabel, setCatalogDefaultLabel] = useState(initialCatalogLabel)
+  const [catalogSearchKey, setCatalogSearchKey] = useState(0)
 
   const action = isCreate
     ? createCollectionItem
@@ -79,6 +84,13 @@ export function CollectionItemForm(props: Props) {
   const [yearValue, setYearValue] = useState(item?.year?.toString() ?? '')
   const [colorValue, setColorValue] = useState(item?.color ?? '')
   const [scaleValue, setScaleValue] = useState(item?.scale ?? '')
+
+  function handleImageSelect(model: CatalogSearchResult) {
+    setCatalogDefaultId(model.id)
+    setCatalogDefaultLabel(`${model.brand} ${model.name}${model.year ? ` (${model.year})` : ''}`)
+    setCatalogSearchKey(k => k + 1)
+    handleCatalogSelect(model)
+  }
 
   function handleCatalogSelect(model: CatalogSearchResult | null) {
     if (!model) return // clearing does not modify text fields
@@ -121,10 +133,16 @@ export function CollectionItemForm(props: Props) {
           <label className="text-sm font-medium text-gray-700">
             Catalog model <span className="font-normal text-gray-400">(optional)</span>
           </label>
+          <CatalogImageSearch
+            onSelect={handleImageSelect}
+            searchAction={searchCatalogByImage}
+            disabled={isPending}
+          />
           <CatalogModelSearch
+            key={catalogSearchKey}
             name="catalogId"
-            defaultValue={initialCatalogId}
-            defaultLabel={initialCatalogLabel}
+            defaultValue={catalogDefaultId}
+            defaultLabel={catalogDefaultLabel}
             initialQuery={initialQuery}
             onSelect={handleCatalogSelect}
           />

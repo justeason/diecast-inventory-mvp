@@ -2,10 +2,12 @@
 
 import crypto from 'crypto'
 import { del } from '@vercel/blob'
+import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { redirect } from 'next/navigation'
 import { revalidatePath } from 'next/cache'
 import { ALLOWED_MIME, validateBlobFile, uploadToBlob } from '@/lib/blobUpload'
+import { computeImageFingerprint } from '@/lib/catalogImageFingerprint'
 
 // Admin catalog photo actions rely on the (admin) route group middleware for auth,
 // consistent with all other admin server actions in this repo (catalog.ts, adminCatalogSuggestions.ts, etc.).
@@ -49,14 +51,42 @@ export async function uploadCatalogPhoto(
   const random = crypto.randomBytes(8).toString('hex')
   const pathname = `catalog/${catalogId}/${Date.now()}-${random}.${ext}`
 
-  const url = await uploadToBlob(pathname, file)
+  // Compute fingerprint from buffer before uploading. If it fails, the photo still saves.
+  const fileBuffer = Buffer.from(await file.arrayBuffer())
+  let fingerprintData: Awaited<ReturnType<typeof computeImageFingerprint>> | null = null
+  try {
+    fingerprintData = await computeImageFingerprint(fileBuffer, file.type)
+  } catch (e) {
+    console.error('[uploadCatalogPhoto] Fingerprint failed:', e instanceof Error ? e.message : e)
+  }
+
+  const url = await uploadToBlob(pathname, new File([fileBuffer], file.name, { type: file.type }))
   if (!url) return { error: 'Upload failed. Please try again.' }
 
   const nextSortOrder = existingPhotos.length > 0 ? existingPhotos[0].sortOrder + 1 : 0
 
-  await prisma.catalogModelPhoto.create({
-    data: { catalogId, url, altText, sortOrder: nextSortOrder },
-  })
+  try {
+    await prisma.$transaction(async tx => {
+      const photo = await tx.catalogModelPhoto.create({
+        data: { catalogId, url, altText, sortOrder: nextSortOrder },
+      })
+      if (fingerprintData) {
+        try {
+          await tx.catalogPhotoFingerprint.create({
+            data: { catalogModelId: catalogId, catalogPhotoId: photo.id, ...fingerprintData },
+          })
+        } catch (e) {
+          if (!(e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002')) throw e
+          // P2002: fingerprint for this photo/version already exists — safe to ignore
+        }
+      }
+    })
+  } catch (txErr) {
+    // Transaction failed — remove the orphaned blob so storage stays consistent.
+    try { await del(url) } catch { /* best-effort; blob may not exist */ }
+    console.error('[uploadCatalogPhoto] Transaction failed:', txErr instanceof Error ? txErr.message : txErr)
+    return { error: 'Failed to save photo. Please try again.' }
+  }
 
   revalidatePath('/admin/catalog')
   revalidatePath(`/admin/catalog/${catalogId}/edit`)

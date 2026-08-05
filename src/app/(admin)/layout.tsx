@@ -21,6 +21,7 @@ const navLinks = [
   { href: '/admin/analytics', label: 'Analytics' },
   { href: '/admin/resale-estimator', label: 'Resale Est.' },
   { href: '/admin/market-research', label: 'Mkt Research' },
+  { href: '/admin/catalog-image-intelligence', label: 'Img Intel' },
 ]
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {

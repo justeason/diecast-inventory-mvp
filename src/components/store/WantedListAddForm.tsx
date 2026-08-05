@@ -1,9 +1,12 @@
 'use client'
 
-import { useActionState } from 'react'
+import { useState, useActionState } from 'react'
 import { useFormStatus } from 'react-dom'
 import { CatalogModelSearch } from '@/components/shared/CatalogModelSearch'
+import { CatalogImageSearch } from '@/components/store/CatalogImageSearch'
+import { searchCatalogByImage } from '@/lib/actions/catalogImageMatching'
 import { addToWantedList, type WantedListActionState } from '@/lib/actions/wantedList'
+import type { CatalogSearchResult } from '@/lib/catalogFormat'
 
 function SubmitButton() {
   const { pending } = useFormStatus()
@@ -22,13 +25,30 @@ export function WantedListAddForm() {
   const [state, formAction] = useActionState<WantedListActionState, FormData>(addToWantedList, null)
   const errors = state && 'errors' in state ? state.errors : {}
 
+  const [catalogDefaultId, setCatalogDefaultId] = useState('')
+  const [catalogDefaultLabel, setCatalogDefaultLabel] = useState('')
+  const [catalogSearchKey, setCatalogSearchKey] = useState(0)
+
+  function handleImageSelect(model: CatalogSearchResult) {
+    setCatalogDefaultId(model.id)
+    setCatalogDefaultLabel(`${model.brand} ${model.name}${model.year ? ` (${model.year})` : ''}`)
+    setCatalogSearchKey(k => k + 1)
+  }
+
   return (
     <form action={formAction} className="rounded-md border border-gray-200 bg-gray-50 px-4 py-4 space-y-4">
       <h2 className="text-sm font-semibold text-gray-900">Add a model</h2>
 
       <div className="flex flex-col gap-1">
         <label className="text-sm font-medium text-gray-700">Catalog model</label>
-        <CatalogModelSearch name="catalogModelId" placeholder="Search by brand, name, year…" />
+        <CatalogImageSearch onSelect={handleImageSelect} searchAction={searchCatalogByImage} />
+        <CatalogModelSearch
+          key={catalogSearchKey}
+          name="catalogModelId"
+          defaultValue={catalogDefaultId}
+          defaultLabel={catalogDefaultLabel}
+          placeholder="Search by brand, name, year…"
+        />
         {errors.catalogModelId && (
           <p className="text-xs text-red-600">{errors.catalogModelId[0]}</p>
         )}
