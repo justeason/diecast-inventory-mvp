@@ -27,6 +27,7 @@ model CatalogModel {
   wantedBy        WantedCatalogModel[]
   externalObservations ExternalMarketObservation[]
   photoFingerprints    CatalogPhotoFingerprint[]
+  captureItems         MobileCaptureItem[]
 
   @@index([brand])
   @@index([name])
@@ -150,6 +151,7 @@ model CustomerProfile {
   sellerPayouts       SellerPayout[]
   communityProfile    CustomerCommunityProfile?
   wantedList          WantedCatalogModel[]
+  captureSessions     MobileCaptureSession[]
 }
 
 model SellerProfile {
@@ -802,4 +804,39 @@ model OperationalReconciliationAudit {
   @@index([issueKey])
   @@index([entityType, entityId])
   @@index([createdAt])
+}
+
+model MobileCaptureSession {
+  id                String              @id @default(cuid())
+  customerProfileId String
+  profile           CustomerProfile     @relation(fields: [customerProfileId], references: [id], onDelete: Cascade)
+  destination       String              // 'collection' | 'sell'
+  status            String              @default("draft")  // 'draft' | 'submitted'
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  items             MobileCaptureItem[]
+
+  @@index([customerProfileId, status])
+}
+
+model MobileCaptureItem {
+  id                 String               @id @default(cuid())
+  sessionId          String
+  session            MobileCaptureSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  catalogModelId     String
+  catalog            CatalogModel         @relation(fields: [catalogModelId], references: [id])
+  quantity           Int                  @default(1)
+  acquisitionDate    DateTime?
+  condition          String?
+  notes              String?
+  isPublic           Boolean              @default(false)
+  saleTypePreference String?
+  clientToken        String
+  payloadFingerprint String
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+
+  @@unique([sessionId, clientToken])
+  @@unique([sessionId, catalogModelId])
+  @@index([sessionId])
 }
