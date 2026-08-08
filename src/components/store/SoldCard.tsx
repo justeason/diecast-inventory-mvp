@@ -1,9 +1,10 @@
 import { PhotoThumbnail } from '@/components/shared/PhotoThumbnail'
 import type { PublicSoldItem } from '@/lib/marketplaceMerchandising'
+import { formatDate } from '@/lib/formatDate'
 
 export function SoldCard({ item }: { item: PublicSoldItem }) {
   const name = `${item.catalogBrand} ${item.catalogName}${item.catalogYear ? ` (${item.catalogYear})` : ''}`
-  const soldDate = item.soldAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  const soldDate = formatDate(item.soldAt, { month: 'short', day: 'numeric', year: 'numeric' })
 
   return (
     <div className="rounded-lg border border-gray-200 overflow-hidden bg-white">

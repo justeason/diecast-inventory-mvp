@@ -54,7 +54,11 @@ export type PublicListingItem = {
   id: string
   title: string
   price: number
-  createdAt: Date
+  // ISO string, not Date: this view model crosses the unstable_cache boundary in
+  // marketplaceMerchandisingQuery.ts, which serializes/deserializes via JSON — a
+  // cached-and-reread value would otherwise arrive as a string at runtime while the
+  // type still claimed `Date`, silently breaking any Date-only method called on it.
+  createdAt: string
   photoUrl: string | null
   imageSource: 'item' | 'catalog' | 'none'
   item: {
@@ -78,7 +82,10 @@ export type PublicSoldItem = {
   catalogName: string
   catalogYear: number | null
   catalogSeries: string | null
-  soldAt: Date
+  // ISO string, not Date — see PublicListingItem.createdAt comment above (same
+  // unstable_cache serialization boundary; this is the field the production
+  // TypeError was actually thrown from, via SoldCard's .toLocaleDateString() call).
+  soldAt: string
   photoUrl: string | null
 }
 
@@ -90,7 +97,8 @@ export type TrendingModel = {
   catalogSeries: string | null
   photoUrl: string | null
   saleCount: number
-  latestSaleAt: Date
+  // ISO string, not Date — same unstable_cache serialization boundary as above.
+  latestSaleAt: string
   activeListingCount: number
 }
 
@@ -151,7 +159,7 @@ function mapActiveListing(raw: RawActiveListing): PublicListingItem {
     id: raw.id,
     title: raw.title,
     price: raw.price,
-    createdAt: raw.createdAt,
+    createdAt: raw.createdAt.toISOString(),
     photoUrl,
     imageSource,
     item: {
@@ -181,7 +189,7 @@ export function buildRecentlySold(raw: RawSoldItem[]): PublicSoldItem[] {
     catalogName: r.catalogName,
     catalogYear: r.catalogYear,
     catalogSeries: r.catalogSeries,
-    soldAt: r.soldAt,
+    soldAt: r.soldAt.toISOString(),
     photoUrl: r.photoUrl,
   }))
 }
@@ -214,7 +222,11 @@ export function computeTrendingModels(
     }
   }
 
-  const results: TrendingModel[] = []
+  // Kept as a real Date through sorting (below); serialized to an ISO string only in
+  // the final .map(), right at the boundary where this crosses into the public,
+  // unstable_cache-wrapped view model.
+  type ResultInternal = Omit<TrendingModel, 'latestSaleAt'> & { latestSaleAt: Date }
+  const results: ResultInternal[] = []
   for (const [catalogModelId, g] of groups) {
     if (g.count < minSales) continue
     const { firstSale: f } = g
@@ -239,6 +251,7 @@ export function computeTrendingModels(
       return a.catalogModelId.localeCompare(b.catalogModelId)
     })
     .slice(0, maxResults)
+    .map((r) => ({ ...r, latestSaleAt: r.latestSaleAt.toISOString() }))
 }
 
 // ─── Fast movers ──────────────────────────────────────────────────────────────

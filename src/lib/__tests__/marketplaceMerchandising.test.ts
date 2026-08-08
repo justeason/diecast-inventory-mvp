@@ -15,7 +15,8 @@ import {
   RECENT_PRICE_WINDOW_DAYS,
   PRIOR_PRICE_WINDOW_DAYS,
 } from '@/lib/marketplaceMerchandising'
-import type { RawActiveListing, RawSoldItem, RawSaleRecord } from '@/lib/marketplaceMerchandising'
+import type { RawActiveListing, RawSoldItem, RawSaleRecord, MerchandisingData } from '@/lib/marketplaceMerchandising'
+import { formatDate } from '@/lib/formatDate'
 
 const NOW = new Date('2026-08-02T12:00:00Z').getTime()
 const DAY = 24 * 60 * 60 * 1000
@@ -106,6 +107,15 @@ describe('buildRecentlyListed', () => {
     expect(items[0]).not.toHaveProperty('itemPhotoUrl')
     expect(items[0]).not.toHaveProperty('catalogPhotoUrl')
   })
+
+  // Same unstable_cache serialization boundary as PublicSoldItem.soldAt — audited per
+  // the soldAt production crash: createdAt must also be a pre-serialized ISO string.
+  it('serializes createdAt to an ISO string, not a Date object (unstable_cache boundary)', () => {
+    const raw = makeListing()
+    const items = buildRecentlyListed([raw])
+    expect(typeof items[0].createdAt).toBe('string')
+    expect(items[0].createdAt).toBe(raw.createdAt.toISOString())
+  })
 })
 
 // ─── buildHighValue ───────────────────────────────────────────────────────────
@@ -139,7 +149,24 @@ describe('buildRecentlySold', () => {
     const items = buildRecentlySold([rawSold])
     expect(items[0].id).toBe('oi-abc')
     expect(items[0].catalogBrand).toBe('Matchbox')
-    expect(items[0].soldAt).toEqual(daysAgo(2))
+  })
+
+  // Regression: production TypeError "a.soldAt.toLocaleDateString is not a function".
+  // getMerchandisingData() is wrapped in unstable_cache, which JSON-serializes its
+  // return value — a cache-hit read back soldAt as a string, not a Date, while the
+  // type still said `Date`. PublicSoldItem.soldAt is now honestly typed `string`, and
+  // buildRecentlySold must actually produce a serialized ISO string here, not a Date.
+  it('serializes soldAt to an ISO string, not a Date object (unstable_cache boundary)', () => {
+    const items = buildRecentlySold([rawSold])
+    expect(typeof items[0].soldAt).toBe('string')
+    expect(items[0].soldAt).toBe(daysAgo(2).toISOString())
+  })
+
+  it('soldAt survives a JSON round-trip unchanged (simulates an unstable_cache read)', () => {
+    const items = buildRecentlySold([rawSold])
+    const serialized = JSON.parse(JSON.stringify(items)) as typeof items
+    expect(serialized[0].soldAt).toBe(items[0].soldAt)
+    expect(typeof serialized[0].soldAt).toBe('string')
   })
 
   it('does not include soldPrice (no existing public sold-price policy)', () => {
@@ -266,6 +293,21 @@ describe('computeTrendingModels', () => {
 
   it('returns empty array when no qualifying models', () => {
     expect(computeTrendingModels([], {}, {}, undefined, undefined, undefined, NOW)).toHaveLength(0)
+  })
+
+  // Same unstable_cache serialization boundary as PublicSoldItem.soldAt — audited per
+  // the soldAt production crash: latestSaleAt must also be a pre-serialized ISO
+  // string, and ranking must still be correct even though sorting happens on Date
+  // internally, before the final serialization step.
+  it('serializes latestSaleAt to an ISO string, not a Date object, while still ranking by the real underlying date', () => {
+    const latest = daysAgo(2)
+    const sales = [
+      makeSale('oi1', 'catA', daysAgo(5)),
+      makeSale('oi2', 'catA', latest),
+    ]
+    const result = computeTrendingModels(sales, {}, {}, undefined, undefined, undefined, NOW)
+    expect(typeof result[0].latestSaleAt).toBe('string')
+    expect(result[0].latestSaleAt).toBe(latest.toISOString())
   })
 })
 
@@ -686,5 +728,79 @@ describe('price mover 90-day boundary is non-overlapping', () => {
     expect(result).toHaveLength(1)
     expect(result[0].catalogModelId).toBe('catA')
     expect(result[0].pctChange).toBeGreaterThan(0)
+  })
+})
+
+// ─── Regression: production /market crash via the unstable_cache boundary ──────
+//
+// getMerchandisingData() in marketplaceMerchandisingQuery.ts wraps the builder in
+// unstable_cache, which persists/reads the result via JSON serialization. A cache hit
+// therefore returns soldAt/createdAt/latestSaleAt as ISO strings, not Date objects —
+// this suite proves the full recentlyListed/recentlySold/trendingModels pipeline (and
+// SoldCard's rendering call, via formatDate) survives exactly that round-trip.
+
+describe('production /market crash regression: unstable_cache JSON round-trip', () => {
+  it('a full MerchandisingData-shaped result survives JSON.parse(JSON.stringify(...)) and every date field remains formatDate-safe', () => {
+    const rawListing = makeListing({ id: 'lst-rt' })
+    const rawSold: RawSoldItem = {
+      id: 'oi-rt',
+      catalogModelId: 'cat-rt',
+      catalogBrand: 'Hot Wheels',
+      catalogName: 'Charger',
+      catalogYear: 2021,
+      catalogSeries: null,
+      soldAt: new Date('2026-08-08T15:30:00.000Z'), // exact production shape from the task
+      photoUrl: null,
+    }
+    const sales = [
+      makeSale('s1', 'cat-rt', daysAgo(3)),
+      makeSale('s2', 'cat-rt', daysAgo(4)),
+    ]
+
+    const data: Pick<MerchandisingData, 'recentlyListed' | 'recentlySold' | 'trendingModels'> = {
+      recentlyListed: buildRecentlyListed([rawListing]),
+      recentlySold: buildRecentlySold([rawSold]),
+      trendingModels: computeTrendingModels(sales, {}, {}, undefined, undefined, undefined, NOW),
+    }
+
+    // Simulates exactly what unstable_cache does on a cache-hit read.
+    const serialized = JSON.parse(JSON.stringify(data)) as typeof data
+
+    // "Recently sold" section still renders: the length check the /market page uses
+    // to decide whether to show the section is unaffected by serialization.
+    expect(serialized.recentlySold.length).toBeGreaterThan(0)
+
+    // The exact call SoldCard makes — must not throw and must produce a real date.
+    expect(() =>
+      formatDate(serialized.recentlySold[0].soldAt, { month: 'short', day: 'numeric', year: 'numeric' }),
+    ).not.toThrow()
+    expect(formatDate(serialized.recentlySold[0].soldAt, { month: 'short', day: 'numeric', year: 'numeric' })).toBe('Aug 8, 2026')
+
+    // Other audited date fields crossing the same boundary also remain formatDate-safe.
+    expect(() => formatDate(serialized.recentlyListed[0].createdAt)).not.toThrow()
+    expect(() => formatDate(serialized.trendingModels[0]?.latestSaleAt)).not.toThrow()
+  })
+
+  it('a malformed soldAt (corrupted data) does not crash formatting — renders empty rather than throwing', () => {
+    const items = buildRecentlySold([{
+      id: 'oi-bad',
+      catalogModelId: 'cat-bad',
+      catalogBrand: 'Hot Wheels',
+      catalogName: 'Bad Data',
+      catalogYear: null,
+      catalogSeries: null,
+      soldAt: new Date('2026-08-08T15:30:00.000Z'),
+      photoUrl: null,
+    }])
+    // Simulate corruption after the cache boundary (e.g. a truncated/garbled string).
+    const corrupted = { ...items[0], soldAt: 'not-a-real-date' }
+
+    expect(() => formatDate(corrupted.soldAt, { month: 'short', day: 'numeric', year: 'numeric' })).not.toThrow()
+    expect(formatDate(corrupted.soldAt, { month: 'short', day: 'numeric', year: 'numeric' })).toBe('')
+  })
+
+  it('null soldAt is safe end-to-end through the formatter', () => {
+    expect(() => formatDate(null, { month: 'short', day: 'numeric', year: 'numeric' })).not.toThrow()
+    expect(formatDate(null, { month: 'short', day: 'numeric', year: 'numeric' })).toBe('')
   })
 })
