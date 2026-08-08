@@ -18,7 +18,7 @@ const navLinks = [
   { href: '/admin/seller-submissions', label: 'Sell Requests' },
   { href: '/admin/seller-lifecycle', label: 'Lifecycle' },
   { href: '/admin/reconciliation', label: 'Reconciliation' },
-  { href: '/admin/analytics', label: 'Analytics' },
+  { href: '/admin/analytics', label: 'Business Analytics' },
   { href: '/admin/resale-estimator', label: 'Resale Est.' },
   { href: '/admin/market-research', label: 'Mkt Research' },
   { href: '/admin/catalog-image-intelligence', label: 'Img Intel' },

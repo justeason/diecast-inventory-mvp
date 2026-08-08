@@ -1,418 +1,135 @@
-import Link from 'next/link'
-import { prisma } from '@/lib/prisma'
+import type { Metadata } from 'next'
+import { redirect } from 'next/navigation'
+import { isAdminAuthenticated } from '@/lib/adminAuth'
+import { buildAnalyticsContext } from '@/lib/businessAnalyticsPage'
+import { getOverviewMetrics, getTimeSeries } from '@/lib/businessAnalyticsQuery'
+import { getMetricDefinition } from '@/lib/businessAnalyticsRegistry'
+import { periodChange } from '@/lib/businessAnalyticsMath'
+import { chooseBucketGranularity } from '@/lib/businessAnalyticsDates'
+import { fmtUsdDecimal, fmtInt, fmtPct, fmtDays, fmtPeriodChange, fmtDateTimeUtc, fmtBucketLabel } from '@/lib/businessAnalyticsFormat'
+import { AnalyticsFilterBar } from '@/components/admin/analytics/AnalyticsFilterBar'
+import { AnalyticsNav } from '@/components/admin/analytics/AnalyticsNav'
+import { KpiCard } from '@/components/admin/analytics/KpiCard'
+import { SimpleBarChart } from '@/components/admin/analytics/SimpleBarChart'
 
 export const dynamic = 'force-dynamic'
+export const metadata: Metadata = { title: 'Business Analytics | Admin' }
 
-// ─── Labels ───────────────────────────────────────────────────────────────────
-
-const ORDER_STATUS_LABELS: Record<string, string> = {
-  pending:   'Pending',
-  paid:      'Paid',
-  picking:   'Picking',
-  shipped:   'Shipped',
-  complete:  'Complete',
-  cancelled: 'Cancelled',
-}
-
-const ORDER_STATUS_COLORS: Record<string, string> = {
-  pending:   'bg-yellow-100 text-yellow-700',
-  paid:      'bg-blue-100 text-blue-700',
-  picking:   'bg-indigo-100 text-indigo-700',
-  shipped:   'bg-purple-100 text-purple-700',
-  complete:  'bg-green-100 text-green-700',
-  cancelled: 'bg-red-100 text-red-700',
-}
-
-const PAYMENT_STATUS_LABELS: Record<string, string> = {
-  unpaid:    'Unpaid',
-  requested: 'Requested',
-  paid:      'Confirmed',
-}
-
-const PAYMENT_STATUS_COLORS: Record<string, string> = {
-  unpaid:    'bg-yellow-100 text-yellow-700',
-  requested: 'bg-orange-100 text-orange-700',
-  paid:      'bg-green-100 text-green-700',
-}
-
-// ─── Sub-components ───────────────────────────────────────────────────────────
-
-type MetricColor = 'gray' | 'green' | 'yellow' | 'blue' | 'orange' | 'teal'
-
-const METRIC_STYLES: Record<MetricColor, string> = {
-  gray:   'bg-gray-50 border-gray-200',
-  green:  'bg-green-50 border-green-200',
-  yellow: 'bg-yellow-50 border-yellow-200',
-  blue:   'bg-blue-50 border-blue-200',
-  orange: 'bg-orange-50 border-orange-200',
-  teal:   'bg-teal-50 border-teal-200',
-}
-
-function MetricCard({
-  label,
-  value,
-  color = 'gray',
-  note,
+export default async function AdminAnalyticsOverviewPage({
+  searchParams,
 }: {
-  label: string
-  value: string
-  color?: MetricColor
-  note?: string
+  searchParams: Promise<{ period?: string; start?: string; end?: string }>
 }) {
-  return (
-    <div className={`rounded-md border p-4 ${METRIC_STYLES[color]}`}>
-      <p className="text-2xl font-bold tabular-nums text-gray-900 leading-none">{value}</p>
-      <p className="text-sm text-gray-500 mt-1.5">{label}</p>
-      {note && <p className="text-xs text-gray-400 mt-1">{note}</p>}
-    </div>
-  )
-}
+  if (!await isAdminAuthenticated()) redirect('/admin/login')
 
-function SectionHeader({ title, note }: { title: string; note?: string }) {
-  return (
-    <div className="mb-3">
-      <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wide">{title}</h2>
-      {note && <p className="text-xs text-gray-400 mt-0.5">{note}</p>}
-    </div>
-  )
-}
+  const ctx = buildAnalyticsContext(await searchParams)
+  const [metrics, series] = await Promise.all([getOverviewMetrics(ctx.range), getTimeSeries(ctx.range)])
+  const granularity = chooseBucketGranularity(ctx.range)
 
-// ─── Page ─────────────────────────────────────────────────────────────────────
-
-export default async function AdminAnalyticsPage() {
-  const twentyFourHoursAgo = new Date(new Date().getTime() - 24 * 60 * 60 * 1000)
-
-  const [
-    completedOrders,
-    inProgressOrders,
-    activeListingAgg,
-    soldListingAgg,
-    paymentCountRows,
-    attentionOrders,
-    recentCompleted,
-    costBasisAgg,
-    totalItemCount,
-  ] = await Promise.all([
-    // Revenue: complete orders with item prices + shipping
-    prisma.order.findMany({
-      where: { status: 'complete' },
-      select: {
-        estimatedShipping: true,
-        orderItems: { select: { price: true } },
-      },
-    }),
-
-    // In-progress orders (paid/picking/shipped)
-    prisma.order.findMany({
-      where: { status: { in: ['paid', 'picking', 'shipped'] } },
-      select: { orderItems: { select: { price: true } } },
-    }),
-
-    // Active listing aggregate value
-    prisma.listing.aggregate({
-      where: { status: 'active' },
-      _sum: { price: true },
-      _count: { _all: true },
-    }),
-
-    // Sold listing aggregate value
-    prisma.listing.aggregate({
-      where: { status: 'sold' },
-      _sum: { price: true },
-      _count: { _all: true },
-    }),
-
-    // Payment status counts (non-cancelled orders only)
-    prisma.order.groupBy({
-      by: ['paymentStatus'],
-      where: { status: { notIn: ['cancelled'] } },
-      _count: { _all: true },
-    }),
-
-    // Orders needing attention (same logic as 8Q digest)
-    prisma.order.findMany({
-      where: {
-        status: { notIn: ['complete', 'cancelled'] },
-        OR: [
-          { createdAt: { gte: twentyFourHoursAgo } },
-          { status: 'pending' },
-          { paymentStatus: { in: ['unpaid', 'requested'] } },
-        ],
-      },
-      orderBy: { createdAt: 'desc' },
-      take: 10,
-      select: {
-        id: true,
-        buyerName: true,
-        status: true,
-        paymentStatus: true,
-        createdAt: true,
-        orderItems: { select: { price: true } },
-      },
-    }),
-
-    // Recently completed orders
-    prisma.order.findMany({
-      where: { status: 'complete' },
-      orderBy: { updatedAt: 'desc' },
-      take: 8,
-      select: {
-        id: true,
-        buyerName: true,
-        estimatedShipping: true,
-        updatedAt: true,
-        orderItems: { select: { price: true } },
-      },
-    }),
-
-    // Item cost basis (purchase price) — partial coverage expected
-    prisma.itemInstance.aggregate({
-      where: { purchasePrice: { not: null } },
-      _sum: { purchasePrice: true },
-      _count: { _all: true },
-    }),
-
-    prisma.itemInstance.count(),
-  ])
-
-  // ── Derived metrics ──────────────────────────────────────────────────────────
-
-  const revenue = completedOrders.reduce((sum, o) => {
-    const subtotal = o.orderItems.reduce((s, oi) => s + oi.price, 0)
-    return sum + subtotal + (o.estimatedShipping ?? 0)
-  }, 0)
-  const completedCount = completedOrders.length
-  const avgOrderValue  = completedCount > 0 ? revenue / completedCount : 0
-
-  const inProgressValue = inProgressOrders.reduce(
-    (sum, o) => sum + o.orderItems.reduce((s, oi) => s + oi.price, 0),
-    0
-  )
-
-  const activeListingValue = activeListingAgg._sum.price ?? 0
-  const activeListingCount = activeListingAgg._count._all
-  const soldListingValue   = soldListingAgg._sum.price ?? 0
-  const soldListingCount   = soldListingAgg._count._all
-
-  const paymentCounts: Record<string, number> = {}
-  for (const row of paymentCountRows) {
-    paymentCounts[row.paymentStatus] = row._count._all
+  // Flow metrics get a period-over-period comparison when a predecessor period exists
+  // (never for 'all time' — previousPeriod() returns null there). Snapshot metrics
+  // (active inventory, unpaid liability) and cohort ratios (sell-through, listing-to-
+  // sale) never get a trend — see businessAnalyticsMath.test for the omission rule.
+  let prevUnitsSold: number | null = null
+  let prevCompletedOrders: number | null = null
+  let prevGmvCents: number | null = null
+  let prevSpreadCents: number | null = null
+  let prevMarginCents: number | null = null
+  if (ctx.previous) {
+    const prevRange = { ...ctx.range, start: ctx.previous.start, end: ctx.previous.end }
+    const prev = await getOverviewMetrics(prevRange)
+    prevUnitsSold = prev.unitsSold
+    prevCompletedOrders = prev.completedOrders
+    prevGmvCents = prev.gmv.times(100).toNumber()
+    prevSpreadCents = prev.grossSpreadDetermined.times(100).toNumber()
+    prevMarginCents = prev.grossMarginDetermined.times(100).toNumber()
   }
 
-  const hasCostBasis    = costBasisAgg._count._all > 0
-  const totalCostBasis  = costBasisAgg._sum.purchasePrice ?? 0
-  const costBasisCount  = costBasisAgg._count._all
-
-  const $ = (n: number) => `$${n.toFixed(2)}`
+  const def = getMetricDefinition
 
   return (
-    <>
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Sales &amp; Analytics</h1>
-        <p className="text-sm text-gray-500 mt-1">All-time totals. Admin use only.</p>
+    <div className="max-w-6xl space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Business Analytics</h1>
+          <p className="text-xs text-gray-400 mt-1">As of {fmtDateTimeUtc(ctx.asOf)} · {ctx.range.label}</p>
+        </div>
       </div>
 
-      {/* ── Revenue ──────────────────────────────────────────────────────────── */}
-      <section className="mb-8">
-        <SectionHeader
-          title="Revenue"
-          note="Completed orders only. Estimated shipping included where entered; excluded otherwise."
+      <AnalyticsNav currentPath="/admin/analytics" queryString={ctx.queryString} />
+      <AnalyticsFilterBar path="/admin/analytics" range={ctx.range} error={ctx.error} />
+
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+        <KpiCard value={fmtInt(metrics.unitsSold)} definition={def('units_sold')!} change={prevUnitsSold !== null ? fmtPeriodChange(periodChange(metrics.unitsSold, prevUnitsSold)) : undefined} />
+        <KpiCard value={fmtInt(metrics.completedOrders)} definition={def('completed_orders')!} change={prevCompletedOrders !== null ? fmtPeriodChange(periodChange(metrics.completedOrders, prevCompletedOrders)) : undefined} />
+        <KpiCard
+          value={fmtUsdDecimal(metrics.gmv)}
+          definition={def('gmv')!}
+          change={prevGmvCents !== null ? fmtPeriodChange(periodChange(metrics.gmv.times(100).toNumber(), prevGmvCents)) : undefined}
         />
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          <MetricCard label="Completed Revenue"  value={$(revenue)}        color="green" />
-          <MetricCard label="Avg Order Value"     value={$(avgOrderValue)}  color="gray" />
-          <MetricCard label="Completed Orders"    value={String(completedCount)} color="blue" />
-          <MetricCard
-            label="In-Progress Value"
-            value={$(inProgressValue)}
-            color="yellow"
-            note="Paid / picking / shipped — not yet complete"
-          />
-        </div>
-      </section>
+        <KpiCard
+          value={fmtUsdDecimal(metrics.grossSpreadDetermined)}
+          definition={def('gross_spread')!}
+          change={prevSpreadCents !== null ? fmtPeriodChange(periodChange(metrics.grossSpreadDetermined.times(100).toNumber(), prevSpreadCents)) : undefined}
+          note={metrics.grossSpreadUndeterminedItems > 0 ? `${metrics.grossSpreadUndeterminedItems} consignment item(s) excluded — no payout line yet` : undefined}
+        />
+        <KpiCard
+          value={fmtUsdDecimal(metrics.grossMarginDetermined)}
+          definition={def('gross_margin')!}
+          change={prevMarginCents !== null ? fmtPeriodChange(periodChange(metrics.grossMarginDetermined.times(100).toNumber(), prevMarginCents)) : undefined}
+          note={metrics.grossMarginUndeterminedItems > 0 ? `${metrics.grossMarginUndeterminedItems} buyout/company-owned item(s) excluded — no purchasePrice recorded` : undefined}
+        />
+        <KpiCard value="Not available" definition={def('marketplace_revenue')!} note="See Gross spread / Gross margin instead — never summed together" />
+        <KpiCard value={fmtInt(metrics.activeInventory)} definition={def('active_inventory')!} />
+        <KpiCard
+          value={fmtPct(metrics.sellThrough.denominator > 0 ? (metrics.sellThrough.numerator / metrics.sellThrough.denominator) * 100 : null)}
+          definition={def('sell_through')!}
+          note={`${metrics.sellThrough.numerator} of ${metrics.sellThrough.denominator} intake cohort`}
+        />
+        <KpiCard
+          value={fmtDays(metrics.medianDaysToSell)}
+          definition={def('median_days_to_sell')!}
+          note={metrics.daysToSellInvalidCount > 0 ? `${metrics.daysToSellInvalidCount} record(s) excluded as invalid (negative/missing duration)` : undefined}
+        />
+        <KpiCard
+          value={fmtPct(metrics.listingToSale.denominator > 0 ? (metrics.listingToSale.numerator / metrics.listingToSale.denominator) * 100 : null)}
+          definition={def('listing_to_sale_conversion')!}
+          note={`${metrics.listingToSale.numerator} of ${metrics.listingToSale.denominator} listing cohort`}
+        />
+        <KpiCard value={fmtUsdDecimal(metrics.unpaidSellerLiability)} definition={def('payout_liability')!} />
+        <KpiCard value={fmtInt(metrics.sellersWithCompletedSales)} definition={{ key: 'sellers_with_sales', name: 'Sellers with completed sales', description: 'Distinct sellers with at least one unit sold in the selected period.', metricType: 'flow', timestampBasis: 'Order.completedAt' }} />
+      </div>
 
-      {/* ── Listing Value ─────────────────────────────────────────────────────── */}
-      <section className="mb-8">
-        <SectionHeader title="Listing Value" note="Based on listing prices, not purchase cost." />
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          <MetricCard label="Active Listing Value" value={$(activeListingValue)} color="teal" />
-          <MetricCard label="Sold Listing Value"   value={$(soldListingValue)}   color="gray" />
-          <MetricCard label="Active Listings"      value={String(activeListingCount)} color="green" />
-          <MetricCard label="Sold Listings"        value={String(soldListingCount)}   color="gray" />
-        </div>
-      </section>
+      <p className="text-xs text-gray-400">
+        Snapshot metrics (active inventory, unpaid liability) reflect current state, not a historical point-in-time — no snapshot history is stored.
+        Refunds/reversals are not tracked in this schema; all monetary figures above are gross totals of completed-order records.
+      </p>
 
-      {/* ── Payment Tracking ─────────────────────────────────────────────────── */}
-      <section className="mb-8">
-        <SectionHeader title="Payment Tracking" note="Non-cancelled orders only." />
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-          <MetricCard
-            label="Unpaid"
-            value={String(paymentCounts['unpaid'] ?? 0)}
-            color="yellow"
-          />
-          <MetricCard
-            label="Payment Requested"
-            value={String(paymentCounts['requested'] ?? 0)}
-            color="orange"
-          />
-          <MetricCard
-            label="Payment Confirmed"
-            value={String(paymentCounts['paid'] ?? 0)}
-            color="green"
-          />
-        </div>
-      </section>
-
-      {/* ── Item Cost Basis (conditional) ────────────────────────────────────── */}
-      {hasCostBasis && (
-        <section className="mb-8">
-          <SectionHeader title="Item Cost Basis" />
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            <MetricCard
-              label="Total Cost Basis"
-              value={$(totalCostBasis)}
-              color="gray"
-              note={`${costBasisCount} of ${totalItemCount} items have a purchase price`}
-            />
+      <section>
+        <h2 className="text-sm font-semibold text-gray-700 mb-1">Trends</h2>
+        <p className="text-xs text-gray-400 mb-3">
+          {granularity === 'day' ? 'Daily' : granularity === 'week' ? 'Weekly' : 'Monthly'} buckets, UTC. Missing
+          buckets are zero-filled, not omitted.
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+          <div>
+            <p className="text-xs text-gray-500 mb-1">GMV</p>
+            <SimpleBarChart bars={series.map(b => ({ label: fmtBucketLabel(b.bucketStart, granularity), value: b.gmv.toNumber() }))} formatValue={v => `$${v.toFixed(0)}`} />
           </div>
-        </section>
-      )}
-
-      {/* ── Orders Needing Attention ─────────────────────────────────────────── */}
-      <section className="mb-8">
-        <div className="flex items-center justify-between mb-3">
-          <SectionHeader
-            title="Orders Needing Attention"
-            note="New (last 24 h), pending, or with unresolved payment."
-          />
-          <Link href="/admin/orders" className="text-xs text-gray-400 hover:text-gray-700">
-            View all →
-          </Link>
-        </div>
-        {attentionOrders.length === 0 ? (
-          <p className="text-sm text-gray-500 rounded-md border border-green-200 bg-green-50 px-4 py-3">
-            No orders need attention right now.
-          </p>
-        ) : (
-          <div className="overflow-x-auto rounded-md border border-gray-200">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 border-b border-gray-200">
-                <tr className="text-left text-gray-500">
-                  <th className="px-4 py-3 font-medium">Buyer</th>
-                  <th className="px-4 py-3 font-medium">Status</th>
-                  <th className="px-4 py-3 font-medium">Payment</th>
-                  <th className="px-4 py-3 font-medium">Subtotal</th>
-                  <th className="px-4 py-3 font-medium">Submitted</th>
-                  <th className="px-4 py-3" />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {attentionOrders.map((o) => {
-                  const subtotal = o.orderItems.reduce((s, oi) => s + oi.price, 0)
-                  return (
-                    <tr key={o.id} className="hover:bg-gray-50">
-                      <td className="px-4 py-3 font-medium text-gray-900">{o.buyerName}</td>
-                      <td className="px-4 py-3">
-                        <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${ORDER_STATUS_COLORS[o.status] ?? 'bg-gray-100 text-gray-600'}`}>
-                          {ORDER_STATUS_LABELS[o.status] ?? o.status}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${PAYMENT_STATUS_COLORS[o.paymentStatus] ?? 'bg-gray-100 text-gray-600'}`}>
-                          {PAYMENT_STATUS_LABELS[o.paymentStatus] ?? o.paymentStatus}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 font-mono text-xs text-gray-700">
-                        {$(subtotal)}
-                      </td>
-                      <td className="px-4 py-3 text-xs text-gray-400">
-                        {o.createdAt.toLocaleDateString()}
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <Link
-                          href={`/admin/orders/${o.id}`}
-                          className="text-sm text-gray-600 hover:text-gray-900"
-                        >
-                          View →
-                        </Link>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
+          <div>
+            <p className="text-xs text-gray-500 mb-1">Units sold</p>
+            <SimpleBarChart bars={series.map(b => ({ label: fmtBucketLabel(b.bucketStart, granularity), value: b.unitsSold }))} formatValue={v => fmtInt(v)} />
           </div>
-        )}
-      </section>
-
-      {/* ── Recently Completed Orders ─────────────────────────────────────────── */}
-      <section className="mb-8">
-        <div className="flex items-center justify-between mb-3">
-          <SectionHeader
-            title="Recently Completed Orders"
-            note="Sorted by last updated — most recently completed first."
-          />
-          <Link
-            href="/admin/orders?status=complete"
-            className="text-xs text-gray-400 hover:text-gray-700"
-          >
-            View all →
-          </Link>
-        </div>
-        {recentCompleted.length === 0 ? (
-          <p className="text-sm text-gray-500">No completed orders yet.</p>
-        ) : (
-          <div className="overflow-x-auto rounded-md border border-gray-200">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 border-b border-gray-200">
-                <tr className="text-left text-gray-500">
-                  <th className="px-4 py-3 font-medium">Buyer</th>
-                  <th className="px-4 py-3 font-medium">Items</th>
-                  <th className="px-4 py-3 font-medium">Subtotal</th>
-                  <th className="px-4 py-3 font-medium">Shipping</th>
-                  <th className="px-4 py-3 font-medium">Total</th>
-                  <th className="px-4 py-3 font-medium">Completed</th>
-                  <th className="px-4 py-3" />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {recentCompleted.map((o) => {
-                  const subtotal = o.orderItems.reduce((s, oi) => s + oi.price, 0)
-                  const shipping = o.estimatedShipping ?? null
-                  const total    = shipping !== null ? subtotal + shipping : null
-                  return (
-                    <tr key={o.id} className="hover:bg-gray-50">
-                      <td className="px-4 py-3 font-medium text-gray-900">{o.buyerName}</td>
-                      <td className="px-4 py-3 text-gray-500">{o.orderItems.length}</td>
-                      <td className="px-4 py-3 font-mono text-xs text-gray-700">
-                        {$(subtotal)}
-                      </td>
-                      <td className="px-4 py-3 font-mono text-xs text-gray-500">
-                        {shipping !== null ? $(shipping) : '—'}
-                      </td>
-                      <td className="px-4 py-3 font-mono text-xs font-medium text-gray-900">
-                        {total !== null ? $(total) : $(subtotal)}
-                      </td>
-                      <td className="px-4 py-3 text-xs text-gray-400">
-                        {o.updatedAt.toLocaleDateString()}
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <Link
-                          href={`/admin/orders/${o.id}`}
-                          className="text-sm text-gray-600 hover:text-gray-900"
-                        >
-                          View →
-                        </Link>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
+          <div>
+            <p className="text-xs text-gray-500 mb-1">Gross spread (consignment)</p>
+            <SimpleBarChart bars={series.map(b => ({ label: fmtBucketLabel(b.bucketStart, granularity), value: b.consignmentGrossSpread.toNumber() }))} formatValue={v => `$${v.toFixed(0)}`} />
           </div>
-        )}
+          <div>
+            <p className="text-xs text-gray-500 mb-1">Gross margin (buyout/company-owned)</p>
+            <SimpleBarChart bars={series.map(b => ({ label: fmtBucketLabel(b.bucketStart, granularity), value: b.buyoutGrossMargin.toNumber() }))} formatValue={v => `$${v.toFixed(0)}`} />
+          </div>
+        </div>
       </section>
-    </>
+    </div>
   )
 }
