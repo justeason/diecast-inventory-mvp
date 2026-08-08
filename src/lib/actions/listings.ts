@@ -3,6 +3,19 @@
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { redirect } from 'next/navigation'
+import { createAvailableFanoutJob, createPriceChangeFanoutJob } from '@/lib/buyerAlertsTrigger'
+import { processFanoutJobs } from '@/lib/buyerAlertsFanoutProcessor'
+
+// Best-effort immediate processing after a fan-out job is durably committed. Never
+// lets a processing failure affect the admin action — the cron and admin "process
+// next batch" button are the durability backstop, not this call.
+async function processFanoutBestEffort(): Promise<void> {
+  try {
+    await processFanoutJobs()
+  } catch {
+    // swallowed intentionally — the durable BuyerAlertFanout row already exists
+  }
+}
 
 const isValidPositivePrice = (v: string) => {
   const n = Number(v)
@@ -45,15 +58,22 @@ export async function createListing(
   if (item.status !== 'available') return { errors: { itemId: ['Item is not available for listing.'] } }
   if (item.listing) return { errors: { itemId: ['Item already has a listing.'] } }
 
-  await prisma.listing.create({
-    data: {
-      itemId,
-      title,
-      price: Number(price),
-      description: description || undefined,
-      status: 'active',
-    },
+  // The listing mutation and the durable fan-out job commit atomically — a crash
+  // right after this transaction can never lose the intent to notify wanted buyers.
+  await prisma.$transaction(async (tx) => {
+    const listing = await tx.listing.create({
+      data: {
+        itemId,
+        title,
+        price: Number(price),
+        description: description || undefined,
+        status: 'active',
+      },
+    })
+    await createAvailableFanoutJob(tx, item.catalogId, listing.id, listing.version)
   })
+
+  await processFanoutBestEffort()
 
   redirect('/admin/listings')
 }
@@ -68,28 +88,48 @@ export async function updateListing(
 
   const { title, price, description, status } = result.data
 
+  // Authoritative pre-update snapshot — never infer old price from alert history.
+  const before = await prisma.listing.findUnique({
+    where: { id },
+    select: { itemId: true, price: true, status: true, item: { select: { catalogId: true, status: true } } },
+  })
+
   if (status === 'sold') {
-    const existing = await prisma.listing.findUnique({
-      where: { id },
-      select: { itemId: true },
-    })
-    if (existing) {
+    if (before) {
       await prisma.$transaction(async (tx) => {
         await tx.listing.update({
           where: { id },
-          data: { title, price: Number(price), description: description || undefined, status },
+          data: { title, price: Number(price), description: description || undefined, status, version: { increment: 1 } },
         })
         await tx.itemInstance.update({
-          where: { id: existing.itemId },
+          where: { id: before.itemId },
           data: { status: 'sold' },
         })
       })
     }
   } else {
-    await prisma.listing.update({
-      where: { id },
-      data: { title, price: Number(price), description: description || undefined, status },
+    // The listing mutation and the durable fan-out job (if any transition qualifies)
+    // commit atomically. Alerts fire only when the item itself is available (a listing
+    // can be 'active' while its item is 'reserved' during checkout).
+    await prisma.$transaction(async (tx) => {
+      const updated = await tx.listing.update({
+        where: { id },
+        data: { title, price: Number(price), description: description || undefined, status, version: { increment: 1 } },
+      })
+
+      if (before && before.item.status === 'available') {
+        const becameActive = before.status !== 'active' && updated.status === 'active'
+        const staysActive   = before.status === 'active' && updated.status === 'active'
+
+        if (becameActive) {
+          await createAvailableFanoutJob(tx, before.item.catalogId, updated.id, updated.version)
+        } else if (staysActive && before.price !== updated.price) {
+          await createPriceChangeFanoutJob(tx, before.item.catalogId, updated.id, before.price, updated.price, updated.version)
+        }
+      }
     })
+
+    await processFanoutBestEffort()
   }
 
   redirect('/admin/listings')

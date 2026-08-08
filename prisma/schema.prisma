@@ -28,6 +28,8 @@ model CatalogModel {
   externalObservations ExternalMarketObservation[]
   photoFingerprints    CatalogPhotoFingerprint[]
   captureItems         MobileCaptureItem[]
+  buyerAlertEvents     BuyerAlertEvent[]
+  buyerAlertFanouts    BuyerAlertFanout[]
 
   @@index([brand])
   @@index([name])
@@ -144,6 +146,11 @@ model Listing {
   title       String
   description String?
   status      String       @default("active")
+  // Durable transition counter — incremented (not just updatedAt) whenever this
+  // Listing goes through an alert-relevant mutation. Used as the version salt in
+  // buyer-alert event keys, since updatedAt alone is not a safe uniqueness anchor
+  // (millisecond precision, not guaranteed monotonic-unique under rapid writes).
+  version     Int          @default(1)
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
   orderItems  OrderItem[]
@@ -168,6 +175,8 @@ model CustomerProfile {
   communityProfile    CustomerCommunityProfile?
   wantedList          WantedCatalogModel[]
   captureSessions     MobileCaptureSession[]
+  alertPreference     BuyerAlertPreference?
+  alertEvents         BuyerAlertEvent[]
 }
 
 model SellerProfile {
@@ -693,6 +702,9 @@ model WantedCatalogModel {
   catalogModelId    String
   maxDesiredPrice   Decimal?        @db.Decimal(10, 2)
   notes             String?
+  // Per-model alert toggles — respected in addition to (not instead of) BuyerAlertPreference.
+  availabilityAlertEnabled Boolean  @default(true)
+  priceAlertEnabled        Boolean  @default(true)
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
 
@@ -701,6 +713,89 @@ model WantedCatalogModel {
 
   @@unique([customerProfileId, catalogModelId])
   @@index([customerProfileId])
+}
+
+// 14A: Buyer-level wanted-alert preferences (global; per-model overrides live on WantedCatalogModel).
+model BuyerAlertPreference {
+  id                       String   @id @default(cuid())
+  customerProfileId        String   @unique
+  wantedAvailableAlerts    Boolean  @default(true)
+  wantedPriceChangeAlerts  Boolean  @default(true)
+  emailAlertsEnabled       Boolean  @default(true)
+  // Minimum meaningful price-drop/rise, in percent (integer, e.g. 5 = 5%). Null = use DEFAULT_PRICE_CHANGE_THRESHOLD_PCT.
+  priceChangeThresholdPct  Int?
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  customerProfile CustomerProfile @relation(fields: [customerProfileId], references: [id], onDelete: Cascade)
+}
+
+// 14A: Durable, idempotent buyer alert events. One row per logical notification.
+model BuyerAlertEvent {
+  id                 String    @id @default(cuid())
+  customerProfileId  String
+  catalogModelId     String
+  listingId          String?
+  alertType          String    // wanted_available | wanted_price_decrease | wanted_price_increase
+  eventKey           String    // deterministic, server-generated — see buyerAlertKeys.ts
+  // Integer cents — never JS float — normalized from the authoritative Listing.price.
+  previousPriceCents Int?
+  currentPriceCents  Int?
+  // pending | sending | sent | failed | suppressed | delivery_unknown
+  status             String    @default("pending")
+  // Delivery lease — claimed rows carry a token the worker must present again before
+  // writing a terminal status, so a worker whose lease expired and was reclaimed by
+  // someone else can never clobber a fresher result (see buyerAlertsLease.ts).
+  claimedAt          DateTime?
+  claimToken         String?
+  // Resend message id, stored when the provider confirms acceptance (status='sent').
+  providerMessageId  String?
+  createdAt          DateTime  @default(now())
+  sentAt             DateTime?
+  readAt             DateTime?
+  failureCode        String?
+
+  customerProfile CustomerProfile @relation(fields: [customerProfileId], references: [id], onDelete: Cascade)
+  catalogModel    CatalogModel    @relation(fields: [catalogModelId], references: [id], onDelete: Cascade)
+
+  @@unique([customerProfileId, eventKey])
+  @@index([customerProfileId, createdAt])
+  @@index([status, createdAt])
+}
+
+// Durable fan-out outbox — one row per logical listing transition (availability or
+// price change). Created in the SAME transaction as the listing mutation, so a crash
+// after commit can never lose the intent to fan out, even if no BuyerAlertEvent rows
+// exist yet. The processor resumes from `cursor` (last processed WantedCatalogModel id)
+// so a crash mid-traversal restarts at the next page, not from the beginning.
+model BuyerAlertFanout {
+  id                 String    @id @default(cuid())
+  eventType          String    // wanted_available | wanted_price_decrease | wanted_price_increase
+  listingId          String
+  catalogModelId     String
+  eventKey           String    @unique // same deterministic key used on the resulting BuyerAlertEvent rows
+  previousPriceCents Int?
+  currentPriceCents  Int?
+  listingVersion     Int
+  // Authoritative audience cutoff — set atomically (DB default, same INSERT as the row
+  // itself) at job-creation time. The fan-out processor only notifies buyers whose
+  // WantedCatalogModel.createdAt is <= this instant, so a buyer who adds the model to
+  // their wanted list AFTER the transition never receives a historical alert for it.
+  audienceCutoffAt   DateTime  @default(now())
+  // pending | processing | complete | failed
+  status             String    @default("pending")
+  cursor             String?
+  claimedAt          DateTime?
+  claimToken         String?
+  createdAt          DateTime  @default(now())
+  startedAt          DateTime?
+  completedAt        DateTime?
+  failureCode        String?
+  requestId          String?
+
+  catalogModel CatalogModel @relation(fields: [catalogModelId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
 }
 
 model ExternalMarketImportBatch {

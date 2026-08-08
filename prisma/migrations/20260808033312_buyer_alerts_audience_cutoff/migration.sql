@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "BuyerAlertFanout" ADD COLUMN     "audienceCutoffAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP;

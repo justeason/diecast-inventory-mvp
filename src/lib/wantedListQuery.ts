@@ -7,6 +7,8 @@ export type WantedListEntry = {
   maxDesiredPrice: string | null
   notes: string | null
   createdAt: Date
+  availabilityAlertEnabled: boolean
+  priceAlertEnabled: boolean
   catalog: {
     id: string
     brand: string
@@ -24,6 +26,8 @@ type RawRow = {
   maxDesiredPrice: { toString(): string } | null
   notes: string | null
   createdAt: Date
+  availabilityAlertEnabled: boolean
+  priceAlertEnabled: boolean
   catalogModel: {
     id: string
     brand: string
@@ -42,6 +46,8 @@ function mapRow(r: RawRow): WantedListEntry {
     maxDesiredPrice: r.maxDesiredPrice?.toString() ?? null,
     notes: r.notes,
     createdAt: r.createdAt,
+    availabilityAlertEnabled: r.availabilityAlertEnabled,
+    priceAlertEnabled: r.priceAlertEnabled,
     catalog: {
       id: r.catalogModel.id,
       brand: r.catalogModel.brand,
@@ -60,6 +66,8 @@ const WANTED_SELECT = {
   maxDesiredPrice: true,
   notes: true,
   createdAt: true,
+  availabilityAlertEnabled: true,
+  priceAlertEnabled: true,
   catalogModel: {
     select: {
       id: true,

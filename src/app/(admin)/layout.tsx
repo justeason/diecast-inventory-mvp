@@ -24,6 +24,7 @@ const navLinks = [
   { href: '/admin/catalog-image-intelligence', label: 'Img Intel' },
   { href: '/admin/catalog-quality',            label: 'Cat. Quality' },
   { href: '/admin/system-health',             label: 'Sys Health' },
+  { href: '/admin/system/alerts',             label: 'Buyer Alerts' },
 ]
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {

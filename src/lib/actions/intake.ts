@@ -16,6 +16,8 @@ import {
   calculateBuyoutPayoutSnapshot,
 } from '@/lib/sellerPayoutCalculation'
 import { ensureSellerLifecycleEvent } from '@/lib/actions/sellerLifecycle'
+import { createAvailableFanoutJob } from '@/lib/buyerAlertsTrigger'
+import { processFanoutJobs } from '@/lib/buyerAlertsFanoutProcessor'
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -479,11 +481,12 @@ export async function convertDraft(
         await tx.photo.create({ data: { itemId: item.id, url: back, type: 'back', sortOrder: 1 } })
       }
 
-      // 6. Optionally create Listing in the same transaction.
+      // 6. Optionally create Listing — and its durable fan-out job — in the same transaction.
       if (createListing && listingTitle && listingPrice) {
         const listing = await tx.listing.create({
           data: { itemId: item.id, title: listingTitle, price: listingPrice, status: 'active' },
         })
+        await createAvailableFanoutJob(tx, catalog.id, listing.id, listing.version)
         newListingId = listing.id
       }
 
@@ -529,6 +532,17 @@ export async function convertDraft(
       }
     } catch (err) {
       console.error('[convertDraft] lifecycle event failed:', err instanceof Error ? err.message : 'UnknownError')
+    }
+  }
+
+  // The durable BuyerAlertFanout row (if any) already committed inside the conversion
+  // transaction above. This is only a best-effort latency optimization — if it fails,
+  // the cron / admin processor still picks up the durable row.
+  if (newListingId) {
+    try {
+      await processFanoutJobs()
+    } catch (err) {
+      console.error('[convertDraft] buyer alert fan-out processing failed:', err instanceof Error ? err.message : 'UnknownError')
     }
   }
 

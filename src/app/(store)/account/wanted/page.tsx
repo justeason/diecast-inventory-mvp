@@ -6,6 +6,7 @@ import { getWantedList, getAvailableWantedList, getUnavailableWantedList, WANTED
 import { matchWantedList } from '@/lib/wantedListMatching'
 import { WantedListAddForm } from '@/components/store/WantedListAddForm'
 import { RemoveFromWantedButton } from '@/components/store/RemoveFromWantedButton'
+import { WantedAlertToggle } from '@/components/store/WantedAlertToggle'
 
 export const dynamic = 'force-dynamic'
 
@@ -125,6 +126,21 @@ export default async function WantedListPage({
                     {entry.notes && (
                       <p className="mt-1 text-xs text-gray-400">{entry.notes}</p>
                     )}
+
+                    <div className="mt-2 flex items-center gap-2">
+                      <WantedAlertToggle
+                        id={entry.id}
+                        field="availabilityAlertEnabled"
+                        enabled={entry.availabilityAlertEnabled}
+                        label="Availability alert"
+                      />
+                      <WantedAlertToggle
+                        id={entry.id}
+                        field="priceAlertEnabled"
+                        enabled={entry.priceAlertEnabled}
+                        label="Price alert"
+                      />
+                    </div>
 
                     <div className="mt-3 flex items-center gap-4">
                       {avail?.firstListingId && (

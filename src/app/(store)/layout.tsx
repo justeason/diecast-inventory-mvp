@@ -1,8 +1,13 @@
 import Link from 'next/link'
 import { CartCountBadge } from '@/components/store/CartCountBadge'
 import { CategoryNav } from '@/components/store/CategoryNav'
+import { getBuyerSession } from '@/lib/buyerSession'
+import { getUnreadAlertCount } from '@/lib/buyerAlertsQuery'
 
-export default function StoreLayout({ children }: { children: React.ReactNode }) {
+export default async function StoreLayout({ children }: { children: React.ReactNode }) {
+  const session = await getBuyerSession()
+  const unreadAlerts = session ? await getUnreadAlertCount(session.profileId) : 0
+
   return (
     <div className="min-h-screen bg-white">
       <header className="border-b border-gray-200">
@@ -28,6 +33,14 @@ export default function StoreLayout({ children }: { children: React.ReactNode })
           </Link>
           <Link href="/account/wanted" className="text-sm text-gray-600 hover:text-gray-900 transition-colors">
             Wanted
+          </Link>
+          <Link href="/account/alerts" className="relative text-sm text-gray-600 hover:text-gray-900 transition-colors">
+            Alerts
+            {unreadAlerts > 0 && (
+              <span className="absolute -top-2 -right-3 flex h-4 w-4 items-center justify-center rounded-full bg-gray-900 text-[10px] font-bold text-white">
+                {unreadAlerts > 99 ? '99+' : unreadAlerts}
+              </span>
+            )}
           </Link>
           <Link href="/account/community" className="text-sm text-gray-600 hover:text-gray-900 transition-colors">
             My Profile
