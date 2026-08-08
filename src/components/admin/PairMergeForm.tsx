@@ -8,9 +8,10 @@ type Props = {
   canonicalId: string
   duplicateId: string
   canonicalLabel: string
+  expectedImpactSnapshot?: string
 }
 
-export function PairMergeForm({ action, canonicalId, duplicateId, canonicalLabel }: Props) {
+export function PairMergeForm({ action, canonicalId, duplicateId, canonicalLabel, expectedImpactSnapshot }: Props) {
   const [state, dispatch, pending] = useActionState(action, null)
   const [confirm, setConfirm] = useState('')
   const ready = confirm === 'MERGE'
@@ -19,6 +20,9 @@ export function PairMergeForm({ action, canonicalId, duplicateId, canonicalLabel
     <form action={dispatch} className="space-y-4">
       <input type="hidden" name="canonicalId" value={canonicalId} />
       <input type="hidden" name="duplicateId" value={duplicateId} />
+      {expectedImpactSnapshot && (
+        <input type="hidden" name="expectedImpactSnapshot" value={expectedImpactSnapshot} />
+      )}
 
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-1">

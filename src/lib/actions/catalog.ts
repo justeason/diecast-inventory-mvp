@@ -6,6 +6,7 @@ import { prisma } from '@/lib/prisma'
 import { redirect } from 'next/navigation'
 import { searchCatalogModels } from '@/lib/catalogSearch'
 import { DUPLICATE_SCORE_THRESHOLD } from '@/lib/catalogMatching'
+import { computeImpactCounts, type MergeImpactSummary } from '@/lib/catalogDataQualityQuery'
 
 export type MergeActionState = { errors: Record<string, string[]> } | null
 
@@ -88,6 +89,15 @@ export async function mergeCatalogModels(
   if (duplicateIds.includes(canonicalId))
     return { errors: { form: ['The canonical model cannot also be in the merge list.'] } }
 
+  // Parse explicit merge-direction snapshot: { canonicalModelId, sourceModelId, sourceImpact }.
+  // Verified inside TX — direction mismatch or stale counts both abort the merge.
+  type ExpectedPayload = { canonicalModelId: string; sourceModelId: string; sourceImpact: MergeImpactSummary }
+  let expectedPayload: ExpectedPayload | null = null
+  const expectedRaw = (formData.get('expectedImpactSnapshot') as string | null) ?? null
+  if (expectedRaw) {
+    try { expectedPayload = JSON.parse(expectedRaw) } catch { /* malformed JSON — skip stale check */ }
+  }
+
   // Optimistic pre-flight existence check — re-verified inside TX after acquiring locks.
   const allIds = [canonicalId, ...duplicateIds]
   const existCount = await prisma.catalogModel.count({ where: { id: { in: allIds } } })
@@ -124,6 +134,27 @@ export async function mergeCatalogModels(
       for (let i = 0; i < duplicateIds.length; i++) {
         const dupeId = duplicateIds[i]
         const dupSnap = dupeSnapshotsOrNull[i]!
+
+        // Stale-preview + direction check after acquiring locks.
+        // Verifies canonical/source IDs match submitted direction, then recalculates all 9 counts.
+        if (expectedPayload) {
+          if (expectedPayload.canonicalModelId !== canonicalId || expectedPayload.sourceModelId !== dupeId) {
+            mergeError = { errors: { form: ['Merge direction was changed since the preview. Refresh and confirm again.'] } }
+            throw new Error('TX_VALIDATION')
+          }
+          const current = await computeImpactCounts(dupeId, tx)
+          const exp = expectedPayload.sourceImpact
+          if (
+            exp.itemInstances    !== current.itemInstances    || exp.collectionItems  !== current.collectionItems  ||
+            exp.wantedBy         !== current.wantedBy         || exp.sellerSubmissions !== current.sellerSubmissions ||
+            exp.photos           !== current.photos           || exp.fingerprints      !== current.fingerprints      ||
+            exp.activeListings   !== current.activeListings   || exp.soldItems         !== current.soldItems         ||
+            exp.externalObs      !== current.externalObs
+          ) {
+            mergeError = { errors: { form: ['Impact changed since the preview was shown. Refresh and review before merging.'] } }
+            throw new Error('TX_VALIDATION')
+          }
+        }
 
         const [items, collItems, suggestions, submissions, photos] = await Promise.all([
           tx.itemInstance.updateMany({ where: { catalogId: dupeId }, data: { catalogId: canonicalId } }),

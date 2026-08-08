@@ -60,6 +60,22 @@ model CatalogDuplicateSuppression {
   createdAt DateTime @default(now())
 }
 
+model CatalogDataQualityAudit {
+  id             String   @id @default(cuid())
+  // Plain strings — not FK relations — so audit survives model changes/deletions.
+  issueKey       String
+  action         String
+  catalogModelId String
+  beforeSnapshot Json
+  afterSnapshot  Json
+  adminNote      String?
+  createdAt      DateTime @default(now())
+
+  @@index([catalogModelId])
+  @@index([issueKey])
+  @@index([createdAt])
+}
+
 model CatalogModelPhoto {
   id          String       @id @default(cuid())
   catalogId   String

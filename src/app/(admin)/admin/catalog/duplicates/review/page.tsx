@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { suppressPair } from '@/lib/actions/catalogDuplicates'
 import { stablePairKey, scorePair } from '@/lib/catalogDuplicateDetection'
 import { SuppressPairForm } from '@/components/admin/SuppressPairForm'
+import { getMergeImpactSummary } from '@/lib/catalogDataQualityQuery'
 
 export const dynamic = 'force-dynamic'
 
@@ -62,7 +63,7 @@ export default async function ReviewPage({
   const { idA, idB } = await searchParams
   if (!idA || !idB) notFound()
 
-  const [modelA, modelB] = await Promise.all([
+  const [modelA, modelB, mergeImpact] = await Promise.all([
     prisma.catalogModel.findUnique({
       where: { id: idA },
       include: {
@@ -77,7 +78,8 @@ export default async function ReviewPage({
         items: { select: { listing: { select: { id: true } }, status: true } },
       },
     }),
-  ]) as [Model | null, Model | null]
+    getMergeImpactSummary(idA, idB),
+  ]) as [Model | null, Model | null, Awaited<ReturnType<typeof getMergeImpactSummary>>]
 
   if (!modelA || !modelB) notFound()
 
@@ -129,20 +131,38 @@ export default async function ReviewPage({
         </table>
       </div>
 
-      {/* Inventory impact */}
-      <div className="grid grid-cols-2 gap-4 mb-6">
-        {([modelA, modelB] as Model[]).map((m, i) => (
-          <div key={m.id} className="rounded-md border border-gray-200 bg-white px-4 py-3 text-sm space-y-1">
-            <p className="font-medium text-gray-700 mb-2">Model {i === 0 ? 'A' : 'B'}</p>
-            <p className="text-gray-600">Inventory items: <strong>{m._count.items}</strong></p>
-            <p className="text-gray-600">
-              Active listings: <strong className={[activeListingsA, activeListingsB][i] > 0 ? 'text-amber-700' : ''}>{[activeListingsA, activeListingsB][i]}</strong>
-            </p>
-            <p className="text-gray-600">Sold: <strong>{[soldA, soldB][i]}</strong></p>
-            <p className="text-gray-600">Collection items: <strong>{m._count.collectionItems}</strong></p>
-            <p className="text-gray-600">Sell requests: <strong>{m._count.sellerSubmissions}</strong></p>
+      {/* Merge impact summary */}
+      <div className="mb-6">
+        <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">
+          Pre-merge impact (re-fetched after lock)
+        </p>
+        <div className="grid grid-cols-2 gap-4">
+          {([
+            { label: 'Model A', impact: mergeImpact.modelA, activeListings: activeListingsA, sold: soldA },
+            { label: 'Model B', impact: mergeImpact.modelB, activeListings: activeListingsB, sold: soldB },
+          ] as const).map(({ label, impact, activeListings, sold }) => (
+            <div key={label} className="rounded-md border border-gray-200 bg-white px-4 py-3 text-sm space-y-1">
+              <p className="font-medium text-gray-700 mb-2">{label}</p>
+              <p className="text-gray-600">Inventory items: <strong>{impact.itemInstances}</strong></p>
+              <p className="text-gray-600">
+                Active listings:{' '}
+                <strong className={activeListings > 0 ? 'text-amber-700' : ''}>{activeListings}</strong>
+              </p>
+              <p className="text-gray-600">Sold: <strong>{sold}</strong></p>
+              <p className="text-gray-600">Collection items: <strong>{impact.collectionItems}</strong></p>
+              <p className="text-gray-600">Wanted by: <strong>{impact.wantedBy}</strong></p>
+              <p className="text-gray-600">Sell requests: <strong>{impact.sellerSubmissions}</strong></p>
+              <p className="text-gray-600">Photos: <strong>{impact.photos}</strong></p>
+              <p className="text-gray-600">Fingerprints: <strong>{impact.fingerprints}</strong></p>
+              <p className="text-gray-600">Market observations: <strong>{impact.externalObs}</strong></p>
+            </div>
+          ))}
+        </div>
+        {(activeListingsA > 0 || activeListingsB > 0) && (
+          <div className="mt-3 rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
+            Warning: one or more models have active listings. Merging will reassign all inventory to the canonical model.
           </div>
-        ))}
+        )}
       </div>
 
       {/* Actions */}

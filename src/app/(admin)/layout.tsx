@@ -22,6 +22,7 @@ const navLinks = [
   { href: '/admin/resale-estimator', label: 'Resale Est.' },
   { href: '/admin/market-research', label: 'Mkt Research' },
   { href: '/admin/catalog-image-intelligence', label: 'Img Intel' },
+  { href: '/admin/catalog-quality',            label: 'Cat. Quality' },
   { href: '/admin/system-health',             label: 'Sys Health' },
 ]
 

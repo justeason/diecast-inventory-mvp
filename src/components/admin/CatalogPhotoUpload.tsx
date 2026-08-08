@@ -62,10 +62,12 @@ function CatalogPhotoRow({
   catalogId,
   photo,
   isPrimary,
+  expectedOrderJson,
 }: {
   catalogId: string
   photo: CatalogPhoto
   isPrimary: boolean
+  expectedOrderJson: string
 }) {
   const altTextAction = updateCatalogPhotoAltText.bind(null, catalogId, photo.id)
   const [altTextState, altTextFormAction] = useActionState<CatalogPhotoActionState, FormData>(
@@ -92,6 +94,7 @@ function CatalogPhotoRow({
 
       {!isPrimary && (
         <form action={setPrimaryCatalogPhoto.bind(null, catalogId, photo.id)}>
+          <input type="hidden" name="expectedPhotoOrder" value={expectedOrderJson} />
           <SetPrimaryButton />
         </form>
       )}
@@ -138,6 +141,8 @@ export function CatalogPhotoUpload({ catalogId, photos }: Props) {
     null
   )
 
+  const expectedOrderJson = JSON.stringify(photos.map(p => ({ id: p.id, sortOrder: p.sortOrder })))
+
   return (
     <div className="space-y-4">
       <div>
@@ -159,6 +164,7 @@ export function CatalogPhotoUpload({ catalogId, photos }: Props) {
               catalogId={catalogId}
               photo={photo}
               isPrimary={i === 0}
+              expectedOrderJson={expectedOrderJson}
             />
           ))}
         </div>

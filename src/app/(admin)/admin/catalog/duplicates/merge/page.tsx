@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation'
 import { prisma } from '@/lib/prisma'
 import { PairMergeForm } from '@/components/admin/PairMergeForm'
 import { mergeCatalogModels } from '@/lib/actions/catalog'
+import { getMergeImpactSummary } from '@/lib/catalogDataQualityQuery'
 
 export const dynamic = 'force-dynamic'
 
@@ -15,7 +16,7 @@ export default async function CatalogMergePage({
   if (!canonicalId || !duplicateId) notFound()
   if (canonicalId === duplicateId) notFound()
 
-  const [canonical, duplicate] = await Promise.all([
+  const [canonical, duplicate, mergeImpact] = await Promise.all([
     prisma.catalogModel.findUnique({
       where: { id: canonicalId },
       include: {
@@ -30,6 +31,7 @@ export default async function CatalogMergePage({
         items: { select: { listing: { select: { id: true } }, status: true } },
       },
     }),
+    getMergeImpactSummary(canonicalId, duplicateId),
   ])
 
   if (!canonical || !duplicate) notFound()
@@ -81,6 +83,7 @@ export default async function CatalogMergePage({
         canonicalId={canonicalId}
         duplicateId={duplicateId}
         canonicalLabel={canonicalLabel}
+        expectedImpactSnapshot={JSON.stringify({ canonicalModelId: canonicalId, sourceModelId: duplicateId, sourceImpact: mergeImpact.modelB })}
       />
     </>
   )

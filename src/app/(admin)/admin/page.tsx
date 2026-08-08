@@ -236,6 +236,7 @@ export default async function AdminDashboardPage() {
             { label: 'Orders', href: '/admin/orders' },
             { label: 'Customers', href: '/admin/customers' },
             { label: 'Analytics', href: '/admin/analytics' },
+            { label: 'Catalog Quality', href: '/admin/catalog-quality' },
           ].map((a) => (
             <Link
               key={a.href}
