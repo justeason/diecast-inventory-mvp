@@ -20,6 +20,7 @@ const navLinks = [
   { href: '/admin/reconciliation', label: 'Reconciliation' },
   { href: '/admin/analytics', label: 'Business Analytics' },
   { href: '/admin/resale-estimator', label: 'Resale Est.' },
+  { href: '/admin/valuation', label: 'Valuation' },
   { href: '/admin/market-research', label: 'Mkt Research' },
   { href: '/admin/catalog-image-intelligence', label: 'Img Intel' },
   { href: '/admin/catalog-quality',            label: 'Cat. Quality' },

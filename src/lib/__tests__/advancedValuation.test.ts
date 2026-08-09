@@ -564,6 +564,39 @@ describe('buildAdvancedValuation — integer-cent calculations', () => {
   })
 })
 
+// 14C: additive fields (minCents/maxCents/oldestSaleAt) on the filtered/chosen set.
+describe('buildAdvancedValuation — minCents/maxCents/oldestSaleAt (14C additions)', () => {
+  it('reports min/max of the filtered (post-IQR) sold set, and null when no sales', () => {
+    const noSales = buildAdvancedValuation(target(), [], [], 0, NOW)
+    expect(noSales.minCents).toBeNull()
+    expect(noSales.maxCents).toBeNull()
+    expect(noSales.oldestSaleAt).toBeNull()
+
+    const sales = makeSales(5, {}, [900, 1000, 1100, 1200, 1300])
+    const v = buildAdvancedValuation(target(), sales, [], 0, NOW)
+    expect(v.minCents).toBe(900)
+    expect(v.maxCents).toBe(1300)
+  })
+
+  it('oldestSaleAt matches the oldest sale in the chosen comparable window', () => {
+    const oldest = daysAgo(20)
+    const sales = [
+      sale({ orderCompletedAt: daysAgo(5) }),
+      sale({ orderCompletedAt: oldest }),
+      sale({ orderCompletedAt: daysAgo(12) }),
+    ]
+    const v = buildAdvancedValuation(target(), sales, [], 0, NOW)
+    expect(v.oldestSaleAt?.getTime()).toBe(oldest.getTime())
+  })
+
+  it('an IQR-excluded outlier does not count toward minCents/maxCents', () => {
+    const sales = makeSales(6, {}, [900, 950, 1000, 1050, 1100, 50000]) // 50000 is the outlier
+    const v = buildAdvancedValuation(target(), sales, [], 0, NOW)
+    expect(v.outliersRemoved).toBe(true)
+    expect(v.maxCents).toBeLessThan(50000)
+  })
+})
+
 describe('buildAdvancedValuation — outlier removal', () => {
   it('removes outliers from sufficient sample (≥5)', () => {
     const sales = makeSales(6, {}, [900, 950, 1000, 1050, 1100, 50000])

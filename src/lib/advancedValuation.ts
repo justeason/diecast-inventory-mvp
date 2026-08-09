@@ -71,6 +71,12 @@ export type AdvancedValuation = {
   unweightedMedian: number | null
   weightedMedian: number | null
   extendedHistoryUsed: boolean
+  // Min/max of the filtered (post-IQR) sold set, and the oldest sale in the chosen
+  // window — additive fields for 14C pricing-intelligence blending; not used by the
+  // pre-existing collection-valuation consumer.
+  minCents: number | null
+  maxCents: number | null
+  oldestSaleAt: Date | null
 }
 
 const MS_90D  = 90  * 24 * 60 * 60 * 1000
@@ -350,6 +356,9 @@ export function buildAdvancedValuation(
     unweightedMedian: null,
     weightedMedian: null,
     extendedHistoryUsed: false,
+    minCents: null,
+    maxCents: null,
+    oldestSaleAt: null,
   }
 
   if (base.matchLevel === 'insufficient' || base.comparables.length === 0) {
@@ -447,5 +456,8 @@ export function buildAdvancedValuation(
     unweightedMedian,
     weightedMedian,
     extendedHistoryUsed: base.extendedHistoryUsed,
+    minCents: filteredSorted.length > 0 ? filteredSorted[0] : null,
+    maxCents: filteredSorted.length > 0 ? filteredSorted[filteredSorted.length - 1] : null,
+    oldestSaleAt: base.oldestComparableDate,
   }
 }

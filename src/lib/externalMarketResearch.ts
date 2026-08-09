@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
+import { median, percentile } from '@/lib/resaleEstimator'
 
 // Below this sample count in the 12-month primary window, extend to 24-month history.
 export const MIN_SOLD_PRIMARY_SAMPLE = 3
@@ -22,12 +23,23 @@ export type ExternalSoldSummary = {
 
 export type ResearchFreshness = 'fresh' | 'aging' | 'stale' | 'unavailable'
 
+// Active-ask price stats — reuses the same askCents array already fetched for
+// lowestActiveAskCents below; no additional query. Added for 14C pricing-intelligence
+// evidence summaries (Tier 4: external active asks, context only — never a sold value).
+export type ExternalAskSummary = {
+  count: number
+  medianCents: number
+  p75Cents: number
+  highestActiveAskCents: number
+}
+
 export type ExternalMarketSummary = {
   catalogModelId: string
   asOf: Date
   soldSummary: ExternalSoldSummary | null
   activeAskCount: number
   lowestActiveAskCents: number | null
+  askSummary: ExternalAskSummary | null
   researchFreshness: ResearchFreshness
   latestSoldAt: Date | null
   latestAskObservedAt: Date | null
@@ -193,6 +205,7 @@ function emptyExternalSummary(catalogModelId: string, asOf: Date): ExternalMarke
     soldSummary: null,
     activeAskCount: 0,
     lowestActiveAskCents: null,
+    askSummary: null,
     researchFreshness: 'unavailable',
     latestSoldAt: null,
     latestAskObservedAt: null,
@@ -270,12 +283,23 @@ export async function getExternalMarketSummaries(
 
     const providers = [...new Set(rows.map(r => r.provider))]
 
+    const sortedAsks = [...askCents].sort((a, b) => a - b)
+    const askSummary: ExternalAskSummary | null = sortedAsks.length > 0
+      ? {
+          count: sortedAsks.length,
+          medianCents: median(sortedAsks),
+          p75Cents: percentile(sortedAsks, 0.75),
+          highestActiveAskCents: sortedAsks[sortedAsks.length - 1],
+        }
+      : null
+
     result.set(catalogModelId, {
       catalogModelId,
       asOf,
       soldSummary: buildSoldSummary(soldPriceCents, soldDates, asOf),
       activeAskCount: askRows.length,
       lowestActiveAskCents: askCents.length > 0 ? Math.min(...askCents) : null,
+      askSummary,
       researchFreshness: classifyFreshness(latestSoldAt, latestAskObservedAt, asOf),
       latestSoldAt,
       latestAskObservedAt,

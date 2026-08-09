@@ -25,6 +25,8 @@ import { fetchComparableSales } from '@/lib/resaleEstimatorQuery'
 import { computeEstimate, type TargetModel } from '@/lib/resaleEstimator'
 import { computeGuidance, isSubmissionPricingLocked } from '@/lib/sellerPricingGuidance'
 import { PricingGuidanceForm, type SerializedGuidance, type SerializedPreference } from '@/components/store/PricingGuidanceForm'
+import { getPricingIntelligence } from '@/lib/pricingIntelligenceQuery'
+import { PricingIntelligenceSummary, type SerializedPricingIntelligence } from '@/components/store/PricingIntelligenceSummary'
 
 export const dynamic = 'force-dynamic'
 
@@ -339,6 +341,13 @@ export default async function SellRequestDetailPage({
   const pricingEstimate = computeEstimate(pricingTargetModel, pricingComparables)
   const hasEstimate = pricingEstimate.estimatedPrice !== null
 
+  // Blended first-party + external pricing intelligence (14C) — informational only,
+  // shown alongside (not replacing) the existing sell_fast/maximize_proceeds strategy
+  // picker below. Never exposes internal cost, payout, or PII (see component docstring).
+  const pricingIntelligence: SerializedPricingIntelligence | null = submission.catalogId
+    ? await getPricingIntelligence(submission.catalogId)
+    : null
+
   function toSerializedGuidance(g: ReturnType<typeof computeGuidance>): SerializedGuidance {
     return {
       targetPriceCents: g.targetPriceCents,
@@ -606,6 +615,14 @@ export default async function SellRequestDetailPage({
           </dl>
         </div>
       </div>
+
+      {/* Pricing intelligence (informational — see strategy picker below to act) */}
+      {pricingIntelligence && (
+        <div className="mb-6">
+          <h2 className="text-sm font-semibold text-gray-900 mb-3">Pricing intelligence</h2>
+          <PricingIntelligenceSummary result={pricingIntelligence} />
+        </div>
+      )}
 
       {/* Pricing preference */}
       <div className="mb-6">

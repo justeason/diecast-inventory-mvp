@@ -55,10 +55,10 @@ export const MIN_WINDOW_COMPS = 3
 // ~24 months in ms
 const TWO_YEARS_MS = 2 * 365.25 * 24 * 60 * 60 * 1000
 
-const CONFIDENCE_ORDER: Confidence[] = ['insufficient', 'low', 'medium', 'high']
+export const CONFIDENCE_ORDER: Confidence[] = ['insufficient', 'low', 'medium', 'high']
 const MATCH_LEVEL_PRIORITY: MatchLevel[] = ['exact', 'model_family', 'series_year', 'brand_series']
 
-function downgradeConfidence(c: Confidence, levels: number): Confidence {
+export function downgradeConfidence(c: Confidence, levels: number): Confidence {
   const idx = CONFIDENCE_ORDER.indexOf(c)
   return CONFIDENCE_ORDER[Math.max(0, idx - levels)]
 }
