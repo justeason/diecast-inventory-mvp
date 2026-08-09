@@ -9,22 +9,22 @@ datasource db {
 }
 
 model CatalogModel {
-  id              String              @id @default(cuid())
-  brand           String
-  name            String
-  series          String?
-  year            Int?
-  color           String?
-  scale           String?
-  notes           String?
-  createdAt       DateTime            @default(now())
-  updatedAt       DateTime            @updatedAt
-  items           ItemInstance[]
-  collectionItems CollectionItem[]
-  suggestionsApproved CatalogSuggestion[] @relation("SuggestionApproval")
-  photos          CatalogModelPhoto[]
-  sellerSubmissions SellerSubmission[]
-  wantedBy        WantedCatalogModel[]
+  id                   String                      @id @default(cuid())
+  brand                String
+  name                 String
+  series               String?
+  year                 Int?
+  color                String?
+  scale                String?
+  notes                String?
+  createdAt            DateTime                    @default(now())
+  updatedAt            DateTime                    @updatedAt
+  items                ItemInstance[]
+  collectionItems      CollectionItem[]
+  suggestionsApproved  CatalogSuggestion[]         @relation("SuggestionApproval")
+  photos               CatalogModelPhoto[]
+  sellerSubmissions    SellerSubmission[]
+  wantedBy             WantedCatalogModel[]
   externalObservations ExternalMarketObservation[]
   photoFingerprints    CatalogPhotoFingerprint[]
   captureItems         MobileCaptureItem[]
@@ -79,14 +79,14 @@ model CatalogDataQualityAudit {
 }
 
 model CatalogModelPhoto {
-  id          String       @id @default(cuid())
-  catalogId   String
-  catalog     CatalogModel @relation(fields: [catalogId], references: [id], onDelete: Cascade)
-  url         String
-  altText     String?
-  sortOrder   Int          @default(0)
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  id           String                    @id @default(cuid())
+  catalogId    String
+  catalog      CatalogModel              @relation(fields: [catalogId], references: [id], onDelete: Cascade)
+  url          String
+  altText      String?
+  sortOrder    Int                       @default(0)
+  createdAt    DateTime                  @default(now())
+  updatedAt    DateTime                  @updatedAt
   fingerprints CatalogPhotoFingerprint[]
 }
 
@@ -157,42 +157,111 @@ model Listing {
 }
 
 model CustomerProfile {
-  id              String            @id @default(cuid())
-  email           String            @unique
-  name            String?
-  phone           String?
-  notes           String?
-  createdAt       DateTime          @default(now())
-  updatedAt       DateTime          @updatedAt
-  orders              Order[]
-  sessions            CustomerSession[]
-  sellerProfile       SellerProfile?
-  collectionItems     CollectionItem[]
-  catalogSuggestions  CatalogSuggestion[]
-  sellerSubmissions   SellerSubmission[]
-  sellerPayoutLines   SellerPayoutLine[]
-  sellerPayouts       SellerPayout[]
-  communityProfile    CustomerCommunityProfile?
-  wantedList          WantedCatalogModel[]
-  captureSessions     MobileCaptureSession[]
-  alertPreference     BuyerAlertPreference?
-  alertEvents         BuyerAlertEvent[]
+  id                 String                    @id @default(cuid())
+  email              String                    @unique
+  name               String?
+  phone              String?
+  notes              String?
+  createdAt          DateTime                  @default(now())
+  updatedAt          DateTime                  @updatedAt
+  orders             Order[]
+  sessions           CustomerSession[]
+  sellerProfile      SellerProfile?
+  collectionItems    CollectionItem[]
+  catalogSuggestions CatalogSuggestion[]
+  sellerSubmissions  SellerSubmission[]
+  sellerPayoutLines  SellerPayoutLine[]
+  sellerPayouts      SellerPayout[]
+  communityProfile   CustomerCommunityProfile?
+  wantedList         WantedCatalogModel[]
+  captureSessions    MobileCaptureSession[]
+  alertPreference    BuyerAlertPreference?
+  alertEvents        BuyerAlertEvent[]
 }
 
 model SellerProfile {
-  id             String          @id @default(cuid())
-  profileId      String          @unique
-  profile        CustomerProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
-  displayName    String?
-  status         String          @default("pending")
-  commissionRate Float           @default(0.20)
-  payoutMethod   String?
-  payoutHandle   String?
-  notes          String?
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
-  agreements     SellerAgreement[]
-  payouts        SellerPayout[]
+  id                  String                     @id @default(cuid())
+  profileId           String                     @unique
+  profile             CustomerProfile            @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  displayName         String?
+  status              String                     @default("pending")
+  commissionRate      Float                      @default(0.20)
+  payoutMethod        String?
+  payoutHandle        String?
+  notes               String?
+  createdAt           DateTime                   @default(now())
+  updatedAt           DateTime                   @updatedAt
+  agreements          SellerAgreement[]
+  payouts             SellerPayout[]
+  commissionOverrides SellerCommissionOverride[]
+}
+
+// 15A: Commission Policy Engine — authoritative, versioned commission configuration.
+// Policies are never mutated in place once used; a rate change is a new policy row
+// with a later effectiveFrom (prospective only). Tiers are floor-only (minItems), so
+// by construction there are no overlaps and no gaps: every item count >= the lowest
+// tier's floor matches exactly one tier (the highest floor <= count); counts below
+// the lowest floor use the policy default.
+model CommissionPolicy {
+  id     String @id @default(cuid())
+  name   String
+  status String @default("draft") // draft | active | ended
+
+  effectiveFrom DateTime
+  effectiveTo   DateTime?
+
+  defaultCommissionBps Int // 0-10000 (basis points; 2000 = 20%)
+  minimumFeeCents      Int // integer cents — exact, no JS Float
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tiers      CommissionTier[]
+  agreements SellerAgreement[]
+
+  @@index([status])
+  @@index([effectiveFrom])
+}
+
+model CommissionTier {
+  id       String           @id @default(cuid())
+  policyId String
+  policy   CommissionPolicy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+
+  minItems        Int // inclusive lower bound; open-ended upper bound (next tier's minItems, or infinity)
+  commissionBps   Int
+  minimumFeeCents Int? // null = inherit policy default
+
+  createdAt DateTime @default(now())
+
+  agreements SellerAgreement[]
+
+  @@unique([policyId, minItems])
+  @@index([policyId])
+}
+
+// Exceptional, auditable per-seller override — bypasses tier/default resolution but
+// is itself bypassed by an explicit agreement-level override. Policy-independent by
+// design (directly sets bps/fee), so it survives across policy version changes.
+model SellerCommissionOverride {
+  id              String        @id @default(cuid())
+  sellerProfileId String
+  sellerProfile   SellerProfile @relation(fields: [sellerProfileId], references: [id], onDelete: Cascade)
+
+  commissionBps   Int?
+  minimumFeeCents Int?
+
+  effectiveFrom DateTime
+  effectiveTo   DateTime?
+
+  reason    String
+  createdBy String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([sellerProfileId])
+  @@index([effectiveFrom])
 }
 
 model CustomerLoginToken {
@@ -208,11 +277,11 @@ model CustomerLoginToken {
 }
 
 model CustomerSession {
-  id          String          @id @default(cuid())
+  id          String   @id @default(cuid())
   profileId   String
-  sessionHash String          @unique
+  sessionHash String   @unique
   expiresAt   DateTime
-  createdAt   DateTime        @default(now())
+  createdAt   DateTime @default(now())
 
   profile CustomerProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
 
@@ -237,19 +306,19 @@ model CustomerCommunityProfile {
 }
 
 model Order {
-  id                 String           @id @default(cuid())
-  buyerName          String
-  buyerEmail         String
-  buyerPhone         String?
-  status             String           @default("pending")
-  notes              String?
-  estimatedShipping  Float?
-  adminNotes         String?
-  followUpNotes      String?
-  paymentStatus      String           @default("unpaid")
-  paymentMethod      String?
-  paymentReference   String?
-  paymentLink        String?
+  id                     String           @id @default(cuid())
+  buyerName              String
+  buyerEmail             String
+  buyerPhone             String?
+  status                 String           @default("pending")
+  notes                  String?
+  estimatedShipping      Float?
+  adminNotes             String?
+  followUpNotes          String?
+  paymentStatus          String           @default("unpaid")
+  paymentMethod          String?
+  paymentReference       String?
+  paymentLink            String?
   paymentRequestedAt     DateTime?
   paidAt                 DateTime?
   completedAt            DateTime?
@@ -278,12 +347,12 @@ model OrderItem {
 }
 
 model CollectionItem {
-  id             String               @id @default(cuid())
-  profileId      String
-  profile        CustomerProfile      @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  id        String          @id @default(cuid())
+  profileId String
+  profile   CustomerProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
 
-  catalogId      String?
-  catalog        CatalogModel?        @relation(fields: [catalogId], references: [id])
+  catalogId String?
+  catalog   CatalogModel? @relation(fields: [catalogId], references: [id])
 
   brand          String?
   name           String?
@@ -294,38 +363,38 @@ model CollectionItem {
   cardedOrLoose  String?
   condition      String?
   conditionNotes String?
-  quantity       Int                  @default(1)
+  quantity       Int     @default(1)
 
-  purchasePrice  Float?
-  purchaseDate   DateTime?
-  notes          String?
-  isPublic       Boolean              @default(false)
+  purchasePrice Float?
+  purchaseDate  DateTime?
+  notes         String?
+  isPublic      Boolean   @default(false)
 
   aiExtractionConfidence Float?
   aiExtractionNotes      String?
   aiExtractedAt          DateTime?
 
-  createdAt          DateTime             @default(now())
-  updatedAt          DateTime             @updatedAt
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
   photos             CollectionItemPhoto[]
   catalogSuggestions CatalogSuggestion[]
   sellerSubmissions  SellerSubmission[]
 }
 
 model CollectionItemPhoto {
-  id        String         @id @default(cuid())
-  itemId    String
-  item      CollectionItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  id     String         @id @default(cuid())
+  itemId String
+  item   CollectionItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
 
   url       String
-  type      String         @default("other")
-  sortOrder Int            @default(0)
+  type      String @default("other")
+  sortOrder Int    @default(0)
 
-  createdAt DateTime       @default(now())
+  createdAt DateTime @default(now())
 }
 
 model CatalogSuggestion {
-  id        String          @id @default(cuid())
+  id String @id @default(cuid())
 
   profileId String
   profile   CustomerProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
@@ -375,7 +444,7 @@ model SellerSubmission {
   cardedOrLoose  String?
   condition      String?
   conditionNotes String?
-  quantity       Int       @default(1)
+  quantity       Int     @default(1)
 
   saleTypePreference String?
   expectedPrice      Float?
@@ -410,7 +479,7 @@ model SellerSubmissionPhoto {
   submission   SellerSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
 
   url       String
-  sortOrder Int      @default(0)
+  sortOrder Int    @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -419,11 +488,11 @@ model SellerSubmissionPhoto {
 }
 
 model IntakeDraft {
-  id              String @id @default(cuid())
-  status          String @default("draft")
+  id     String @id @default(cuid())
+  status String @default("draft")
 
-  frontPhotoUrl   String?
-  backPhotoUrl    String?
+  frontPhotoUrl String?
+  backPhotoUrl  String?
 
   brand           String?
   name            String?
@@ -447,8 +516,8 @@ model IntakeDraft {
   storageLocationId String?
   intakeLocation    StorageLocation? @relation("IntakeDraftLocation", fields: [storageLocationId], references: [id], onDelete: SetNull)
 
-  convertedItemId  String?       @unique
-  convertedItem    ItemInstance? @relation(fields: [convertedItemId], references: [id])
+  convertedItemId  String?                 @unique
+  convertedItem    ItemInstance?           @relation(fields: [convertedItemId], references: [id])
   inboundShipments SellerInboundShipment[]
 
   aiExtractionRaw        String?
@@ -487,11 +556,35 @@ model SellerAgreement {
   minimumSellerPayout Decimal? @db.Decimal(10, 2)
   agreedListPrice     Decimal? @db.Decimal(10, 2)
 
+  // 15A: Commission Policy Engine snapshot. Resolved once (draft/proposed: live
+  // preview, recomputed on each edit; locked permanently at acceptance) — never
+  // re-derived by payout calculation. Null on every field = legacy agreement that
+  // predates this feature; its commissionPercent/fixedFee/minimumSellerPayout above
+  // were set manually and are preserved exactly as-is, never backfilled.
+  commissionMinimumFee     Decimal?          @db.Decimal(10, 2) // minimum commission floor per item — distinct from minimumSellerPayout (which floors seller's net, not the fee)
+  commissionPolicyId       String?
+  commissionPolicy         CommissionPolicy? @relation(fields: [commissionPolicyId], references: [id], onDelete: SetNull)
+  commissionTierId         String?
+  commissionTier           CommissionTier?   @relation(fields: [commissionTierId], references: [id], onDelete: SetNull)
+  commissionSource         String? // 'policy_default' | 'policy_tier' | 'seller_override' | 'agreement_override' (null = legacy)
+  // Authoritative volume-tier denominator for THIS agreement — distinct from
+  // SellerSubmission.quantity (seller-requested, not admin-accepted). Defaults from
+  // submission.quantity at draft creation but is independently admin-editable/
+  // confirmable up to that point; capped at submission.quantity (cannot accept more
+  // than was submitted). Mutable while draft/proposed (drives the live preview);
+  // frozen the instant status becomes 'accepted' — no code path writes it afterward,
+  // so later submission-quantity edits or additional intake conversions can never
+  // silently re-tier a signed agreement.
+  acceptedItemCount        Int?
+  commissionResolvedAt     DateTime?
+  commissionExplanation    String?
+  commissionOverrideReason String? // required when commissionSource = 'agreement_override'
+
   sellerTermsSummary String?
   adminNotes         String?
 
-  items        ItemInstance[]
-  payoutLines  SellerPayoutLine[]
+  items       ItemInstance[]
+  payoutLines SellerPayoutLine[]
 
   proposedAt       DateTime?
   acceptedAt       DateTime?
@@ -516,25 +609,26 @@ model SellerPayoutLine {
   currency String @default("USD")
 
   customerProfileId String
-  customerProfile   CustomerProfile  @relation(fields: [customerProfileId], references: [id], onDelete: Restrict)
+  customerProfile   CustomerProfile @relation(fields: [customerProfileId], references: [id], onDelete: Restrict)
 
   agreementId String?
   agreement   SellerAgreement? @relation(fields: [agreementId], references: [id], onDelete: SetNull)
 
-  orderItemId String?  @unique
+  orderItemId String?    @unique
   orderItem   OrderItem? @relation(fields: [orderItemId], references: [id], onDelete: SetNull)
 
   payoutId String?
   payout   SellerPayout? @relation(fields: [payoutId], references: [id], onDelete: SetNull)
 
-  grossSalePrice      Decimal? @db.Decimal(10, 2)
-  agreedBuyoutAmount  Decimal? @db.Decimal(10, 2)
+  grossSalePrice     Decimal? @db.Decimal(10, 2)
+  agreedBuyoutAmount Decimal? @db.Decimal(10, 2)
 
-  commissionPercent   Decimal? @db.Decimal(6, 4)
-  commissionAmount    Decimal? @db.Decimal(10, 2)
-  fixedFee            Decimal? @db.Decimal(10, 2)
-  minimumSellerPayout Decimal? @db.Decimal(10, 2)
-  minimumAdjustment   Decimal? @db.Decimal(10, 2)
+  commissionPercent    Decimal? @db.Decimal(6, 4)
+  commissionAmount     Decimal? @db.Decimal(10, 2)
+  commissionMinimumFee Decimal? @db.Decimal(10, 2) // copied from agreement snapshot at line-creation time
+  fixedFee             Decimal? @db.Decimal(10, 2)
+  minimumSellerPayout  Decimal? @db.Decimal(10, 2)
+  minimumAdjustment    Decimal? @db.Decimal(10, 2)
 
   netAmount  Decimal  @db.Decimal(10, 2)
   eligibleAt DateTime
@@ -608,31 +702,31 @@ model SellerLifecycleEvent {
 }
 
 model SellerLifecycleCase {
-  id                 String           @id @default(cuid())
-  sellerSubmissionId String
-  sellerSubmission   SellerSubmission @relation(fields: [sellerSubmissionId], references: [id], onDelete: Restrict)
-  caseType           String
-  status             String           @default("open")
-  agreementId        String?
-  intakeDraftId      String?
-  itemInstanceId     String?
-  listingId          String?
-  orderId            String?
-  orderItemId        String?
-  sellerPayoutLineId String?
-  sellerVisible      Boolean          @default(false)
-  sellerMessage      String?
-  adminNotes         String?
-  resolutionSummary  String?
-  openedAt           DateTime         @default(now())
-  resolvedAt         DateTime?
-  cancelledAt        DateTime?
+  id                   String           @id @default(cuid())
+  sellerSubmissionId   String
+  sellerSubmission     SellerSubmission @relation(fields: [sellerSubmissionId], references: [id], onDelete: Restrict)
+  caseType             String
+  status               String           @default("open")
+  agreementId          String?
+  intakeDraftId        String?
+  itemInstanceId       String?
+  listingId            String?
+  orderId              String?
+  orderItemId          String?
+  sellerPayoutLineId   String?
+  sellerVisible        Boolean          @default(false)
+  sellerMessage        String?
+  adminNotes           String?
+  resolutionSummary    String?
+  openedAt             DateTime         @default(now())
+  resolvedAt           DateTime?
+  cancelledAt          DateTime?
   returnCarrier        String?
   returnTrackingNumber String?
   returnShippedAt      DateTime?
   returnedAt           DateTime?
-  createdAt          DateTime         @default(now())
-  updatedAt          DateTime         @updatedAt
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
 
   @@index([sellerSubmissionId])
   @@index([caseType])
@@ -650,7 +744,7 @@ model SellerInboundShipment {
   intakeDraftId      String?
   intakeDraft        IntakeDraft?     @relation(fields: [intakeDraftId], references: [id], onDelete: SetNull)
 
-  status           String   @default("draft")
+  status           String  @default("draft")
   carrier          String?
   trackingNumber   String?
   expectedQuantity Int
@@ -676,17 +770,17 @@ model SellerInboundShipment {
 }
 
 model SellerPricingPreference {
-  id                      String           @id @default(cuid())
-  sellerSubmissionId      String           @unique
-  sellerSubmission        SellerSubmission @relation(fields: [sellerSubmissionId], references: [id], onDelete: Cascade)
+  id                 String           @id @default(cuid())
+  sellerSubmissionId String           @unique
+  sellerSubmission   SellerSubmission @relation(fields: [sellerSubmissionId], references: [id], onDelete: Cascade)
 
   strategy                String
-  selectedTargetPrice     Decimal          @db.Decimal(10, 2)
-  customDesiredPrice      Decimal?         @db.Decimal(10, 2)
-  suggestedFastPrice      Decimal?         @db.Decimal(10, 2)
-  suggestedMaxPrice       Decimal?         @db.Decimal(10, 2)
+  selectedTargetPrice     Decimal  @db.Decimal(10, 2)
+  customDesiredPrice      Decimal? @db.Decimal(10, 2)
+  suggestedFastPrice      Decimal? @db.Decimal(10, 2)
+  suggestedMaxPrice       Decimal? @db.Decimal(10, 2)
   estimatedDaysToSell     Int?
-  estimatedSellerProceeds Decimal?         @db.Decimal(10, 2)
+  estimatedSellerProceeds Decimal? @db.Decimal(10, 2)
   confidence              String
   matchLevel              String
   comparableCount         Int
@@ -697,19 +791,19 @@ model SellerPricingPreference {
 }
 
 model WantedCatalogModel {
-  id                String          @id @default(cuid())
-  customerProfileId String
-  catalogModelId    String
-  maxDesiredPrice   Decimal?        @db.Decimal(10, 2)
-  notes             String?
+  id                       String   @id @default(cuid())
+  customerProfileId        String
+  catalogModelId           String
+  maxDesiredPrice          Decimal? @db.Decimal(10, 2)
+  notes                    String?
   // Per-model alert toggles — respected in addition to (not instead of) BuyerAlertPreference.
   availabilityAlertEnabled Boolean  @default(true)
   priceAlertEnabled        Boolean  @default(true)
-  createdAt         DateTime        @default(now())
-  updatedAt         DateTime        @updatedAt
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
 
-  customerProfile   CustomerProfile @relation(fields: [customerProfileId], references: [id], onDelete: Cascade)
-  catalogModel      CatalogModel    @relation(fields: [catalogModelId], references: [id], onDelete: Cascade)
+  customerProfile CustomerProfile @relation(fields: [customerProfileId], references: [id], onDelete: Cascade)
+  catalogModel    CatalogModel    @relation(fields: [catalogModelId], references: [id], onDelete: Cascade)
 
   @@unique([customerProfileId, catalogModelId])
   @@index([customerProfileId])
@@ -717,15 +811,15 @@ model WantedCatalogModel {
 
 // 14A: Buyer-level wanted-alert preferences (global; per-model overrides live on WantedCatalogModel).
 model BuyerAlertPreference {
-  id                       String   @id @default(cuid())
-  customerProfileId        String   @unique
-  wantedAvailableAlerts    Boolean  @default(true)
-  wantedPriceChangeAlerts  Boolean  @default(true)
-  emailAlertsEnabled       Boolean  @default(true)
+  id                      String   @id @default(cuid())
+  customerProfileId       String   @unique
+  wantedAvailableAlerts   Boolean  @default(true)
+  wantedPriceChangeAlerts Boolean  @default(true)
+  emailAlertsEnabled      Boolean  @default(true)
   // Minimum meaningful price-drop/rise, in percent (integer, e.g. 5 = 5%). Null = use DEFAULT_PRICE_CHANGE_THRESHOLD_PCT.
-  priceChangeThresholdPct  Int?
-  createdAt                DateTime @default(now())
-  updatedAt                DateTime @updatedAt
+  priceChangeThresholdPct Int?
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
 
   customerProfile CustomerProfile @relation(fields: [customerProfileId], references: [id], onDelete: Cascade)
 }
@@ -736,8 +830,8 @@ model BuyerAlertEvent {
   customerProfileId  String
   catalogModelId     String
   listingId          String?
-  alertType          String    // wanted_available | wanted_price_decrease | wanted_price_increase
-  eventKey           String    // deterministic, server-generated — see buyerAlertKeys.ts
+  alertType          String // wanted_available | wanted_price_decrease | wanted_price_increase
+  eventKey           String // deterministic, server-generated — see buyerAlertKeys.ts
   // Integer cents — never JS float — normalized from the authoritative Listing.price.
   previousPriceCents Int?
   currentPriceCents  Int?
@@ -770,7 +864,7 @@ model BuyerAlertEvent {
 // so a crash mid-traversal restarts at the next page, not from the beginning.
 model BuyerAlertFanout {
   id                 String    @id @default(cuid())
-  eventType          String    // wanted_available | wanted_price_decrease | wanted_price_increase
+  eventType          String // wanted_available | wanted_price_decrease | wanted_price_increase
   listingId          String
   catalogModelId     String
   eventKey           String    @unique // same deterministic key used on the resulting BuyerAlertEvent rows
@@ -818,21 +912,21 @@ model ExternalMarketImportBatch {
 }
 
 model ExternalMarketObservation {
-  id              String   @id @default(cuid())
+  id              String    @id @default(cuid())
   importBatchId   String?
   provider        String
   externalId      String?
-  fingerprint     String   @unique
+  fingerprint     String    @unique
   observationType String
   catalogModelId  String?
-  matchStatus     String   @default("unmatched")
+  matchStatus     String    @default("unmatched")
   matchMethod     String?
   title           String
   sourceUrl       String?
   currency        String
-  price           Decimal  @db.Decimal(12, 4)
-  shippingPrice   Decimal? @db.Decimal(12, 4)
-  totalPrice      Decimal  @db.Decimal(12, 4)
+  price           Decimal   @db.Decimal(12, 4)
+  shippingPrice   Decimal?  @db.Decimal(12, 4)
+  totalPrice      Decimal   @db.Decimal(12, 4)
   soldAt          DateTime?
   listedAt        DateTime?
   observedAt      DateTime
@@ -840,11 +934,11 @@ model ExternalMarketObservation {
   locationText    String?
   rawSnapshot     Json?
   rejectionReason String?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
-  importBatch  ExternalMarketImportBatch? @relation(fields: [importBatchId], references: [id])
-  catalogModel CatalogModel?              @relation(fields: [catalogModelId], references: [id])
+  importBatch  ExternalMarketImportBatch?       @relation(fields: [importBatchId], references: [id])
+  catalogModel CatalogModel?                    @relation(fields: [catalogModelId], references: [id])
   audits       ExternalMarketObservationAudit[]
 
   @@unique([provider, externalId])
@@ -889,7 +983,7 @@ model CatalogPhotoFingerprint {
   updatedAt        DateTime @updatedAt
 
   catalogModel CatalogModel      @relation(fields: [catalogModelId], references: [id], onDelete: Cascade)
-  catalogPhoto CatalogModelPhoto @relation(fields: [catalogPhotoId],  references: [id], onDelete: Cascade)
+  catalogPhoto CatalogModelPhoto @relation(fields: [catalogPhotoId], references: [id], onDelete: Cascade)
 
   @@unique([catalogPhotoId, algorithmVersion])
   @@index([catalogModelId])
@@ -921,8 +1015,8 @@ model MobileCaptureSession {
   id                String              @id @default(cuid())
   customerProfileId String
   profile           CustomerProfile     @relation(fields: [customerProfileId], references: [id], onDelete: Cascade)
-  destination       String              // 'collection' | 'sell'
-  status            String              @default("draft")  // 'draft' | 'submitted'
+  destination       String // 'collection' | 'sell'
+  status            String              @default("draft") // 'draft' | 'submitted'
   createdAt         DateTime            @default(now())
   updatedAt         DateTime            @updatedAt
   items             MobileCaptureItem[]

@@ -134,6 +134,9 @@ export default async function SellRequestDetailPage({
           commissionPercent: true,
           fixedFee: true,
           minimumSellerPayout: true,
+          commissionMinimumFee: true,
+          commissionSource: true,
+          acceptedItemCount: true,
           agreedListPrice: true,
           sellerTermsSummary: true,
           proposedAt: true,
@@ -691,6 +694,28 @@ export default async function SellRequestDetailPage({
                   <dt className="text-gray-600 w-32 shrink-0">Our commission</dt>
                   <dd className="text-gray-900">
                     {formatCommissionDisplay(sellerAgreement.commissionPercent.toString())}
+                  </dd>
+                </div>
+              )}
+              {sellerAgreement.type === 'consignment' && sellerAgreement.commissionMinimumFee && (
+                <div className="flex gap-3">
+                  <dt className="text-gray-600 w-32 shrink-0">Min. commission</dt>
+                  <dd className="text-gray-900">
+                    {formatAmount(sellerAgreement.commissionMinimumFee.toFixed(2))} per sold item
+                  </dd>
+                </div>
+              )}
+              {sellerAgreement.type === 'consignment' && sellerAgreement.acceptedItemCount !== null && (
+                <div className="flex gap-3">
+                  <dt className="text-gray-600 w-32 shrink-0">Items accepted</dt>
+                  <dd className="text-gray-900">{sellerAgreement.acceptedItemCount}</dd>
+                </div>
+              )}
+              {sellerAgreement.type === 'consignment' && sellerAgreement.commissionSource === 'policy_tier' && (
+                <div className="flex gap-3">
+                  <dt className="text-gray-600 w-32 shrink-0" />
+                  <dd className="text-xs text-gray-500">
+                    Your rate reflects the volume tier for this agreement.
                   </dd>
                 </div>
               )}

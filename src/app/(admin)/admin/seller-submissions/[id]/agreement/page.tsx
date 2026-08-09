@@ -26,6 +26,7 @@ import {
 } from '@/components/admin/SellerAgreementActions'
 import { GenerateBuyoutEligibilityForm } from '@/components/admin/SellerPayoutForms'
 import { derivePayoutLineDisplayStatus } from '@/lib/sellerPayoutCalculation'
+import { previewCommissionForSubmission, fetchCommissionResolutionInputs } from '@/lib/commissionPolicyQuery'
 import {
   deriveSellerLifecycleSummary,
   findLifecycleFinancialWarnings,
@@ -53,6 +54,7 @@ export default async function SellerAgreementPage({
       status: true,
       brand: true,
       name: true,
+      quantity: true,
       profile: { select: { id: true, name: true, email: true } },
       pricingPreference: {
         select: {
@@ -78,6 +80,12 @@ export default async function SellerAgreementPage({
           commissionPercent: true,
           fixedFee: true,
           minimumSellerPayout: true,
+          commissionMinimumFee: true,
+          commissionSource: true,
+          acceptedItemCount: true,
+          commissionExplanation: true,
+          commissionOverrideReason: true,
+          commissionResolvedAt: true,
           agreedListPrice: true,
           sellerTermsSummary: true,
           adminNotes: true,
@@ -199,6 +207,7 @@ export default async function SellerAgreementPage({
     ? cancelSellerAgreement.bind(null, activeAgreement.id)
     : null
 
+  const isOverride = activeAgreement?.commissionSource === 'agreement_override'
   const defaultValues = activeAgreement
     ? {
         type: activeAgreement.type,
@@ -208,11 +217,34 @@ export default async function SellerAgreementPage({
         ),
         fixedFee: activeAgreement.fixedFee?.toFixed(2) ?? '',
         minimumSellerPayout: activeAgreement.minimumSellerPayout?.toFixed(2) ?? '',
+        commissionMinimumFee: activeAgreement.commissionMinimumFee?.toFixed(2) ?? '',
+        commissionOverrideReason: activeAgreement.commissionOverrideReason ?? '',
+        isCommissionOverride: isOverride,
         agreedListPrice: activeAgreement.agreedListPrice?.toFixed(2) ?? '',
         sellerTermsSummary: activeAgreement.sellerTermsSummary ?? '',
         adminNotes: activeAgreement.adminNotes ?? '',
+        // 15A-review section 1: default to the agreement's own accepted count if set;
+        // fall back to the submitted quantity only as a starting point for a brand-new
+        // draft that hasn't had it confirmed yet (e.g. a legacy agreement predating
+        // this field).
+        acceptedItemCount: String(activeAgreement.acceptedItemCount ?? submission.quantity),
       }
     : undefined
+
+  // Section 16: live policy preview shown before any agreement exists yet — the
+  // create-agreement default path needs no editing at all once the draft is saved
+  // (auto-resolution happens on save), but showing this up front matches the
+  // "preview before finalization" UX. Read-only — no mutation from previewing.
+  // Defaults the preview's accepted count to the submitted quantity since no
+  // agreement-level accepted count exists yet at this point.
+  const commissionPreview = !activeAgreement
+    ? await previewCommissionForSubmission(id, submission.quantity)
+    : null
+
+  // 15A-review section 1: raw resolution ingredients for the client-side live
+  // preview in SellerAgreementForm (re-runs resolveCommissionTerms as the admin
+  // edits "Accepted quantity", no network round-trip).
+  const commissionResolutionInputs = await fetchCommissionResolutionInputs(id)
 
   return (
     <div className="max-w-2xl">
@@ -325,7 +357,33 @@ export default async function SellerAgreementPage({
       {!activeAgreement && (
         <section className="mb-10">
           <h2 className="text-sm font-semibold text-gray-900 mb-4">Create agreement</h2>
-          <SellerAgreementForm action={createAction} submitLabel="Create draft" />
+          {commissionPreview && (
+            <div className="mb-6 rounded-md border border-gray-200 bg-gray-50 p-4 text-sm">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+                Commission policy preview (if consignment)
+              </p>
+              {commissionPreview.ok ? (
+                <>
+                  <p className="text-gray-900 font-medium">
+                    {(commissionPreview.resolution.commissionBps / 100).toFixed(commissionPreview.resolution.commissionBps % 100 === 0 ? 0 : 2)}% commission
+                    · min ${(commissionPreview.resolution.minimumFeeCents / 100).toFixed(2)}/item
+                  </p>
+                  <p className="text-xs text-gray-500 mt-1">{commissionPreview.resolution.explanation}</p>
+                </>
+              ) : (
+                <p className="text-xs text-amber-700">
+                  No active commission policy configured — a manual override with a reason will be required.
+                </p>
+              )}
+            </div>
+          )}
+          <SellerAgreementForm
+            action={createAction}
+            submitLabel="Create draft"
+            submittedQuantity={submission.quantity}
+            policy={commissionResolutionInputs.policy}
+            sellerOverride={commissionResolutionInputs.sellerOverride}
+          />
         </section>
       )}
 
@@ -347,6 +405,9 @@ export default async function SellerAgreementPage({
               action={updateAction}
               defaultValues={defaultValues}
               submitLabel="Save changes"
+              submittedQuantity={submission.quantity}
+              policy={commissionResolutionInputs.policy}
+              sellerOverride={commissionResolutionInputs.sellerOverride}
             />
           </div>
 
@@ -382,7 +443,7 @@ export default async function SellerAgreementPage({
                 {AGREEMENT_STATUS_LABELS['proposed']}
               </span>
             </div>
-            <AgreementReadOnly agreement={activeAgreement} showAdminNotes />
+            <AgreementReadOnly agreement={activeAgreement} submittedQuantity={submission.quantity} showAdminNotes />
           </div>
 
           <div className="pt-6 border-t border-gray-200 space-y-6">
@@ -430,7 +491,7 @@ export default async function SellerAgreementPage({
               )}
               .
             </div>
-            <AgreementReadOnly agreement={activeAgreement} showAdminNotes />
+            <AgreementReadOnly agreement={activeAgreement} submittedQuantity={submission.quantity} showAdminNotes />
           </div>
 
           {/* Linked inventory */}
@@ -647,17 +708,30 @@ type AgreementData = {
   commissionPercent: { toString(): string } | null
   fixedFee: { toFixed(dp: number): string } | null
   minimumSellerPayout: { toFixed(dp: number): string } | null
+  commissionMinimumFee: { toFixed(dp: number): string } | null
+  commissionSource: string | null
+  acceptedItemCount: number | null
+  commissionExplanation: string | null
   agreedListPrice: { toFixed(dp: number): string } | null
   sellerTermsSummary: string | null
   adminNotes: string | null
   proposedAt: Date | null
 }
 
+const COMMISSION_SOURCE_LABELS: Record<string, string> = {
+  policy_default: 'Automatic — policy default',
+  policy_tier: 'Automatic — volume tier',
+  seller_override: 'Seller-specific override',
+  agreement_override: 'Manual override for this agreement',
+}
+
 function AgreementReadOnly({
   agreement,
+  submittedQuantity,
   showAdminNotes,
 }: {
   agreement: AgreementData
+  submittedQuantity?: number
   showAdminNotes?: boolean
 }) {
   const isBuyout = agreement.type === 'buyout'
@@ -677,11 +751,30 @@ function AgreementReadOnly({
           <Row label="Commission">
             {formatCommissionDisplay(agreement.commissionPercent?.toString())}
           </Row>
+          {agreement.commissionMinimumFee && (
+            <Row label="Minimum per item">{formatAmount(agreement.commissionMinimumFee.toFixed(2))}</Row>
+          )}
+          <Row label="Commission source">
+            {agreement.commissionSource
+              ? (COMMISSION_SOURCE_LABELS[agreement.commissionSource] ?? agreement.commissionSource)
+              : 'Legacy (predates commission policy engine)'}
+          </Row>
+          {submittedQuantity != null && (
+            <Row label="Submitted quantity">{submittedQuantity}</Row>
+          )}
+          {agreement.acceptedItemCount !== null && (
+            <Row label="Accepted for this agreement">{agreement.acceptedItemCount}</Row>
+          )}
+          {agreement.commissionExplanation && (
+            <Row label="Why this rate">
+              <span className="text-xs text-gray-600">{agreement.commissionExplanation}</span>
+            </Row>
+          )}
           {agreement.fixedFee && (
-            <Row label="Fixed fee">{formatAmount(agreement.fixedFee.toFixed(2))}</Row>
+            <Row label="Fixed fee (legacy)">{formatAmount(agreement.fixedFee.toFixed(2))}</Row>
           )}
           {agreement.minimumSellerPayout && (
-            <Row label="Min. seller payout">
+            <Row label="Min. seller payout (legacy)">
               {formatAmount(agreement.minimumSellerPayout.toFixed(2))}
             </Row>
           )}

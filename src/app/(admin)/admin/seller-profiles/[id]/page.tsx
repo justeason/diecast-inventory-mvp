@@ -2,6 +2,8 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { prisma } from '@/lib/prisma'
 import { SellerProfileForm } from '@/components/admin/SellerProfileForm'
+import { CreateSellerOverrideForm, EndSellerOverrideForm } from '@/components/admin/CommissionOverrideForm'
+import { listSellerCommissionOverrides } from '@/lib/commissionPolicyQuery'
 
 export const dynamic = 'force-dynamic'
 
@@ -30,6 +32,8 @@ export default async function SellerProfileDetailPage({
   })
 
   if (!sp) notFound()
+
+  const overrides = await listSellerCommissionOverrides(sp.id)
 
   return (
     <>
@@ -89,6 +93,41 @@ export default async function SellerProfileDetailPage({
         sellerProfile={sp}
         customerProfile={sp.profile}
       />
+
+      {/* 15A: Commission overrides — exceptional, auditable per-seller rate overrides */}
+      <div className="mt-10">
+        <h2 className="text-lg font-semibold text-gray-900 mb-1">Commission overrides</h2>
+        <p className="text-xs text-gray-500 mb-4">
+          Bypasses the active commission policy for this seller. Keep exceptional — most sellers
+          need no override at all.
+        </p>
+        {overrides.length > 0 && (
+          <div className="mb-4 space-y-2">
+            {overrides.map(o => {
+              const now = new Date()
+              const isActive = o.effectiveFrom <= now && (o.effectiveTo === null || o.effectiveTo > now)
+              return (
+                <div key={o.id} className="rounded-md border border-gray-200 bg-white p-3 text-xs flex items-center justify-between gap-4">
+                  <div>
+                    <p className="text-gray-900">
+                      {o.commissionBps !== null && <>{(o.commissionBps / 100).toFixed(o.commissionBps % 100 === 0 ? 0 : 2)}% </>}
+                      {o.minimumFeeCents !== null && <>min ${(o.minimumFeeCents / 100).toFixed(2)}/item</>}
+                      {isActive && <span className="ml-2 rounded-full bg-green-100 px-2 py-0.5 text-green-700">Active</span>}
+                    </p>
+                    <p className="text-gray-500 mt-0.5">{o.reason}</p>
+                    <p className="text-gray-400 mt-0.5">
+                      From {o.effectiveFrom.toLocaleDateString()}
+                      {o.effectiveTo && <> to {o.effectiveTo.toLocaleDateString()}</>}
+                    </p>
+                  </div>
+                  {isActive && <EndSellerOverrideForm overrideId={o.id} sellerProfileId={sp.id} />}
+                </div>
+              )
+            })}
+          </div>
+        )}
+        <CreateSellerOverrideForm sellerProfileId={sp.id} />
+      </div>
 
       {/* Timestamps */}
       <div className="mt-8 text-xs text-gray-400 space-y-0.5">

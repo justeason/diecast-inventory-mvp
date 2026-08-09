@@ -7,6 +7,17 @@ export type AgreementDraftInput = {
   agreedListPrice?: string | null
   sellerTermsSummary?: string | null
   adminNotes?: string | null
+  // 15A: presence of commissionPercent for a consignment agreement now means
+  // "explicit agreement-level override" (normal flow leaves it blank and lets the
+  // Commission Policy Engine auto-resolve) — a reason is then required.
+  commissionOverrideReason?: string | null
+  commissionMinimumFee?: string | null
+  // 15A-review section 1: the authoritative volume-tier denominator for THIS
+  // agreement — distinct from SellerSubmission.quantity (seller-requested). Required
+  // for consignment (drives tiering even when no override is set); not applicable to
+  // buyout. The <= submission.quantity cap check needs DB access and happens in the
+  // action layer, not here.
+  acceptedItemCount?: string | null
 }
 
 export type ValidationErrors = Record<string, string[]>
@@ -25,6 +36,10 @@ export type AgreementValidationResult =
         agreedListPrice: string | null
         sellerTermsSummary: string | null
         adminNotes: string | null
+        commissionOverrideReason: string | null
+        commissionMinimumFee: string | null
+        isCommissionOverride: boolean
+        acceptedItemCount: number | null
       }
     }
 
@@ -41,6 +56,19 @@ function parseAmount(raw: string | null | undefined): FieldResult {
   const n = parseFloat(str)
   if (n < 0) return { ok: false, reason: 'Must be 0 or greater' }
   return { ok: true, value: n.toFixed(2) }
+}
+
+type IntFieldResult = { ok: true; value: number | null } | { ok: false; reason: string }
+
+function parseAcceptedItemCount(raw: string | null | undefined): IntFieldResult {
+  if (raw == null || raw.trim() === '') return { ok: true, value: null }
+  const str = raw.trim()
+  if (!/^\d+$/.test(str)) {
+    return { ok: false, reason: 'Must be a whole number' }
+  }
+  const n = parseInt(str, 10)
+  if (n < 1) return { ok: false, reason: 'Must be 1 or greater' }
+  return { ok: true, value: n }
 }
 
 function parseCommissionPercent(raw: string | null | undefined): FieldResult {
@@ -64,12 +92,14 @@ export function validateAgreementDraft(input: AgreementDraftInput): AgreementVal
   const fixedFeeResult = parseAmount(input.fixedFee)
   const minPayoutResult = parseAmount(input.minimumSellerPayout)
   const listPriceResult = parseAmount(input.agreedListPrice)
+  const acceptedItemCountResult = parseAcceptedItemCount(input.acceptedItemCount)
 
   if (!buyoutResult.ok) errors.agreedBuyoutAmount = [buyoutResult.reason]
   if (!commissionResult.ok) errors.commissionPercent = [commissionResult.reason]
   if (!fixedFeeResult.ok) errors.fixedFee = [fixedFeeResult.reason]
   if (!minPayoutResult.ok) errors.minimumSellerPayout = [minPayoutResult.reason]
   if (!listPriceResult.ok) errors.agreedListPrice = [listPriceResult.reason]
+  if (!acceptedItemCountResult.ok) errors.acceptedItemCount = [acceptedItemCountResult.reason]
 
   if (listPriceResult.ok && listPriceResult.value !== null) {
     if (parseFloat(listPriceResult.value) <= 0) {
@@ -103,15 +133,34 @@ export function validateAgreementDraft(input: AgreementDraftInput): AgreementVal
         'Minimum seller payout is not applicable for buyout agreements',
       ]
     }
-  } else if (input.type === 'consignment') {
-    if (!commissionResult.ok || commissionResult.value === null) {
-      errors.commissionPercent = ['Commission percent is required for consignment agreements']
+    if (acceptedItemCountResult.ok && acceptedItemCountResult.value !== null) {
+      errors.acceptedItemCount = ['Accepted quantity is not applicable for buyout agreements']
     }
+  } else if (input.type === 'consignment') {
+    // 15A: commissionPercent is no longer required — leaving it blank means "let the
+    // Commission Policy Engine auto-resolve." Providing it is an explicit
+    // agreement-level override and requires a reason (section 7).
     if (buyoutResult.ok && buyoutResult.value !== null) {
       errors.agreedBuyoutAmount = [
         'Agreed buyout amount is not applicable for consignment agreements',
       ]
     }
+    // 15A-review section 1: required — it's the authoritative volume-tier
+    // denominator and must never be silently absent for a consignment agreement.
+    if (acceptedItemCountResult.ok && acceptedItemCountResult.value === null) {
+      errors.acceptedItemCount = ['Accepted quantity is required for consignment agreements']
+    }
+  }
+
+  const isCommissionOverride = input.type === 'consignment' && commissionResult.ok && commissionResult.value !== null
+  const overrideMinFeeResult = parseAmount(input.commissionMinimumFee)
+  if (!overrideMinFeeResult.ok) errors.commissionMinimumFee = [overrideMinFeeResult.reason]
+
+  if (isCommissionOverride && !input.commissionOverrideReason?.trim()) {
+    errors.commissionOverrideReason = ['A reason is required when manually overriding commission terms']
+  }
+  if ((input.commissionOverrideReason?.length ?? 0) > 500) {
+    errors.commissionOverrideReason = ['Reason must be 500 characters or fewer']
   }
 
   if (Object.keys(errors).length > 0) {
@@ -125,11 +174,15 @@ export function validateAgreementDraft(input: AgreementDraftInput): AgreementVal
       currency: 'USD',
       agreedBuyoutAmount: buyoutResult.ok ? buyoutResult.value : null,
       commissionPercent: commissionResult.ok ? commissionResult.value : null,
+      commissionOverrideReason: isCommissionOverride ? (input.commissionOverrideReason?.trim() || null) : null,
+      commissionMinimumFee: isCommissionOverride && overrideMinFeeResult.ok ? overrideMinFeeResult.value : null,
+      isCommissionOverride,
       fixedFee: fixedFeeResult.ok ? fixedFeeResult.value : null,
       minimumSellerPayout: minPayoutResult.ok ? minPayoutResult.value : null,
       agreedListPrice: listPriceResult.ok ? listPriceResult.value : null,
       sellerTermsSummary: input.sellerTermsSummary?.trim() || null,
       adminNotes: input.adminNotes?.trim() || null,
+      acceptedItemCount: acceptedItemCountResult.ok ? acceptedItemCountResult.value : null,
     },
   }
 }

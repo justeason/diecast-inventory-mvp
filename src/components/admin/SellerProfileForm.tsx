@@ -85,7 +85,7 @@ export function SellerProfileForm(props: Props) {
       />
 
       <Input
-        label="Commission Rate"
+        label="Commission Rate (legacy — not authoritative)"
         name="commissionRate"
         required
         type="number"
@@ -96,8 +96,11 @@ export function SellerProfileForm(props: Props) {
         placeholder="0.20"
         error={errors.commissionRate?.[0]}
       />
-      <p className="text-xs text-gray-500 -mt-2">
-        Enter as a decimal between 0 and 1. Example: 0.20 = 20%.
+      <p className="text-xs text-amber-700 -mt-2">
+        Legacy field, kept only for historical records. It is never read by payout calculation or
+        commission resolution — actual commission terms live on each seller agreement (Commission
+        Policy Engine, seller-specific overrides, or a per-agreement override). Enter as a decimal
+        between 0 and 1 (0.20 = 20%) if you need to update it for record-keeping.
       </p>
 
       <Input

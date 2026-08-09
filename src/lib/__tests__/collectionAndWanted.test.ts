@@ -14,7 +14,7 @@ describe('Schema: CollectionItem.isPublic', () => {
   const schema = src('prisma/schema.prisma')
 
   it('has isPublic field with default false', () => {
-    expect(schema).toContain('isPublic       Boolean              @default(false)')
+    expect(schema).toContain('isPublic      Boolean   @default(false)')
   })
 })
 
@@ -26,8 +26,8 @@ describe('Schema: WantedCatalogModel', () => {
   })
 
   it('has customerProfileId and catalogModelId', () => {
-    expect(schema).toContain('customerProfileId String')
-    expect(schema).toContain('catalogModelId    String')
+    expect(schema).toContain('customerProfileId        String')
+    expect(schema).toContain('catalogModelId           String')
   })
 
   it('has unique constraint on (customerProfileId, catalogModelId)', () => {
@@ -43,11 +43,11 @@ describe('Schema: WantedCatalogModel', () => {
   })
 
   it('CustomerProfile has wantedList back-reference', () => {
-    expect(schema).toContain('wantedList          WantedCatalogModel[]')
+    expect(schema).toContain('wantedList         WantedCatalogModel[]')
   })
 
   it('CatalogModel has wantedBy back-reference', () => {
-    expect(schema).toContain('wantedBy        WantedCatalogModel[]')
+    expect(schema).toContain('wantedBy             WantedCatalogModel[]')
   })
 })
 

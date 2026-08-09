@@ -607,6 +607,7 @@ export async function ensureConsignmentPayoutLinesForCompletedOrder(
                   commissionPercent: true,
                   fixedFee: true,
                   minimumSellerPayout: true,
+                  commissionMinimumFee: true,
                   submission: { select: { profileId: true } },
                 },
               },
@@ -659,6 +660,7 @@ export async function ensureConsignmentPayoutLinesForCompletedOrder(
       commissionPercent: agreement!.commissionPercent,
       fixedFee: agreement!.fixedFee,
       minimumSellerPayout: agreement!.minimumSellerPayout,
+      commissionMinimumFee: agreement!.commissionMinimumFee,
     })
 
     await prisma.sellerPayoutLine.create({
@@ -673,6 +675,7 @@ export async function ensureConsignmentPayoutLinesForCompletedOrder(
         grossSalePrice: snapshot.grossSalePrice,
         commissionPercent: snapshot.commissionPercent,
         commissionAmount: snapshot.commissionAmount,
+        commissionMinimumFee: snapshot.commissionMinimumFee,
         fixedFee: snapshot.fixedFee,
         minimumSellerPayout: snapshot.minimumSellerPayout,
         minimumAdjustment: snapshot.minimumAdjustment,

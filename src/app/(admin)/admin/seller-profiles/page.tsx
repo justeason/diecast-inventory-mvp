@@ -45,7 +45,7 @@ export default async function AdminSellerProfilesPage() {
                 <th className="px-4 py-3 font-medium">Name / Display Name</th>
                 <th className="px-4 py-3 font-medium">Email</th>
                 <th className="px-4 py-3 font-medium">Status</th>
-                <th className="px-4 py-3 font-medium">Commission</th>
+                <th className="px-4 py-3 font-medium">Commission (legacy)</th>
                 <th className="px-4 py-3 font-medium">Payout Method</th>
                 <th className="px-4 py-3 font-medium">Created</th>
                 <th className="px-4 py-3 font-medium" />
@@ -65,7 +65,7 @@ export default async function AdminSellerProfilesPage() {
                         {STATUS_LABELS[sp.status] ?? sp.status}
                       </span>
                     </td>
-                    <td className="px-4 py-3 tabular-nums text-gray-700">
+                    <td className="px-4 py-3 tabular-nums text-gray-400" title="Legacy field — not used by any agreement's commission. See the Commission Policy Engine on each agreement instead.">
                       {(sp.commissionRate * 100).toFixed(0)}%
                     </td>
                     <td className="px-4 py-3 text-gray-500">

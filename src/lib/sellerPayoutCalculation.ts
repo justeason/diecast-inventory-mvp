@@ -22,12 +22,18 @@ export type ConsignmentPayoutInput = {
   commissionPercent: Prisma.Decimal | null
   fixedFee: Prisma.Decimal | null
   minimumSellerPayout: Prisma.Decimal | null
+  // 15A: minimum commission FEE floor (distinct from minimumSellerPayout, which
+  // floors the seller's net proceeds). Null on every legacy agreement — behavior for
+  // those is byte-for-byte unchanged. When present: commission = max(pct, this),
+  // capped at grossSalePrice so commission can never exceed the sale it's taken from.
+  commissionMinimumFee?: Prisma.Decimal | null
 }
 
 export type ConsignmentPayoutSnapshot = {
   grossSalePrice: Prisma.Decimal
   commissionPercent: Prisma.Decimal | null
   commissionAmount: Prisma.Decimal
+  commissionMinimumFee: Prisma.Decimal | null
   fixedFee: Prisma.Decimal | null
   minimumSellerPayout: Prisma.Decimal | null
   minimumAdjustment: Prisma.Decimal
@@ -46,9 +52,16 @@ export function calculateConsignmentPayoutSnapshot(
   const grossSalePrice = new Prisma.Decimal(input.grossSalePriceFloat.toFixed(2))
 
   const commissionPercent = input.commissionPercent ?? null
-  const commissionAmount = commissionPercent
+  let commissionAmount = commissionPercent
     ? grossSalePrice.mul(commissionPercent).toDecimalPlaces(DP, ROUND)
     : new Prisma.Decimal(ZERO)
+
+  const commissionMinimumFee = input.commissionMinimumFee ?? null
+  if (commissionMinimumFee && commissionMinimumFee.greaterThan(commissionAmount)) {
+    commissionAmount = commissionMinimumFee
+  }
+  // Commission never exceeds the gross sale price it's taken from (section 11).
+  commissionAmount = Prisma.Decimal.min(commissionAmount, grossSalePrice).toDecimalPlaces(DP, ROUND)
 
   const fixedFee = input.fixedFee ?? null
 
@@ -74,6 +87,7 @@ export function calculateConsignmentPayoutSnapshot(
     grossSalePrice,
     commissionPercent,
     commissionAmount,
+    commissionMinimumFee,
     fixedFee,
     minimumSellerPayout,
     minimumAdjustment,

@@ -85,23 +85,39 @@ describe('validateAgreementDraft — buyout', () => {
 })
 
 describe('validateAgreementDraft — consignment', () => {
-  it('accepts a valid consignment with commission', () => {
-    const result = validateAgreementDraft({ type: 'consignment', commissionPercent: '20' })
+  // 15A: commissionPercent is no longer required — blank means "auto-resolve via the
+  // Commission Policy Engine." Providing it is an explicit agreement-level override
+  // and requires a reason.
+  it('accepts a valid consignment override with commission + reason', () => {
+    const result = validateAgreementDraft({ type: 'consignment', commissionPercent: '20', commissionOverrideReason: 'Negotiated rate for high-volume seller', acceptedItemCount: '10' })
     expect(result.valid).toBe(true)
     if (result.valid) {
       expect(result.data.type).toBe('consignment')
       expect(result.data.commissionPercent).toBe('0.2000')
+      expect(result.data.isCommissionOverride).toBe(true)
+      expect(result.data.commissionOverrideReason).toBe('Negotiated rate for high-volume seller')
+      expect(result.data.acceptedItemCount).toBe(10)
     }
   })
 
-  it('rejects consignment with missing commission', () => {
-    const result = validateAgreementDraft({ type: 'consignment' })
+  it('accepts consignment with commission left blank (auto-resolved by the commission policy engine)', () => {
+    const result = validateAgreementDraft({ type: 'consignment', acceptedItemCount: '5' })
+    expect(result.valid).toBe(true)
+    if (result.valid) {
+      expect(result.data.commissionPercent).toBeNull()
+      expect(result.data.isCommissionOverride).toBe(false)
+      expect(result.data.acceptedItemCount).toBe(5)
+    }
+  })
+
+  it('rejects a commission override with no reason', () => {
+    const result = validateAgreementDraft({ type: 'consignment', commissionPercent: '20', acceptedItemCount: '10' })
     expect(result.valid).toBe(false)
-    if (!result.valid) expect(result.errors.commissionPercent).toBeDefined()
+    if (!result.valid) expect(result.errors.commissionOverrideReason).toBeDefined()
   })
 
   it('rejects consignment with commission over 100', () => {
-    const result = validateAgreementDraft({ type: 'consignment', commissionPercent: '101' })
+    const result = validateAgreementDraft({ type: 'consignment', commissionPercent: '101', commissionOverrideReason: 'test', acceptedItemCount: '10' })
     expect(result.valid).toBe(false)
     if (!result.valid) expect(result.errors.commissionPercent).toBeDefined()
   })
@@ -110,7 +126,9 @@ describe('validateAgreementDraft — consignment', () => {
     const result = validateAgreementDraft({
       type: 'consignment',
       commissionPercent: '20',
+      commissionOverrideReason: 'test',
       agreedBuyoutAmount: '100',
+      acceptedItemCount: '10',
     })
     expect(result.valid).toBe(false)
     if (!result.valid) expect(result.errors.agreedBuyoutAmount).toBeDefined()
@@ -120,9 +138,11 @@ describe('validateAgreementDraft — consignment', () => {
     const result = validateAgreementDraft({
       type: 'consignment',
       commissionPercent: '15.5',
+      commissionOverrideReason: 'Custom negotiated deal',
       fixedFee: '10',
       minimumSellerPayout: '40',
       agreedListPrice: '120',
+      acceptedItemCount: '75',
     })
     expect(result.valid).toBe(true)
     if (result.valid) {
@@ -130,7 +150,59 @@ describe('validateAgreementDraft — consignment', () => {
       expect(result.data.fixedFee).toBe('10.00')
       expect(result.data.minimumSellerPayout).toBe('40.00')
       expect(result.data.agreedListPrice).toBe('120.00')
+      expect(result.data.acceptedItemCount).toBe(75)
     }
+  })
+})
+
+// 15A-review section 1: acceptedItemCount format/applicability validation.
+describe('validateAgreementDraft — acceptedItemCount', () => {
+  it('rejects consignment with acceptedItemCount missing', () => {
+    const result = validateAgreementDraft({ type: 'consignment' })
+    expect(result.valid).toBe(false)
+    if (!result.valid) expect(result.errors.acceptedItemCount).toBeDefined()
+  })
+
+  it('rejects consignment with acceptedItemCount of zero', () => {
+    const result = validateAgreementDraft({ type: 'consignment', acceptedItemCount: '0' })
+    expect(result.valid).toBe(false)
+    if (!result.valid) expect(result.errors.acceptedItemCount).toBeDefined()
+  })
+
+  it('rejects consignment with a negative acceptedItemCount', () => {
+    const result = validateAgreementDraft({ type: 'consignment', acceptedItemCount: '-5' })
+    expect(result.valid).toBe(false)
+    if (!result.valid) expect(result.errors.acceptedItemCount).toBeDefined()
+  })
+
+  it('rejects a non-integer acceptedItemCount', () => {
+    const result = validateAgreementDraft({ type: 'consignment', acceptedItemCount: '10.5' })
+    expect(result.valid).toBe(false)
+    if (!result.valid) expect(result.errors.acceptedItemCount).toBeDefined()
+  })
+
+  it('rejects non-numeric acceptedItemCount', () => {
+    const result = validateAgreementDraft({ type: 'consignment', acceptedItemCount: 'abc' })
+    expect(result.valid).toBe(false)
+    if (!result.valid) expect(result.errors.acceptedItemCount).toBeDefined()
+  })
+
+  it('accepts acceptedItemCount of exactly 1', () => {
+    const result = validateAgreementDraft({ type: 'consignment', acceptedItemCount: '1' })
+    expect(result.valid).toBe(true)
+    if (result.valid) expect(result.data.acceptedItemCount).toBe(1)
+  })
+
+  it('rejects acceptedItemCount present on a buyout agreement (not applicable)', () => {
+    const result = validateAgreementDraft({ type: 'buyout', agreedBuyoutAmount: '100', acceptedItemCount: '10' })
+    expect(result.valid).toBe(false)
+    if (!result.valid) expect(result.errors.acceptedItemCount).toBeDefined()
+  })
+
+  it('accepts a buyout with acceptedItemCount omitted', () => {
+    const result = validateAgreementDraft({ type: 'buyout', agreedBuyoutAmount: '100' })
+    expect(result.valid).toBe(true)
+    if (result.valid) expect(result.data.acceptedItemCount).toBeNull()
   })
 })
 

@@ -139,6 +139,130 @@ describe('calculateConsignmentPayoutSnapshot', () => {
     })
     expect(snap.grossSalePrice.toFixed(2)).toBe('9.99')
   })
+
+  it('legacy agreements (commissionMinimumFee omitted) are byte-for-byte unchanged', () => {
+    const withUndefined = calculateConsignmentPayoutSnapshot({
+      grossSalePriceFloat: 40, commissionPercent: D('0.2000'), fixedFee: null, minimumSellerPayout: null,
+    })
+    const withNull = calculateConsignmentPayoutSnapshot({
+      grossSalePriceFloat: 40, commissionPercent: D('0.2000'), fixedFee: null, minimumSellerPayout: null, commissionMinimumFee: null,
+    })
+    expect(withUndefined.commissionAmount.toFixed(2)).toBe('8.00')
+    expect(withNull.commissionAmount.toFixed(2)).toBe('8.00')
+    expect(withUndefined.commissionMinimumFee).toBeNull()
+  })
+})
+
+// ── 15A: minimum commission fee floor (section 4/11) ──────────────────────────
+
+describe('calculateConsignmentPayoutSnapshot — minimum commission fee floor (15A)', () => {
+  it('section 4 example: $8 sale, 20%, min $2.50 -> commission $2.50 (minimum wins)', () => {
+    const snap = calculateConsignmentPayoutSnapshot({
+      grossSalePriceFloat: 8.00, commissionPercent: D('0.2000'), fixedFee: null, minimumSellerPayout: null, commissionMinimumFee: D('2.50'),
+    })
+    expect(snap.commissionAmount.toFixed(2)).toBe('2.50')
+    expect(snap.netAmount.toFixed(2)).toBe('5.50')
+  })
+
+  it('section 4 example: $40 sale, 20%, min $2.50 -> commission $8.00 (percentage wins)', () => {
+    const snap = calculateConsignmentPayoutSnapshot({
+      grossSalePriceFloat: 40.00, commissionPercent: D('0.2000'), fixedFee: null, minimumSellerPayout: null, commissionMinimumFee: D('2.50'),
+    })
+    expect(snap.commissionAmount.toFixed(2)).toBe('8.00')
+    expect(snap.netAmount.toFixed(2)).toBe('32.00')
+  })
+
+  it('minimum fee exceeding sale price caps commission at gross sale price — never negative seller proceeds', () => {
+    const snap = calculateConsignmentPayoutSnapshot({
+      grossSalePriceFloat: 5.00, commissionPercent: D('0.2000'), fixedFee: null, minimumSellerPayout: null, commissionMinimumFee: D('10.00'),
+    })
+    expect(snap.commissionAmount.toFixed(2)).toBe('5.00') // capped at gross, not $10
+    expect(snap.netAmount.toFixed(2)).toBe('0.00')
+    expect(snap.netAmount.greaterThanOrEqualTo(0)).toBe(true)
+  })
+
+  it('commission never exceeds gross sale price even with a very high percentage', () => {
+    const snap = calculateConsignmentPayoutSnapshot({
+      grossSalePriceFloat: 20.00, commissionPercent: D('1.0000'), fixedFee: null, minimumSellerPayout: null, commissionMinimumFee: D('1.00'),
+    })
+    expect(snap.commissionAmount.toFixed(2)).toBe('20.00')
+    expect(snap.netAmount.toFixed(2)).toBe('0.00')
+  })
+
+  it('exact cents at awkward values: $0.01, $0.10, $19.99', () => {
+    const cases: Array<[number, string, string]> = [
+      [0.01, '0.00', '0.01'], // 20% of 1 cent rounds to 0, min fee is 0 here so pct applies
+      [0.10, '0.02', '0.08'], // 20% of 10 cents = 2 cents
+      [19.99, '4.00', '15.99'], // 20% of 1999 cents = 399.8 -> rounds to 400
+    ]
+    for (const [price, expectedCommission] of cases) {
+      const snap = calculateConsignmentPayoutSnapshot({
+        grossSalePriceFloat: price, commissionPercent: D('0.2000'), fixedFee: null, minimumSellerPayout: null, commissionMinimumFee: D('0.00'),
+      })
+      expect(snap.commissionAmount.toFixed(2)).toBe(expectedCommission)
+    }
+  })
+
+  it('minimum fee floor does not apply twice (no double commission) when both percentage and minimum would otherwise stack', () => {
+    const snap = calculateConsignmentPayoutSnapshot({
+      grossSalePriceFloat: 100, commissionPercent: D('0.2000'), fixedFee: null, minimumSellerPayout: null, commissionMinimumFee: D('2.50'),
+    })
+    // 20% of 100 = 20.00, which already exceeds the 2.50 minimum — commission is
+    // exactly 20.00, never 20.00 + 2.50.
+    expect(snap.commissionAmount.toFixed(2)).toBe('20.00')
+  })
+
+  it('minimum commission fee is distinct from minimumSellerPayout — both can coexist without conflating floors', () => {
+    // A tiny sale where the commission-minimum-fee makes commission = full price, and
+    // a legacy minimumSellerPayout would try to guarantee the seller something extra.
+    // Commission floor is capped at gross price first, so there is nothing left for
+    // minimumSellerPayout to top up beyond zero.
+    const snap = calculateConsignmentPayoutSnapshot({
+      grossSalePriceFloat: 3.00, commissionPercent: D('0.2000'), fixedFee: null, minimumSellerPayout: D('5.00'), commissionMinimumFee: D('3.00'),
+    })
+    expect(snap.commissionAmount.toFixed(2)).toBe('3.00')
+    expect(snap.minimumAdjustment.toFixed(2)).toBe('5.00') // minimumSellerPayout still tops up net proceeds independently
+    expect(snap.netAmount.toFixed(2)).toBe('5.00')
+  })
+
+  // 15A-review section 6: same fractional-cent boundary cases as
+  // commissionPolicy.test.ts's computeCommissionCents, verified here against the
+  // ACTUAL live payout path (Prisma.Decimal, round-half-up to 2dp) to confirm both
+  // independent implementations of the documented rounding rule agree.
+  describe('fractional-cent boundary cases (round-half-up to the nearest cent)', () => {
+    it('$0.99 x 17% -> 16.83 cents rounds up to $0.17', () => {
+      const snap = calculateConsignmentPayoutSnapshot({
+        grossSalePriceFloat: 0.99, commissionPercent: D('0.1700'), fixedFee: null, minimumSellerPayout: null, commissionMinimumFee: D('0.00'),
+      })
+      expect(snap.commissionAmount.toFixed(2)).toBe('0.17')
+    })
+
+    it('$19.99 x 17% -> 339.83 cents rounds up to $3.40', () => {
+      const snap = calculateConsignmentPayoutSnapshot({
+        grossSalePriceFloat: 19.99, commissionPercent: D('0.1700'), fixedFee: null, minimumSellerPayout: null, commissionMinimumFee: D('0.00'),
+      })
+      expect(snap.commissionAmount.toFixed(2)).toBe('3.40')
+    })
+
+    it('$19.99 x 15% -> 299.85 cents rounds up to $3.00', () => {
+      const snap = calculateConsignmentPayoutSnapshot({
+        grossSalePriceFloat: 19.99, commissionPercent: D('0.1500'), fixedFee: null, minimumSellerPayout: null, commissionMinimumFee: D('0.00'),
+      })
+      expect(snap.commissionAmount.toFixed(2)).toBe('3.00')
+    })
+
+    it('same inputs always produce the same cents (deterministic, no Decimal drift)', () => {
+      const results = new Set(
+        Array.from({ length: 20 }, () =>
+          calculateConsignmentPayoutSnapshot({
+            grossSalePriceFloat: 19.99, commissionPercent: D('0.1500'), fixedFee: null, minimumSellerPayout: null, commissionMinimumFee: D('0.00'),
+          }).commissionAmount.toFixed(2),
+        ),
+      )
+      expect(results.size).toBe(1)
+      expect([...results][0]).toBe('3.00')
+    })
+  })
 })
 
 // ── 11–12: Buyout snapshot ────────────────────────────────────────────────────
