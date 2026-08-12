@@ -11,6 +11,7 @@ const navLinks = [
   { href: '/admin/orders', label: 'Orders' },
   { href: '/admin/customers', label: 'Customers' },
   { href: '/admin/seller-profiles', label: 'Sellers' },
+  { href: '/admin/seller-portfolios', label: 'Portfolios' },
   { href: '/admin/seller-payouts', label: 'Payouts' },
   { href: '/admin/commission-policies', label: 'Commission' },
   { href: '/admin/intake', label: 'Intake' },

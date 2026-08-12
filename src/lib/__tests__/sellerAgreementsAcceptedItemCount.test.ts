@@ -37,15 +37,21 @@ describe('sellerAgreements.ts: acceptance never trusts a browser-provided accept
   })
 
   it('recordSellerAgreementAcceptance validates the accepted count (>= 1, <= re-fetched submitted quantity) before resolving', () => {
+    // 15B: for a portfolio-linked agreement, the re-fetched value comes from the
+    // portfolio (resolvePortfolioAcceptedItemCount) instead of the agreement's own
+    // last-saved snapshot — see the section 5 describe block below. Either way it is
+    // captured into a local `acceptedItemCount`, re-fetched fresh inside this same
+    // transaction, and validated before being used — never a browser-supplied value.
     const body = acceptanceFnBody()
-    expect(body).toMatch(/fresh\.acceptedItemCount === null \|\| fresh\.acceptedItemCount < 1/)
-    expect(body).toMatch(/fetchSubmissionQuantity\(tx,/)
-    expect(body).toMatch(/fresh\.acceptedItemCount > submittedQuantity/)
+    expect(body).toMatch(/let acceptedItemCount = fresh\.acceptedItemCount/)
+    expect(body).toMatch(/acceptedItemCount === null \|\| acceptedItemCount < 1/)
+    expect(body).toMatch(/resolveSubmittedQuantityCap\(tx,/)
+    expect(body).toMatch(/acceptedItemCount > submittedQuantity/)
   })
 
-  it('the value passed into resolveCommissionForFinalization is the re-fetched fresh.acceptedItemCount, not a browser-supplied one', () => {
+  it('the value passed into resolveCommissionForFinalization is the re-fetched local acceptedItemCount, not a browser-supplied one', () => {
     const body = acceptanceFnBody()
-    expect(body).toMatch(/acceptedItemCount:\s*fresh\.acceptedItemCount/)
+    expect(body).toMatch(/acceptedItemCount,\n\s*asOf: new Date\(\),/)
   })
 })
 

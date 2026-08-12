@@ -70,6 +70,7 @@ export async function saveSellerInboundShipment(
         select: {
           id: true,
           status: true,
+          sellerPortfolioId: true,
           agreements: {
             where: { status: 'accepted' },
             select: { id: true },
@@ -141,6 +142,10 @@ export async function saveSellerInboundShipment(
         await tx.sellerInboundShipment.create({
           data: {
             sellerSubmissionId: submissionId,
+            // 15B: denormalized once at creation from the (locked, freshly-read)
+            // submission — never re-derived afterward, so this shipment can never
+            // end up linked to a different portfolio than it started with.
+            sellerPortfolioId: submission.sellerPortfolioId,
             carrier,
             trackingNumber,
             expectedQuantity,

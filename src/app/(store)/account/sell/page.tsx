@@ -144,6 +144,12 @@ export default async function SellRequestsPage() {
           >
             My Collection
           </Link>
+          <Link
+            href="/account/portfolios"
+            className="text-sm text-gray-500 hover:text-gray-900 transition-colors"
+          >
+            My Portfolios
+          </Link>
         </div>
       </div>
 

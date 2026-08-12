@@ -8,7 +8,6 @@ import { ensureSellerLifecycleEvent } from '@/lib/actions/sellerLifecycle'
 import {
   previewCommissionForSubmission,
   resolveCommissionForFinalization,
-  fetchSubmissionQuantity,
 } from '@/lib/commissionPolicyQuery'
 import type { AgreementOverrideDef } from '@/lib/commissionPolicy'
 
@@ -103,18 +102,60 @@ async function resolveDraftCommissionFields(
 // 15A-review section 1: shared cap-check — an admin cannot accept more items than
 // were actually submitted. Format (integer >= 1) is already enforced by
 // validateAgreementDraft; this only checks the upper bound, which requires a DB read.
+//
+// 15B section 5: when the submission belongs to a portfolio, "submitted" means the
+// portfolio's total across ALL its submissions (a portfolio may span multiple), not
+// just this one submission's quantity — avoids a redundant, narrower cap that would
+// contradict the portfolio-level total shown on the portfolio page.
 async function validateAcceptedItemCountCap(
   submissionId: string,
   acceptedItemCount: number,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const submittedQuantity = await fetchSubmissionQuantity(prisma, submissionId)
+  const submittedQuantity = await resolveSubmittedQuantityCap(prisma, submissionId)
   if (acceptedItemCount > submittedQuantity) {
     return {
       ok: false,
-      error: `Accepted quantity (${acceptedItemCount}) cannot exceed the submitted quantity (${submittedQuantity}).`,
+      error: `Accepted quantity (${acceptedItemCount}) cannot exceed the submitted total (${submittedQuantity}).`,
     }
   }
   return { ok: true }
+}
+
+type PrismaClientOrTx = typeof prisma | Prisma.TransactionClient
+
+async function resolveSubmittedQuantityCap(client: PrismaClientOrTx, submissionId: string): Promise<number> {
+  const submission = await client.sellerSubmission.findUnique({
+    where: { id: submissionId },
+    select: { quantity: true, sellerPortfolioId: true },
+  })
+  if (!submission) return 0
+  if (!submission.sellerPortfolioId) return submission.quantity
+  const agg = await client.sellerSubmission.aggregate({
+    where: { sellerPortfolioId: submission.sellerPortfolioId },
+    _sum: { quantity: true },
+  })
+  return agg._sum.quantity ?? submission.quantity
+}
+
+// 15B section 5: for a portfolio-linked submission, the accepted-count SOURCE OF
+// TRUTH before agreement acceptance is Portfolio.acceptedItemCount — never a
+// second, independently-editable value on the draft agreement (would be a redundant
+// source of truth, see section 4). Falls back to the portfolio's submitted total if
+// the portfolio hasn't had an accepted count confirmed yet. Returns null when the
+// submission is not portfolio-linked, meaning "use the browser-submitted form value
+// as before" (unchanged 15A behavior).
+async function resolvePortfolioAcceptedItemCount(client: PrismaClientOrTx, submissionId: string): Promise<number | null> {
+  const submission = await client.sellerSubmission.findUnique({
+    where: { id: submissionId },
+    select: { sellerPortfolioId: true },
+  })
+  if (!submission?.sellerPortfolioId) return null
+  const portfolio = await client.sellerPortfolio.findUnique({
+    where: { id: submission.sellerPortfolioId },
+    select: { acceptedItemCount: true },
+  })
+  if (portfolio?.acceptedItemCount != null) return portfolio.acceptedItemCount
+  return resolveSubmittedQuantityCap(client, submissionId)
 }
 
 export async function createSellerAgreement(
@@ -125,62 +166,117 @@ export async function createSellerAgreement(
   const result = validateAgreementDraft(extractInput(formData))
   if (!result.valid) return { errors: result.errors }
 
-  const existing = await prisma.sellerAgreement.findFirst({
-    where: { submissionId, status: { not: 'cancelled' } },
-    select: { id: true },
-  })
-  if (existing) {
-    return {
-      errors: {
-        _form: [
-          'An active agreement already exists for this submission. Cancel it before creating a new one.',
-        ],
-      },
-    }
-  }
-
-  const submission = await prisma.sellerSubmission.findUnique({
-    where: { id: submissionId },
-    select: { profileId: true },
-  })
-  if (!submission) return { errors: { _form: ['Submission not found'] } }
-
-  const sellerProfile = await prisma.sellerProfile.findUnique({
-    where: { profileId: submission.profileId },
-    select: { id: true },
-  })
-
   const { data } = result
 
-  let commissionFields: Record<string, unknown> = {
-    commissionPercent: toDecimal(data.commissionPercent),
-    fixedFee: toDecimal(data.fixedFee),
-    minimumSellerPayout: toDecimal(data.minimumSellerPayout),
-  }
-  if (data.type === 'consignment') {
-    // acceptedItemCount is required for consignment by validateAgreementDraft, so
-    // this is non-null here.
-    const acceptedItemCount = data.acceptedItemCount as number
-    const cap = await validateAcceptedItemCountCap(submissionId, acceptedItemCount)
-    if (!cap.ok) return { errors: { acceptedItemCount: [cap.error] } }
-    const resolved = await resolveDraftCommissionFields(submissionId, data, acceptedItemCount)
-    if (!resolved.ok) return { errors: { _form: [resolved.error] } }
-    commissionFields = resolved.fields
-  }
-
-  await prisma.sellerAgreement.create({
-    data: {
-      submissionId,
-      sellerProfileId: sellerProfile?.id ?? null,
-      type: data.type,
-      currency: data.currency,
-      agreedBuyoutAmount: toDecimal(data.agreedBuyoutAmount),
-      agreedListPrice: toDecimal(data.agreedListPrice),
-      sellerTermsSummary: data.sellerTermsSummary,
-      adminNotes: data.adminNotes,
-      ...commissionFields,
-    },
+  // 15B-review section 2: a portfolio can have multiple submissions, each with its
+  // own row — locking only the submission row does NOT serialize two concurrent
+  // "create agreement" attempts started from DIFFERENT submissions of the SAME
+  // portfolio, and both could create a "current" agreement for that portfolio. The
+  // portfolio row (when one exists) is the correct, wider serialization boundary and
+  // must be locked FIRST — this pre-transaction read is non-authoritative and used
+  // only to decide lock order (matches the existing "pre-read for canonical lock
+  // ordering" convention used elsewhere, e.g. receiveSellerInboundShipment);
+  // sellerPortfolioId is never changed by any action once set, so this is safe.
+  const lockOrderHint = await prisma.sellerSubmission.findUnique({
+    where: { id: submissionId },
+    select: { sellerPortfolioId: true },
   })
+
+  let txError: SellerAgreementActionState | null = null
+  let created = false
+
+  await prisma.$transaction(async (tx) => {
+    // Canonical lock order: portfolio (wider scope) → submission. Must match
+    // recordSellerAgreementAcceptance's order exactly, or two concurrent
+    // transactions taking the same two locks in opposite order can deadlock.
+    if (lockOrderHint?.sellerPortfolioId) {
+      await tx.$queryRaw`SELECT id FROM "SellerPortfolio" WHERE id = ${lockOrderHint.sellerPortfolioId} FOR UPDATE`
+    }
+    await tx.$queryRaw`SELECT id FROM "SellerSubmission" WHERE id = ${submissionId} FOR UPDATE`
+
+    const submission = await tx.sellerSubmission.findUnique({
+      where: { id: submissionId },
+      select: { profileId: true, sellerPortfolioId: true },
+    })
+    if (!submission) {
+      txError = { errors: { _form: ['Submission not found'] } }
+      throw new Error('TX_VALIDATION')
+    }
+
+    // 15B-review section 2: "current agreement" is scoped to the whole PORTFOLIO
+    // when portfolio-linked (never just this one submission) — this is what actually
+    // prevents two submissions of the same portfolio from each getting their own
+    // "current" agreement. Falls back to the old submission-scoped check for
+    // non-portfolio agreements (unchanged behavior).
+    const existing = await tx.sellerAgreement.findFirst({
+      where: submission.sellerPortfolioId
+        ? { sellerPortfolioId: submission.sellerPortfolioId, status: { not: 'cancelled' } }
+        : { submissionId, status: { not: 'cancelled' } },
+      select: { id: true },
+    })
+    if (existing) {
+      txError = {
+        errors: {
+          _form: [
+            submission.sellerPortfolioId
+              ? 'This portfolio already has a current agreement. Cancel it before creating a new one.'
+              : 'An active agreement already exists for this submission. Cancel it before creating a new one.',
+          ],
+        },
+      }
+      throw new Error('TX_VALIDATION')
+    }
+
+    const sellerProfile = await tx.sellerProfile.findUnique({
+      where: { profileId: submission.profileId },
+      select: { id: true },
+    })
+
+    let commissionFields: Record<string, unknown> = {
+      commissionPercent: toDecimal(data.commissionPercent),
+      fixedFee: toDecimal(data.fixedFee),
+      minimumSellerPayout: toDecimal(data.minimumSellerPayout),
+    }
+    if (data.type === 'consignment') {
+      // Portfolio-linked: accepted count comes from the portfolio, never the
+      // browser-submitted form value (avoids a redundant, divergent source of truth).
+      const portfolioAcceptedCount = await resolvePortfolioAcceptedItemCount(tx, submissionId)
+      // acceptedItemCount is required for consignment by validateAgreementDraft, so
+      // the non-portfolio fallback is non-null here.
+      const acceptedItemCount = portfolioAcceptedCount ?? (data.acceptedItemCount as number)
+      const cap = await validateAcceptedItemCountCap(submissionId, acceptedItemCount)
+      if (!cap.ok) {
+        txError = { errors: { acceptedItemCount: [cap.error] } }
+        throw new Error('TX_VALIDATION')
+      }
+      const resolved = await resolveDraftCommissionFields(submissionId, data, acceptedItemCount)
+      if (!resolved.ok) {
+        txError = { errors: { _form: [resolved.error] } }
+        throw new Error('TX_VALIDATION')
+      }
+      commissionFields = resolved.fields
+    }
+
+    await tx.sellerAgreement.create({
+      data: {
+        submissionId,
+        sellerProfileId: sellerProfile?.id ?? null,
+        sellerPortfolioId: submission.sellerPortfolioId,
+        type: data.type,
+        currency: data.currency,
+        agreedBuyoutAmount: toDecimal(data.agreedBuyoutAmount),
+        agreedListPrice: toDecimal(data.agreedListPrice),
+        sellerTermsSummary: data.sellerTermsSummary,
+        adminNotes: data.adminNotes,
+        ...commissionFields,
+      },
+    })
+    created = true
+  }).catch((err) => {
+    if ((err as Error).message !== 'TX_VALIDATION') throw err
+  })
+
+  if (!created) return txError ?? { errors: { _form: ['Failed to create agreement.'] } }
 
   redirect(`/admin/seller-submissions/${submissionId}/agreement`)
 }
@@ -210,7 +306,8 @@ export async function updateSellerAgreement(
     minimumSellerPayout: toDecimal(data.minimumSellerPayout),
   }
   if (data.type === 'consignment') {
-    const acceptedItemCount = data.acceptedItemCount as number
+    const portfolioAcceptedCount = await resolvePortfolioAcceptedItemCount(prisma, agreement.submissionId)
+    const acceptedItemCount = portfolioAcceptedCount ?? (data.acceptedItemCount as number)
     const cap = await validateAcceptedItemCountCap(agreement.submissionId, acceptedItemCount)
     if (!cap.ok) return { errors: { acceptedItemCount: [cap.error] } }
     const resolved = await resolveDraftCommissionFields(agreement.submissionId, data, acceptedItemCount)
@@ -298,7 +395,10 @@ export async function recordSellerAgreementAcceptance(
 
   const agreement = await prisma.sellerAgreement.findUnique({
     where: { id: agreementId },
-    select: { id: true, status: true, submissionId: true, type: true, sellerProfileId: true },
+    // sellerPortfolioId is read here purely to decide lock order below — it is
+    // immutable once an agreement is created (no action ever changes it), so this
+    // pre-transaction read is safe to rely on for ordering, same as createSellerAgreement.
+    select: { id: true, status: true, submissionId: true, type: true, sellerProfileId: true, sellerPortfolioId: true },
   })
   if (!agreement) return { errors: { _form: ['Agreement not found'] } }
 
@@ -306,12 +406,19 @@ export async function recordSellerAgreementAcceptance(
   const earlyTransition = canTransitionStatus(agreement.status, 'accepted')
   if (!earlyTransition.allowed) return { errors: { _form: [earlyTransition.reason] } }
 
-  // Lock SellerSubmission row then re-validate inside transaction. Serializes against
-  // concurrent pricing-preference saves and intake conversions that lock the same row
-  // — this is also what makes commission-term finalization safe under concurrency:
-  // terms are snapshotted exactly once, inside this single lock, never observed
-  // partially-written by a concurrent payout/read.
+  // Lock SellerPortfolio (if any) then SellerSubmission, then re-validate inside the
+  // transaction. Canonical order portfolio → submission — MUST match
+  // createSellerAgreement's order exactly, or two concurrent transactions taking the
+  // same two locks in opposite order can deadlock. Serializes against concurrent
+  // pricing-preference saves and intake conversions that lock the submission row, and
+  // against concurrent portfolio accepted-count edits / new agreement creation on the
+  // same portfolio — this is also what makes commission-term finalization safe under
+  // concurrency: terms are snapshotted exactly once, inside this single lock, never
+  // observed partially-written by a concurrent payout/read.
   const txResult = await prisma.$transaction(async (tx) => {
+    if (agreement.sellerPortfolioId) {
+      await tx.$queryRaw`SELECT id FROM "SellerPortfolio" WHERE id = ${agreement.sellerPortfolioId} FOR UPDATE`
+    }
     await tx.$queryRaw`SELECT id FROM "SellerSubmission" WHERE id = ${agreement.submissionId} FOR UPDATE`
     const fresh = await tx.sellerAgreement.findUnique({
       where: { id: agreementId },
@@ -319,6 +426,7 @@ export async function recordSellerAgreementAcceptance(
         status: true,
         type: true,
         sellerProfileId: true,
+        sellerPortfolioId: true,
         commissionSource: true,
         commissionPercent: true,
         commissionMinimumFee: true,
@@ -337,18 +445,30 @@ export async function recordSellerAgreementAcceptance(
     // silently replaced by an auto-resolution.
     let commissionFields: Record<string, unknown> = {}
     if (fresh.type === 'consignment') {
+      // 15B section 5/23: for a portfolio-linked agreement, re-fetch its CURRENT
+      // accepted count — it may have changed since the last draft save (the
+      // portfolio's count is the pre-acceptance source of truth, see
+      // resolvePortfolioAcceptedItemCount). The portfolio row is already locked above
+      // (before the submission lock, canonical order), so this read is authoritative.
+      // Non-portfolio agreements keep the exact 15A behavior: trust only the
+      // DB-persisted agreement snapshot, never the browser.
+      let acceptedItemCount = fresh.acceptedItemCount
+      if (fresh.sellerPortfolioId) {
+        acceptedItemCount = await resolvePortfolioAcceptedItemCount(tx, agreement.submissionId)
+      }
+
       // 15A-review section 1/5: never trust a browser-provided accepted count — the
-      // persisted SellerAgreement.acceptedItemCount (re-fetched above, inside the same
-      // FOR UPDATE lock as the submission row) is re-validated here, one last time,
-      // before it is frozen into the acceptance snapshot.
-      if (fresh.acceptedItemCount === null || fresh.acceptedItemCount < 1) {
+      // persisted/portfolio-sourced value (re-fetched above, inside the same
+      // transaction) is re-validated here, one last time, before it is frozen into
+      // the acceptance snapshot.
+      if (acceptedItemCount === null || acceptedItemCount < 1) {
         return { errors: { _form: ['Accepted quantity must be set to 1 or more before this agreement can be accepted.'] } }
       }
-      const submittedQuantity = await fetchSubmissionQuantity(tx, agreement.submissionId)
-      if (fresh.acceptedItemCount > submittedQuantity) {
+      const submittedQuantity = await resolveSubmittedQuantityCap(tx, agreement.submissionId)
+      if (acceptedItemCount > submittedQuantity) {
         return {
           errors: {
-            _form: [`Accepted quantity (${fresh.acceptedItemCount}) exceeds the submitted quantity (${submittedQuantity}). Correct the accepted quantity before accepting.`],
+            _form: [`Accepted quantity (${acceptedItemCount}) exceeds the submitted total (${submittedQuantity}). Correct the accepted quantity before accepting.`],
           },
         }
       }
@@ -363,7 +483,7 @@ export async function recordSellerAgreementAcceptance(
       const outcome = await resolveCommissionForFinalization(tx, {
         sellerProfileId: fresh.sellerProfileId,
         agreementOverride: existingOverride,
-        acceptedItemCount: fresh.acceptedItemCount,
+        acceptedItemCount,
         asOf: new Date(),
       })
       if (!outcome.ok) {

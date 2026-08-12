@@ -342,11 +342,14 @@ export async function convertDraft(
       let conversionAgreementId: string | null = null
       let conversionPurchasePrice: number | null = null
       let conversionBuyoutAgreedAmount: Prisma.Decimal | null = null
+      // 15B: explicit ItemInstance lineage back to the seller batch — read from the
+      // ACCEPTED agreement's portfolio link, never inferred from SellerProfile alone.
+      let conversionPortfolioId: string | null = null
 
       if (draft.sellerSubmissionId) {
         const agreements = await tx.sellerAgreement.findMany({
           where: { submissionId: draft.sellerSubmissionId, status: { not: 'cancelled' } },
-          select: { id: true, type: true, status: true, agreedBuyoutAmount: true },
+          select: { id: true, type: true, status: true, agreedBuyoutAmount: true, sellerPortfolioId: true },
         })
 
         const eligibility = resolveConversionEligibility(draft.sellerSubmissionId, agreements)
@@ -357,6 +360,7 @@ export async function convertDraft(
 
         conversionSourceType  = eligibility.sourceType
         conversionAgreementId = eligibility.acceptedAgreementId
+        conversionPortfolioId = agreements.find((a) => a.id === conversionAgreementId)?.sellerPortfolioId ?? null
 
         const confirmation = validateConversionConfirmation(
           conversionSourceType,
@@ -434,6 +438,7 @@ export async function convertDraft(
           notes:             trimOrNull(draft.notes) ?? undefined,
           sourceType:        conversionSourceType,
           sellerAgreementId: conversionAgreementId ?? undefined,
+          sellerPortfolioId: conversionPortfolioId ?? undefined,
           purchasePrice:     conversionPurchasePrice ?? undefined,
         },
       })

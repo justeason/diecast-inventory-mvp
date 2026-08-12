@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { SellerSubmissionStatusForm } from '@/components/admin/SellerSubmissionStatusForm'
 import { SubmissionCatalogLinkForm } from '@/components/admin/SubmissionCatalogLinkForm'
 import { startIntakeDraftFromSubmission } from '@/lib/actions/intake'
+import { createPortfolioFromSubmission } from '@/lib/actions/sellerPortfolios'
 import { ReceiveShipmentForm } from '@/components/admin/ReceiveShipmentForm'
 import { SHIPMENT_WARNING_LABELS, deriveShipmentWarnings, deriveShipmentTotals } from '@/lib/sellerShipmentWarnings'
 import { SHIPMENT_STATUS_LABELS, CONDITION_LABELS as SHIPMENT_CONDITION_LABELS, type ConditionStatus } from '@/lib/sellerInboundShipmentConstants'
@@ -110,6 +111,8 @@ export default async function AdminSellerSubmissionDetailPage({
       updatedAt:          true,
       collectionItemId:   true,
       catalogId:          true,
+      sellerPortfolioId:  true,
+      sellerPortfolio:    { select: { id: true, name: true } },
       profile: { select: { id: true, name: true, email: true } },
       catalog: { select: { brand: true, name: true } },
       pricingPreference: {
@@ -244,6 +247,24 @@ export default async function AdminSellerSubmissionDetailPage({
       <Link href={`/admin/reconciliation?entityId=${submission.id}`} className="text-xs text-blue-600 hover:underline mb-1 inline-block">
         Reconciliation issues →
       </Link>
+      <br />
+      {submission.sellerPortfolio ? (
+        <Link
+          href={`/admin/seller-portfolios/${submission.sellerPortfolio.id}`}
+          className="text-xs text-blue-600 hover:underline mb-1 inline-block"
+        >
+          Portfolio: {submission.sellerPortfolio.name ?? submission.sellerPortfolio.id} →
+        </Link>
+      ) : (
+        <form action={createPortfolioFromSubmission.bind(null, submission.id)} className="mb-1 inline-flex items-center gap-2">
+          <button
+            type="submit"
+            className="text-xs text-blue-600 hover:underline"
+          >
+            + Create portfolio from this submission
+          </button>
+        </form>
+      )}
       <p className="text-xs text-gray-400 mb-6">
         Submitted {submission.createdAt.toLocaleDateString()}
         {submission.updatedAt > submission.createdAt &&

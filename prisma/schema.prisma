@@ -107,6 +107,12 @@ model ItemInstance {
   sourceType        String?
   sellerAgreementId String?
   sellerAgreement   SellerAgreement? @relation(fields: [sellerAgreementId], references: [id], onDelete: SetNull)
+  // 15B: explicit lineage back to the seller batch this item came from — set once at
+  // intake conversion time from the accepted agreement's portfolio (never inferred
+  // from SellerProfile alone). Null for company-owned items and legacy/pre-15B
+  // consignment or buyout items — never backfilled by guessing.
+  sellerPortfolioId String?
+  sellerPortfolio   SellerPortfolio? @relation(fields: [sellerPortfolioId], references: [id], onDelete: SetNull)
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
   photos            Photo[]
@@ -116,6 +122,7 @@ model ItemInstance {
 
   @@index([sellerAgreementId])
   @@index([sourceType])
+  @@index([sellerPortfolioId])
 }
 
 model Photo {
@@ -194,6 +201,50 @@ model SellerProfile {
   agreements          SellerAgreement[]
   payouts             SellerPayout[]
   commissionOverrides SellerCommissionOverride[]
+  portfolios          SellerPortfolio[]
+}
+
+// 15B: operational grouping/navigation layer for one seller consignment batch. Does
+// NOT replace SellerSubmission/SellerAgreement/SellerInboundShipment/ItemInstance as
+// the authoritative transactional records — those are unchanged and still hold their
+// own state; a Portfolio just links them together for one commercial batch so the
+// admin has a single page to work from. `status` is intentionally a small, coarse set
+// — the detailed operational stage (awaiting_agreement/awaiting_shipment/inbound/
+// intake/active) shown in the UI is DERIVED at read time from linked-record state
+// (see derivePortfolioStage in sellerPortfolio.ts), never trusted from a stored value,
+// so the displayed stage can never silently drift from underlying reality.
+model SellerPortfolio {
+  id              String        @id @default(cuid())
+  sellerProfileId String
+  sellerProfile   SellerProfile @relation(fields: [sellerProfileId], references: [id], onDelete: Cascade)
+
+  name   String?
+  status String @default("draft") // draft | open | completed | cancelled — see derivePortfolioStage for the full display stage
+
+  // Admin-confirmed batch totals — expectedItemCount is informational (e.g. what the
+  // seller said they'd ship); acceptedItemCount is the authoritative volume-tier
+  // denominator source for a portfolio-linked SellerAgreement (see 15A
+  // resolveCommissionTerms — signature unchanged, this just becomes the caller-
+  // supplied acceptedItemCount for portfolio-linked agreements). Mutable until the
+  // portfolio's current agreement is accepted, at which point the agreement's own
+  // frozen acceptedItemCount snapshot (15A) is authoritative for that agreement
+  // forever — later changes here can never re-tier a signed agreement.
+  expectedItemCount Int?
+  acceptedItemCount Int?
+
+  notes String?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  closedAt  DateTime?
+
+  submissions      SellerSubmission[]
+  agreements       SellerAgreement[]
+  inboundShipments SellerInboundShipment[]
+  items            ItemInstance[]
+
+  @@index([sellerProfileId])
+  @@index([status])
 }
 
 // 15A: Commission Policy Engine — authoritative, versioned commission configuration.
@@ -459,6 +510,12 @@ model SellerSubmission {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // 15B: one portfolio may group several submissions (e.g. seller adds more items
+  // before the agreement is finalized). Null = not yet assigned to a portfolio, or a
+  // legacy pre-15B submission — never inferred from seller identity alone.
+  sellerPortfolioId String?
+  sellerPortfolio   SellerPortfolio? @relation(fields: [sellerPortfolioId], references: [id], onDelete: SetNull)
+
   photos           SellerSubmissionPhoto[]
   intakeDrafts     IntakeDraft[]
   agreements       SellerAgreement[]
@@ -471,6 +528,7 @@ model SellerSubmission {
   @@index([profileId])
   @@index([status])
   @@index([collectionItemId])
+  @@index([sellerPortfolioId])
 }
 
 model SellerSubmissionPhoto {
@@ -546,6 +604,14 @@ model SellerAgreement {
   sellerProfileId String?
   sellerProfile   SellerProfile? @relation(fields: [sellerProfileId], references: [id], onDelete: SetNull)
 
+  // 15B: set when this agreement is the (or a historical) commercial agreement for a
+  // portfolio batch spanning possibly multiple submissions. submissionId above stays
+  // the required technical anchor (the schema still needs exactly one SellerSubmission
+  // per agreement); for a portfolio-linked agreement, treat submissionId as the
+  // portfolio's PRIMARY submission and sellerPortfolioId as the true commercial scope.
+  sellerPortfolioId String?
+  sellerPortfolio   SellerPortfolio? @relation(fields: [sellerPortfolioId], references: [id], onDelete: SetNull)
+
   type     String
   currency String @default("USD")
   status   String @default("draft")
@@ -598,6 +664,7 @@ model SellerAgreement {
   @@index([submissionId])
   @@index([sellerProfileId])
   @@index([status])
+  @@index([sellerPortfolioId])
 }
 
 model SellerPayoutLine {
@@ -744,6 +811,11 @@ model SellerInboundShipment {
   intakeDraftId      String?
   intakeDraft        IntakeDraft?     @relation(fields: [intakeDraftId], references: [id], onDelete: SetNull)
 
+  // 15B: denormalized from sellerSubmission.sellerPortfolioId at creation time so a
+  // portfolio's shipments can be queried directly without joining through submission.
+  sellerPortfolioId String?
+  sellerPortfolio   SellerPortfolio? @relation(fields: [sellerPortfolioId], references: [id], onDelete: SetNull)
+
   status           String  @default("draft")
   carrier          String?
   trackingNumber   String?
@@ -767,6 +839,7 @@ model SellerInboundShipment {
   @@index([trackingNumber])
   @@index([status])
   @@index([receivedAt])
+  @@index([sellerPortfolioId])
 }
 
 model SellerPricingPreference {
