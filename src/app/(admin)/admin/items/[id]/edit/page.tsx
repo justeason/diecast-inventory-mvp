@@ -105,6 +105,9 @@ export default async function EditItemPage({
         </Link>
         <div className="flex items-baseline gap-4 mt-2 flex-wrap">
           <h1 className="text-2xl font-bold text-gray-900">Edit — {item.sku}</h1>
+          <Link href={`/admin/items/${item.id}`} className="text-xs text-blue-600 hover:underline">
+            View item workspace →
+          </Link>
           <Link href={`/admin/reconciliation?entityId=${item.id}`} className="text-xs text-blue-600 hover:underline">
             Reconciliation issues →
           </Link>

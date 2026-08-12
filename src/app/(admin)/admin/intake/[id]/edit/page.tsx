@@ -289,7 +289,7 @@ export default async function EditIntakeDraftPage({
         <div className="mb-6 rounded-md bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-800">
           Converted to item{' '}
           <Link
-            href={`/admin/items/${draft.convertedItem.id}/edit`}
+            href={`/admin/items/${draft.convertedItem.id}`}
             className="font-medium underline hover:no-underline"
           >
             {draft.convertedItem.sku}

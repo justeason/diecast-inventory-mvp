@@ -11,8 +11,12 @@ function isValidNonNegativePrice(v: string | undefined): boolean {
   return Number.isFinite(n) && n >= 0
 }
 
-const ItemSchema = z.object({
-  sku: z.string().min(1, 'SKU is required'),
+// 15C-review section 1: sku is the permanent, immutable operator-facing item
+// identity — assigned exactly once, at creation. UpdateItemSchema deliberately has
+// NO sku field at all, so an update request can never carry one, regardless of what a
+// modified form/browser submits — this is enforced by the schema shape itself, not
+// just by convention.
+const MutableItemFields = {
   catalogId: z.string().min(1, 'Catalog model is required'),
   locationId: z.string().optional(),
   cardedOrLoose: z.enum(['carded', 'loose'], { error: 'Carded or Loose is required' }),
@@ -28,13 +32,19 @@ const ItemSchema = z.object({
     error: 'Status is required',
   }),
   notes: z.string().optional(),
+}
+
+const CreateItemSchema = z.object({
+  sku: z.string().min(1, 'SKU is required'),
+  ...MutableItemFields,
 })
+
+const UpdateItemSchema = z.object(MutableItemFields)
 
 export type ItemActionState = { errors: Record<string, string[]> } | null
 
-function toDbData(d: z.infer<typeof ItemSchema>) {
+function toMutableDbData(d: z.infer<typeof UpdateItemSchema>) {
   return {
-    sku: d.sku,
     catalogId: d.catalogId,
     locationId: d.locationId || undefined,
     cardedOrLoose: d.cardedOrLoose,
@@ -51,7 +61,7 @@ export async function createItemInstance(
   _prev: ItemActionState,
   formData: FormData
 ): Promise<ItemActionState> {
-  const result = ItemSchema.safeParse(Object.fromEntries(formData))
+  const result = CreateItemSchema.safeParse(Object.fromEntries(formData))
   if (!result.success) return { errors: result.error.flatten().fieldErrors as Record<string, string[]> }
 
   if (!result.data.locationId) {
@@ -72,7 +82,10 @@ export async function createItemInstance(
   if (locationId && !location) return { errors: { locationId: ['Storage location not found.'] } }
 
   try {
-    await prisma.itemInstance.create({ data: toDbData(result.data) })
+    // sku is assigned here, exactly once — this is the ONLY itemInstance.create call
+    // site for this admin form (see itemIdentitySafety.test.ts for the codebase-wide
+    // invariant that ItemInstance.create only ever happens here or at intake conversion).
+    await prisma.itemInstance.create({ data: { sku, ...toMutableDbData(result.data) } })
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
       return { errors: { sku: ['SKU is already in use.'] } }
@@ -88,27 +101,22 @@ export async function updateItemInstance(
   _prev: ItemActionState,
   formData: FormData
 ): Promise<ItemActionState> {
-  const result = ItemSchema.safeParse(Object.fromEntries(formData))
+  // 15C-review section 1: UpdateItemSchema has no `sku` field — even a maliciously
+  // modified form submitting one is simply ignored by safeParse (unrecognized keys
+  // are dropped, not validated), and toMutableDbData never includes sku in the
+  // update payload below. The stored SKU is permanent from creation onward.
+  const result = UpdateItemSchema.safeParse(Object.fromEntries(formData))
   if (!result.success) return { errors: result.error.flatten().fieldErrors as Record<string, string[]> }
 
-  const { sku, catalogId, locationId: newLocationId } = result.data
+  const { catalogId, locationId: newLocationId } = result.data
 
-  const [conflict, catalog, location] = await Promise.all([
-    prisma.itemInstance.findFirst({ where: { sku, NOT: { id } }, select: { id: true } }),
+  const [catalog, location] = await Promise.all([
     prisma.catalogModel.findUnique({ where: { id: catalogId }, select: { id: true } }),
     newLocationId ? prisma.storageLocation.findUnique({ where: { id: newLocationId }, select: { id: true } }) : null,
   ])
-  if (conflict) return { errors: { sku: ['SKU is already in use.'] } }
   if (!catalog) return { errors: { catalogId: ['Catalog model not found.'] } }
   if (newLocationId && !location) return { errors: { locationId: ['Storage location not found.'] } }
 
-  try {
-    await prisma.itemInstance.update({ where: { id }, data: toDbData(result.data) })
-  } catch (error) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-      return { errors: { sku: ['SKU is already in use.'] } }
-    }
-    throw error
-  }
+  await prisma.itemInstance.update({ where: { id }, data: toMutableDbData(result.data) })
   redirect('/admin/items')
 }

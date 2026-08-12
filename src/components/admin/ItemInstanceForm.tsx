@@ -61,30 +61,43 @@ export function ItemInstanceForm({ item, defaultCatalogId, defaultCatalogLabel, 
 
   return (
     <form action={formAction} className="space-y-4 max-w-lg">
-      <div className="flex flex-col gap-1">
-        {isCreate && suggestedSku && (
-          <p className="text-xs text-gray-500">
-            Suggested:{' '}
-            <button
-              type="button"
-              onClick={() => setSku(suggestedSku)}
-              className="font-mono text-indigo-600 hover:underline focus:outline-none"
-            >
-              {suggestedSku}
-            </button>
-            <span className="ml-1 text-gray-400">(click to use)</span>
+      {isCreate ? (
+        <div className="flex flex-col gap-1">
+          {suggestedSku && (
+            <p className="text-xs text-gray-500">
+              Suggested:{' '}
+              <button
+                type="button"
+                onClick={() => setSku(suggestedSku)}
+                className="font-mono text-indigo-600 hover:underline focus:outline-none"
+              >
+                {suggestedSku}
+              </button>
+              <span className="ml-1 text-gray-400">(click to use)</span>
+            </p>
+          )}
+          <Input
+            label="SKU"
+            name="sku"
+            required
+            value={sku}
+            onChange={(e) => setSku(e.target.value)}
+            autoFocus={!!prefill}
+            error={state?.errors?.sku?.[0]}
+          />
+        </div>
+      ) : (
+        // 15C-review section 1: SKU is the permanent item identity — read-only after
+        // creation. No `name="sku"` input is rendered here, so the update form cannot
+        // submit one at all (UpdateItemSchema has no sku field either — defense in depth).
+        <div className="flex flex-col gap-1">
+          <label className="text-sm font-medium text-gray-700">SKU</label>
+          <p className="font-mono text-sm text-gray-900 px-3 py-2 bg-gray-50 border border-gray-200 rounded-md">
+            {item?.sku}
           </p>
-        )}
-        <Input
-          label="SKU"
-          name="sku"
-          required
-          value={sku}
-          onChange={(e) => setSku(e.target.value)}
-          autoFocus={!!prefill}
-          error={state?.errors?.sku?.[0]}
-        />
-      </div>
+          <p className="text-xs text-gray-400">Permanent — assigned once at creation, cannot be changed.</p>
+        </div>
+      )}
 
       <div className="flex flex-col gap-1">
         <label className="text-sm font-medium text-gray-700">

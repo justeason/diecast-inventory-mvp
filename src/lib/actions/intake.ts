@@ -569,7 +569,9 @@ export async function convertDraft(
   if (newListingId) {
     redirect(`/admin/listings/${newListingId}/edit`)
   }
-  redirect(`/admin/items/${newItemId!}/edit`)
+  // 15C: land on the unified item workspace, not the raw edit form — "View Item" is
+  // the natural next step right after conversion.
+  redirect(`/admin/items/${newItemId!}`)
 }
 
 // ─── AI Extraction ────────────────────────────────────────────────────────────

@@ -278,7 +278,7 @@ export default async function SellerPortfolioDetailPage({
                 {itemsPage.items.map((i) => (
                   <tr key={i.id}>
                     <td className="px-4 py-2">
-                      <Link href={`/admin/items/${i.id}/edit`} className="font-mono text-xs text-indigo-700 hover:underline">{i.sku}</Link>
+                      <Link href={`/admin/items/${i.id}`} className="font-mono text-xs text-indigo-700 hover:underline">{i.sku}</Link>
                     </td>
                     <td className="px-4 py-2 text-gray-700">{i.brand} {i.name}</td>
                     <td className="px-4 py-2 text-gray-500">{i.status}</td>
