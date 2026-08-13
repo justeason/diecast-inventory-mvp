@@ -287,8 +287,8 @@ export function ConvertDraftForm({
             {acceptedAgreement.type === 'buyout' && acceptedAgreement.agreedBuyoutAmount && (
               <div className="flex gap-3">
                 <dt className="text-gray-500 w-36 shrink-0">Acquisition cost</dt>
-                <dd className="text-green-700">
-                  Will be recorded as ${acceptedAgreement.agreedBuyoutAmount}
+                <dd className="text-gray-500">
+                  Recorded once for the whole agreement (see seller payouts) — item-level cost not allocated
                 </dd>
               </div>
             )}
@@ -332,8 +332,8 @@ export function ConvertDraftForm({
                 className="mt-0.5 h-4 w-4 rounded border-gray-300 accent-gray-900"
               />
               <span className="text-sm text-gray-700">
-                I confirm the agreed buyout amount (${acceptedAgreement.agreedBuyoutAmount}) will be
-                recorded as the inventory acquisition cost.
+                I confirm the agreed buyout amount (${acceptedAgreement.agreedBuyoutAmount}) is the seller
+                payment for this agreement. It is not allocated to this item&apos;s individual cost basis.
               </span>
             </label>
           ) : (

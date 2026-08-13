@@ -30,6 +30,7 @@ model CatalogModel {
   captureItems         MobileCaptureItem[]
   buyerAlertEvents     BuyerAlertEvent[]
   buyerAlertFanouts    BuyerAlertFanout[]
+  intakeDrafts         IntakeDraft[]
 
   @@index([brand])
   @@index([name])
@@ -91,38 +92,45 @@ model CatalogModelPhoto {
 }
 
 model ItemInstance {
-  id                String           @id @default(cuid())
-  sku               String           @unique
-  catalogId         String
-  catalog           CatalogModel     @relation(fields: [catalogId], references: [id])
-  locationId        String?
-  location          StorageLocation? @relation(fields: [locationId], references: [id])
-  cardedOrLoose     String
-  condition         String
-  conditionNotes    String?
-  purchasePrice     Float?
-  listPrice         Float?
-  status            String           @default("draft")
-  notes             String?
-  sourceType        String?
-  sellerAgreementId String?
-  sellerAgreement   SellerAgreement? @relation(fields: [sellerAgreementId], references: [id], onDelete: SetNull)
+  id                      String                 @id @default(cuid())
+  sku                     String                 @unique
+  catalogId               String
+  catalog                 CatalogModel           @relation(fields: [catalogId], references: [id])
+  locationId              String?
+  location                StorageLocation?       @relation(fields: [locationId], references: [id])
+  cardedOrLoose           String
+  condition               String
+  conditionNotes          String?
+  purchasePrice           Float?
+  listPrice               Float?
+  status                  String                 @default("draft")
+  notes                   String?
+  sourceType              String?
+  sellerAgreementId       String?
+  sellerAgreement         SellerAgreement?       @relation(fields: [sellerAgreementId], references: [id], onDelete: SetNull)
   // 15B: explicit lineage back to the seller batch this item came from — set once at
   // intake conversion time from the accepted agreement's portfolio (never inferred
   // from SellerProfile alone). Null for company-owned items and legacy/pre-15B
   // consignment or buyout items — never backfilled by guessing.
-  sellerPortfolioId String?
-  sellerPortfolio   SellerPortfolio? @relation(fields: [sellerPortfolioId], references: [id], onDelete: SetNull)
-  createdAt         DateTime         @default(now())
-  updatedAt         DateTime         @updatedAt
-  photos            Photo[]
-  listing           Listing?
-  orderItems        OrderItem[]
-  intakeDraft       IntakeDraft?
+  sellerPortfolioId       String?
+  sellerPortfolio         SellerPortfolio?       @relation(fields: [sellerPortfolioId], references: [id], onDelete: SetNull)
+  // 15D: explicit shipment lineage — copied exactly once from IntakeDraft.sellerInboundShipmentId
+  // at conversion. Never inferred from timestamp/seller/quantity. Null for legacy/
+  // manual/non-shipment items — those remain "Not captured" (see 15C
+  // shipmentLineageAmbiguous), never backfilled by guessing.
+  sellerInboundShipmentId String?
+  sellerInboundShipment   SellerInboundShipment? @relation(fields: [sellerInboundShipmentId], references: [id], onDelete: SetNull)
+  createdAt               DateTime               @default(now())
+  updatedAt               DateTime               @updatedAt
+  photos                  Photo[]
+  listing                 Listing?
+  orderItems              OrderItem[]
+  intakeDraft             IntakeDraft?
 
   @@index([sellerAgreementId])
   @@index([sourceType])
   @@index([sellerPortfolioId])
+  @@index([sellerInboundShipmentId])
 }
 
 model Photo {
@@ -219,7 +227,7 @@ model SellerPortfolio {
   sellerProfile   SellerProfile @relation(fields: [sellerProfileId], references: [id], onDelete: Cascade)
 
   name   String?
-  status String @default("draft") // draft | open | completed | cancelled — see derivePortfolioStage for the full display stage
+  status String  @default("draft") // draft | open | completed | cancelled — see derivePortfolioStage for the full display stage
 
   // Admin-confirmed batch totals — expectedItemCount is informational (e.g. what the
   // seller said they'd ship); acceptedItemCount is the authoritative volume-tier
@@ -585,6 +593,37 @@ model IntakeDraft {
   sellerSubmissionId String?
   sellerSubmission   SellerSubmission? @relation(fields: [sellerSubmissionId], references: [id], onDelete: SetNull)
 
+  // 15D: direct catalog resolution — set when a workbench (or future) intake flow
+  // already resolved an exact CatalogModel (smart search / image match / manual
+  // selection), so conversion never has to re-derive it by fuzzy brand/name matching.
+  // Null for legacy drafts, which keep using the existing string-field matching in
+  // convertDraft.
+  catalogModelId String?
+  catalogModel   CatalogModel? @relation(fields: [catalogModelId], references: [id], onDelete: SetNull)
+
+  // 15D: explicit shipment lineage — the exact SellerInboundShipment this physical
+  // item's workbench intake was started from. Set once when the workbench creates the
+  // draft; never inferred from timestamp/seller/quantity. Null for legacy/manual/
+  // non-shipment intake. Distinct from `inboundShipments` above (the reverse relation
+  // recording which draft captured a shipment's admin RECEIVING action, an unrelated
+  // pre-15D concept).
+  sellerInboundShipmentId String?
+  sellerInboundShipment   SellerInboundShipment? @relation("IntakeDraftLineageShipment", fields: [sellerInboundShipmentId], references: [id], onDelete: SetNull)
+
+  // 15D: idempotency key for one workbench "Confirm & Next" action (one physical
+  // unit). Unique per shipment so double-click/Enter-twice/network retry can never
+  // create a second draft/ItemInstance for the same physical scan. Null for legacy/
+  // non-workbench drafts.
+  workbenchClientToken String?
+
+  // 15D: exception hand-off signal (feeds 15E). Set when a workbench-created draft
+  // could not be safely auto-converted (unknown model, invalid storage, overage,
+  // missing condition). The draft stays unresolved (status remains 'draft', never
+  // silently converted or discarded) so the admin can continue to the next physical
+  // item without the whole shipment stopping.
+  workbenchExceptionCode String?
+  workbenchExceptionNote String?
+
   rejectedAt            DateTime?
   rejectionReason       String?
   sellerRejectionReason String?
@@ -592,8 +631,10 @@ model IntakeDraft {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@unique([sellerInboundShipmentId, workbenchClientToken])
   @@index([sellerSubmissionId])
   @@index([storageLocationId])
+  @@index([catalogModelId])
 }
 
 model SellerAgreement {
@@ -835,11 +876,34 @@ model SellerInboundShipment {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // 15D: explicit intake lineage — drafts/items created by the bulk intake workbench
+  // FROM this shipment. See IntakeDraft.sellerInboundShipmentId / ItemInstance.
+  // sellerInboundShipmentId for the "distinct from intakeDraft above" note.
+  intakeDraftLineage IntakeDraft[]           @relation("IntakeDraftLineageShipment")
+  items              ItemInstance[]
+  workbenchSession   IntakeWorkbenchSession?
+
   @@index([sellerSubmissionId])
   @@index([trackingNumber])
   @@index([status])
   @@index([receivedAt])
   @@index([sellerPortfolioId])
+}
+
+// 15D: lightweight DB-backed lease so two admins accidentally opening the same
+// shipment's workbench get a visible "active elsewhere" signal. Informational only —
+// actual duplicate-processing safety comes from IntakeDraft's workbenchClientToken
+// unique constraint and the per-confirm transaction lock, not this lease. Expires and
+// is renewable; takeover is always explicit (a new claim with `takeover: true`), never
+// automatic, and a stale (expired) lease never permanently blocks work.
+model IntakeWorkbenchSession {
+  id                      String                @id @default(cuid())
+  sellerInboundShipmentId String                @unique
+  sellerInboundShipment   SellerInboundShipment @relation(fields: [sellerInboundShipmentId], references: [id], onDelete: Cascade)
+  claimToken              String
+  claimedAt               DateTime              @default(now())
+  expiresAt               DateTime
+  renewedAt               DateTime?
 }
 
 model SellerPricingPreference {

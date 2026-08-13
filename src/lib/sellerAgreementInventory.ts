@@ -97,7 +97,7 @@ export function validateConversionConfirmation(
       return {
         valid: false,
         error:
-          'You must confirm that the buyout amount will be recorded as the inventory acquisition cost.',
+          'You must confirm the agreed buyout amount is the seller payment for this agreement.',
       }
     }
   } else if (sourceType === 'consignment') {

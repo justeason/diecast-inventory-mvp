@@ -193,13 +193,23 @@ describe('validateAgreementDraft — acceptedItemCount', () => {
     if (result.valid) expect(result.data.acceptedItemCount).toBe(1)
   })
 
-  it('rejects acceptedItemCount present on a buyout agreement (not applicable)', () => {
-    const result = validateAgreementDraft({ type: 'buyout', agreedBuyoutAmount: '100', acceptedItemCount: '10' })
-    expect(result.valid).toBe(false)
-    if (!result.valid) expect(result.errors.acceptedItemCount).toBeDefined()
+  // 15D-review (final approval pass): acceptedItemCount is now OPTIONAL for buyout —
+  // exactly 1 is the authoritative signal that the agreement total is a true
+  // single-item price (see intakeConversion.ts). No consignment-style commission-tier
+  // logic attaches to it for buyout.
+  it('accepts acceptedItemCount of exactly 1 on a buyout agreement', () => {
+    const result = validateAgreementDraft({ type: 'buyout', agreedBuyoutAmount: '100', acceptedItemCount: '1' })
+    expect(result.valid).toBe(true)
+    if (result.valid) expect(result.data.acceptedItemCount).toBe(1)
   })
 
-  it('accepts a buyout with acceptedItemCount omitted', () => {
+  it('accepts acceptedItemCount greater than 1 on a buyout agreement (multi-item batch — cost stays unallocated at conversion, not a validation error)', () => {
+    const result = validateAgreementDraft({ type: 'buyout', agreedBuyoutAmount: '100', acceptedItemCount: '10' })
+    expect(result.valid).toBe(true)
+    if (result.valid) expect(result.data.acceptedItemCount).toBe(10)
+  })
+
+  it('accepts a buyout with acceptedItemCount omitted (unknown/unspecified)', () => {
     const result = validateAgreementDraft({ type: 'buyout', agreedBuyoutAmount: '100' })
     expect(result.valid).toBe(true)
     if (result.valid) expect(result.data.acceptedItemCount).toBeNull()

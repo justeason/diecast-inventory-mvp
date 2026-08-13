@@ -123,12 +123,25 @@ describe('SellerAgreementForm.tsx: accepted-quantity edits instantly recompute t
     expect(formSrc).toMatch(/useMemo\(\(\) => \{[\s\S]*?resolveCommissionTerms\(/)
   })
 
-  it('the accepted-quantity input is a controlled field (value+onChange), not defaultValue — so preview updates on every keystroke', () => {
-    const inputBlock = formSrc.slice(
-      formSrc.indexOf('name="acceptedItemCount"') - 200,
-      formSrc.indexOf('name="acceptedItemCount"') + 200,
-    )
+  it('the CONSIGNMENT accepted-quantity input is a controlled field (value+onChange), not defaultValue — so preview updates on every keystroke', () => {
+    // 15D-review (final approval pass) added a second, separate, uncontrolled
+    // name="acceptedItemCount" input for buyout (no live commission preview applies
+    // there) — scope to the consignment block specifically, not the first occurrence.
+    const consignmentBlockStart = formSrc.indexOf("selectedType === 'consignment'")
+    const idx = formSrc.indexOf('name="acceptedItemCount"', consignmentBlockStart)
+    const inputBlock = formSrc.slice(idx - 200, idx + 200)
     expect(inputBlock).toMatch(/value=\{acceptedItemCount\}/)
     expect(inputBlock).toMatch(/onChange=\{\(ev\) => setAcceptedItemCount/)
+  })
+
+  it('the BUYOUT accepted-quantity input is optional, uncontrolled, and separate from the consignment tier-preview state', () => {
+    const buyoutBlockStart = formSrc.indexOf("selectedType === 'buyout'")
+    const consignmentBlockStart = formSrc.indexOf("selectedType === 'consignment'")
+    const idx = formSrc.indexOf('name="acceptedItemCount"', buyoutBlockStart)
+    expect(idx).toBeGreaterThan(buyoutBlockStart)
+    expect(idx).toBeLessThan(consignmentBlockStart)
+    const inputBlock = formSrc.slice(idx - 200, idx + 200)
+    expect(inputBlock).toMatch(/defaultValue=\{defaultValues\?\.acceptedItemCount/)
+    expect(inputBlock).not.toMatch(/value=\{acceptedItemCount\}/)
   })
 })

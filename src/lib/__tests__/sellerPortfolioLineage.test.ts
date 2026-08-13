@@ -11,22 +11,26 @@ function readSrc(relPath: string): string {
   return fs.readFileSync(path.join(process.cwd(), relPath), 'utf-8')
 }
 
-describe('intake.ts: ItemInstance retains portfolio lineage from the accepted agreement (section 11)', () => {
-  const src = readSrc('src/lib/actions/intake.ts')
+// 15D-review section 1: this lineage logic now lives exactly once, in the shared
+// src/lib/intakeConversion.ts primitive (convertIntakeDraft), reused by both
+// convertDraft (manual) and confirmWorkbenchItem (bulk workbench) — intake.ts no
+// longer resolves or writes it directly.
+describe('intakeConversion.ts: ItemInstance retains portfolio lineage from the accepted agreement (section 11)', () => {
+  const src = readSrc('src/lib/intakeConversion.ts')
 
-  it('reads sellerPortfolioId from the agreement records fetched inside the transaction', () => {
-    expect(src).toMatch(/select:\s*{\s*id:\s*true,\s*type:\s*true,\s*status:\s*true,\s*agreedBuyoutAmount:\s*true,\s*sellerPortfolioId:\s*true\s*}/)
+  it('reads sellerPortfolioId (and, since the final approval pass, acceptedItemCount for buyout cost semantics) from the agreement records fetched inside the transaction', () => {
+    expect(src).toMatch(/select:\s*{\s*id:\s*true,\s*type:\s*true,\s*status:\s*true,\s*agreedBuyoutAmount:\s*true,\s*sellerPortfolioId:\s*true,\s*acceptedItemCount:\s*true\s*}/)
   })
 
-  it('derives conversionPortfolioId from the ACCEPTED agreement, never from SellerProfile alone', () => {
-    expect(src).toMatch(/conversionPortfolioId = agreements\.find\(\(a\) => a\.id === conversionAgreementId\)\?\.sellerPortfolioId/)
+  it('derives portfolioId from the ACCEPTED agreement, never from SellerProfile alone', () => {
+    expect(src).toMatch(/portfolioId = agreements\.find\(\(a\) => a\.id === agreementId\)\?\.sellerPortfolioId/)
   })
 
   it('writes sellerPortfolioId onto the created ItemInstance', () => {
     const createIdx = src.indexOf('const item = await tx.itemInstance.create(')
     const createEnd = src.indexOf('})', createIdx)
     const createSrc = src.slice(createIdx, createEnd)
-    expect(createSrc).toMatch(/sellerPortfolioId:\s*conversionPortfolioId/)
+    expect(createSrc).toMatch(/sellerPortfolioId:\s*portfolioId/)
   })
 })
 

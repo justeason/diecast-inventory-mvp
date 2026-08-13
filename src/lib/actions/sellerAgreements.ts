@@ -236,6 +236,10 @@ export async function createSellerAgreement(
       commissionPercent: toDecimal(data.commissionPercent),
       fixedFee: toDecimal(data.fixedFee),
       minimumSellerPayout: toDecimal(data.minimumSellerPayout),
+      // 15D-review (final approval pass): buyout-only use of this field — optional,
+      // no cap-check/commission-tiering attaches to it. The consignment branch below
+      // always overwrites this object wholesale, so it never reaches this value.
+      acceptedItemCount: data.acceptedItemCount,
     }
     if (data.type === 'consignment') {
       // Portfolio-linked: accepted count comes from the portfolio, never the
@@ -304,6 +308,8 @@ export async function updateSellerAgreement(
     commissionPercent: toDecimal(data.commissionPercent),
     fixedFee: toDecimal(data.fixedFee),
     minimumSellerPayout: toDecimal(data.minimumSellerPayout),
+    // 15D-review (final approval pass): buyout-only use — see createSellerAgreement.
+    acceptedItemCount: data.acceptedItemCount,
   }
   if (data.type === 'consignment') {
     const portfolioAcceptedCount = await resolvePortfolioAcceptedItemCount(prisma, agreement.submissionId)

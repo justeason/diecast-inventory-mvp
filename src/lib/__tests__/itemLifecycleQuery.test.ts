@@ -39,6 +39,7 @@ function baseItem(overrides: Record<string, unknown> = {}) {
     cardedOrLoose: 'carded', condition: 'mint', conditionNotes: null,
     purchasePrice: null, listPrice: 20, status: 'available', notes: null,
     sourceType: null, sellerAgreementId: null, sellerPortfolioId: null,
+    sellerInboundShipmentId: null,
     createdAt: new Date('2026-01-01'), updatedAt: new Date('2026-01-02'),
     catalog: { brand: 'Hot Wheels', name: 'Porsche 911', series: null, year: 2024, color: null, scale: null },
     location: { id: 'loc1', label: 'B-14-03' },
@@ -161,6 +162,53 @@ describe('getItemLifecycleRecord — lineage (section 4/5)', () => {
     const record = await getItemLifecycleRecord('item1')
     expect(record!.source.inboundShipmentId).toBeNull()
     expect(record!.source.shipmentLineageAmbiguous).toBe(true)
+    expect(record!.source.shipmentLineageExplicit).toBe(false)
+  })
+
+  it('15D: an item with an explicit sellerInboundShipmentId reports authoritative lineage even when the submission has multiple shipments', async () => {
+    ;(prisma.itemInstance.findUnique as Mock).mockResolvedValueOnce(baseItem({
+      sourceType: 'consignment', sellerAgreementId: 'agr1', sellerPortfolioId: 'port1',
+      sellerInboundShipmentId: 'shipExplicit',
+      intakeDraft: { id: 'draft1', sellerSubmissionId: 'sub1', createdAt: new Date() },
+    }))
+    ;(prisma.sellerAgreement.findUnique as Mock).mockResolvedValueOnce({
+      id: 'agr1', status: 'accepted', submissionId: 'sub1', sellerProfileId: 'sp1', sellerPortfolioId: 'port1', proposedAt: null, acceptedAt: null,
+    })
+    mockNoOrders()
+    ;(prisma.sellerSubmission.findUnique as Mock).mockResolvedValueOnce({ id: 'sub1', createdAt: new Date(), profileId: 'prof1', sellerPortfolioId: 'port1' })
+    ;(prisma.sellerPortfolio.findUnique as Mock).mockResolvedValueOnce({ id: 'port1', name: 'P' })
+    // Multiple shipments exist for the submission — the old (pre-15D) heuristic would
+    // have reported this as ambiguous, but the explicit FK now wins outright.
+    ;(prisma.sellerInboundShipment.findMany as Mock).mockResolvedValueOnce([
+      { id: 'ship1', createdAt: new Date(), receivedAt: null },
+      { id: 'shipExplicit', createdAt: new Date(), receivedAt: null },
+    ])
+    ;(prisma.sellerProfile.findUnique as Mock).mockResolvedValueOnce({ id: 'sp1', profile: { name: 'A', email: 'a@x.com' } })
+
+    const record = await getItemLifecycleRecord('item1')
+    expect(record!.source.inboundShipmentId).toBe('shipExplicit')
+    expect(record!.source.shipmentLineageExplicit).toBe(true)
+    expect(record!.source.shipmentLineageAmbiguous).toBe(false)
+  })
+
+  it('legacy item (no explicit shipment, exactly one non-cancelled shipment) still infers lineage but marks it non-authoritative', async () => {
+    ;(prisma.itemInstance.findUnique as Mock).mockResolvedValueOnce(baseItem({
+      sourceType: 'consignment', sellerAgreementId: 'agr1', sellerPortfolioId: 'port1',
+      intakeDraft: { id: 'draft1', sellerSubmissionId: 'sub1', createdAt: new Date() },
+    }))
+    ;(prisma.sellerAgreement.findUnique as Mock).mockResolvedValueOnce({
+      id: 'agr1', status: 'accepted', submissionId: 'sub1', sellerProfileId: 'sp1', sellerPortfolioId: 'port1', proposedAt: null, acceptedAt: null,
+    })
+    mockNoOrders()
+    ;(prisma.sellerSubmission.findUnique as Mock).mockResolvedValueOnce({ id: 'sub1', createdAt: new Date(), profileId: 'prof1', sellerPortfolioId: 'port1' })
+    ;(prisma.sellerPortfolio.findUnique as Mock).mockResolvedValueOnce({ id: 'port1', name: 'P' })
+    ;(prisma.sellerInboundShipment.findMany as Mock).mockResolvedValueOnce([{ id: 'ship1', createdAt: new Date(), receivedAt: null }])
+    ;(prisma.sellerProfile.findUnique as Mock).mockResolvedValueOnce({ id: 'sp1', profile: { name: 'A', email: 'a@x.com' } })
+
+    const record = await getItemLifecycleRecord('item1')
+    expect(record!.source.inboundShipmentId).toBe('ship1')
+    expect(record!.source.shipmentLineageExplicit).toBe(false)
+    expect(record!.source.shipmentLineageAmbiguous).toBe(false)
   })
 })
 
@@ -242,6 +290,18 @@ describe('getItemLifecycleRecord — listing / order / finance (sections 10/11/1
     const record = await getItemLifecycleRecord('item1')
     expect(record!.financial.grossSalePrice).toBeNull()
     expect(record!.financial.grossMargin).toBeNull()
+  })
+
+  it('15D-review (financial pass) section 1: a buyout item with unallocated item-level cost (purchasePrice null, sold via a multi-unit workbench batch) reports grossMargin as null — never a fabricated figure derived from the agreement total', async () => {
+    ;(prisma.itemInstance.findUnique as Mock).mockResolvedValueOnce(baseItem({ sourceType: 'buyout', status: 'sold', purchasePrice: null }))
+    mockOrders([{
+      id: 'oi1', price: 25, createdAt: new Date(),
+      order: { id: 'order1', status: 'complete', paymentStatus: 'paid', completedAt: new Date(), paidAt: new Date(), createdAt: new Date() },
+    }])
+    const record = await getItemLifecycleRecord('item1')
+    expect(record!.financial.purchasePrice).toBeNull()
+    expect(record!.financial.grossMargin).toBeNull()
+    expect(record!.financial.grossSalePrice).not.toBeNull() // sale price itself is still known — only cost basis is unallocated
   })
 
   it('15C-review section 8: awkward-cents buyout margin stays exact through Decimal arithmetic (no JS Float accumulation)', async () => {

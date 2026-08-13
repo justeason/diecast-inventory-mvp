@@ -7,16 +7,8 @@ import { Prisma } from '@prisma/client'
 import { redirect } from 'next/navigation'
 import { revalidatePath } from 'next/cache'
 import { prisma } from '@/lib/prisma'
-import {
-  resolveConversionEligibility,
-  validateConversionConfirmation,
-} from '@/lib/sellerAgreementInventory'
-import {
-  buildBuyoutSourceKey,
-  calculateBuyoutPayoutSnapshot,
-} from '@/lib/sellerPayoutCalculation'
+import { convertIntakeDraft } from '@/lib/intakeConversion'
 import { ensureSellerLifecycleEvent } from '@/lib/actions/sellerLifecycle'
-import { createAvailableFanoutJob } from '@/lib/buyerAlertsTrigger'
 import { processFanoutJobs } from '@/lib/buyerAlertsFanoutProcessor'
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -287,219 +279,36 @@ export async function convertDraft(
 
   try {
     await prisma.$transaction(async (tx) => {
-      // 1. Acquire locks in canonical order: SellerSubmission → IntakeDraft
-      //    Serializes against concurrent receipt, storage assignment, and second conversion.
+      // Acquire the canonical-ordering lock this caller owns (SellerSubmission) before
+      // handing off to the shared converter, which owns the final IntakeDraft lock.
+      // Serializes against concurrent receipt, storage assignment, and second conversion.
       if (sellerSubmissionIdForLock) {
         await tx.$queryRaw`SELECT id FROM "SellerSubmission" WHERE id = ${sellerSubmissionIdForLock} FOR UPDATE`
       }
-      await tx.$queryRaw`SELECT id FROM "IntakeDraft" WHERE id = ${id} FOR UPDATE`
 
-      // Re-fetch draft (now locked) for authoritative state.
-      const draft = await tx.intakeDraft.findUnique({ where: { id } })
-      if (!draft) {
-        txError = { errors: { form: ['Draft not found.'] } }
-        throw new Error('TX_VALIDATION')
-      }
-      if (draft.status !== 'reviewed') {
-        txError = { errors: { form: ['Draft must be in reviewed status to convert. Reload and try again.'] } }
-        throw new Error('TX_VALIDATION')
-      }
-
-      const brand = draft.brand?.trim()
-      const name  = draft.name?.trim()
-      if (!brand || !name || !draft.condition || !draft.cardedOrLoose) {
-        txError = { errors: { form: ['Draft is missing required fields. Please update and retry.'] } }
-        throw new Error('TX_VALIDATION')
-      }
-
-      sellerSubmissionId = draft.sellerSubmissionId
-
-      // Detect conflict between pre-assigned draft storage and the submitted locationId.
-      // Both are admin-set; disagreement means the form is stale — force a reload.
-      if (draft.storageLocationId && draft.storageLocationId !== locationId) {
-        txError = {
-          errors: {
-            locationId: [
-              'The pre-assigned storage location on this draft differs from the selected location. Reload the form and try again.',
-            ],
-          },
-        }
-        throw new Error('TX_VALIDATION')
-      }
-
-      // Re-validate location inside TX: closes the race between the pre-flight check and
-      // transaction execution (concurrent deletion would be missed by the pre-flight).
-      const locInTx = await tx.storageLocation.findUnique({ where: { id: locationId }, select: { id: true } })
-      if (!locInTx) {
-        txError = { errors: { locationId: ['Storage location was deleted. Please select another.'] } }
-        throw new Error('TX_VALIDATION')
-      }
-
-      // 2. Resolve commercial provenance inside the transaction.
-      //    sourceType, sellerAgreementId, and purchasePrice are derived exclusively
-      //    from the transaction-fetched agreement records — never from pre-transaction state.
-      let conversionSourceType: 'company_owned' | 'buyout' | 'consignment' = 'company_owned'
-      let conversionAgreementId: string | null = null
-      let conversionPurchasePrice: number | null = null
-      let conversionBuyoutAgreedAmount: Prisma.Decimal | null = null
-      // 15B: explicit ItemInstance lineage back to the seller batch — read from the
-      // ACCEPTED agreement's portfolio link, never inferred from SellerProfile alone.
-      let conversionPortfolioId: string | null = null
-
-      if (draft.sellerSubmissionId) {
-        const agreements = await tx.sellerAgreement.findMany({
-          where: { submissionId: draft.sellerSubmissionId, status: { not: 'cancelled' } },
-          select: { id: true, type: true, status: true, agreedBuyoutAmount: true, sellerPortfolioId: true },
-        })
-
-        const eligibility = resolveConversionEligibility(draft.sellerSubmissionId, agreements)
-        if (!eligibility.eligible) {
-          txError = { errors: { form: [eligibility.reason] } }
-          throw new Error('TX_VALIDATION')
-        }
-
-        conversionSourceType  = eligibility.sourceType
-        conversionAgreementId = eligibility.acceptedAgreementId
-        conversionPortfolioId = agreements.find((a) => a.id === conversionAgreementId)?.sellerPortfolioId ?? null
-
-        const confirmation = validateConversionConfirmation(
-          conversionSourceType,
-          formConfirmBuyout,
-          formConfirmConsignment,
-        )
-        if (!confirmation.valid) {
-          txError = { errors: { form: [confirmation.error] } }
-          throw new Error('TX_VALIDATION')
-        }
-
-        if (conversionSourceType === 'buyout') {
-          const accepted = agreements.find((a) => a.id === conversionAgreementId)
-          if (!accepted?.agreedBuyoutAmount) {
-            txError = { errors: { form: ['Accepted buyout agreement is missing the agreed buyout amount.'] } }
-            throw new Error('TX_VALIDATION')
-          }
-          const buyoutAmount = parseFloat(accepted.agreedBuyoutAmount.toFixed(2))
-          if (!Number.isFinite(buyoutAmount) || buyoutAmount <= 0) {
-            txError = { errors: { form: ['Buyout amount in the accepted agreement is not valid.'] } }
-            throw new Error('TX_VALIDATION')
-          }
-          conversionPurchasePrice = buyoutAmount
-          conversionBuyoutAgreedAmount = accepted.agreedBuyoutAmount
-        }
-      }
-
-      // 3. Resolve catalog model.
-      let catalog: { id: string }
-      if (selectedCatalogId) {
-        const found = await tx.catalogModel.findUnique({ where: { id: selectedCatalogId }, select: { id: true } })
-        if (!found) {
-          txError = { errors: { form: ['Selected catalog model no longer exists. Please refresh and try again.'] } }
-          throw new Error('TX_VALIDATION')
-        }
-        catalog = found
-      } else {
-        let found = await tx.catalogModel.findFirst({
-          where: {
-            brand,
-            name,
-            year:   draft.year   ?? null,
-            series: trimOrNull(draft.series),
-            color:  trimOrNull(draft.color),
-            scale:  trimOrNull(draft.scale),
-          },
-        })
-        if (!found) {
-          found = await tx.catalogModel.create({
-            data: {
-              brand,
-              name,
-              year:   draft.year            ?? undefined,
-              series: trimOrNull(draft.series) ?? undefined,
-              color:  trimOrNull(draft.color)  ?? undefined,
-              scale:  trimOrNull(draft.scale)  ?? undefined,
-            },
-          })
-        }
-        catalog = found
-      }
-
-      // 4. Create ItemInstance — sourceType, sellerAgreementId, and purchasePrice come
-      //    exclusively from the transaction-resolved commercial values above.
-      const item = await tx.itemInstance.create({
-        data: {
-          sku,
-          catalogId:         catalog.id,
-          locationId,
-          cardedOrLoose:     draft.cardedOrLoose!,
-          condition:         draft.condition!,
-          conditionNotes:    trimOrNull(draft.conditionNotes) ?? undefined,
-          listPrice:         draft.listPrice ?? undefined,
-          status:            'available',
-          notes:             trimOrNull(draft.notes) ?? undefined,
-          sourceType:        conversionSourceType,
-          sellerAgreementId: conversionAgreementId ?? undefined,
-          sellerPortfolioId: conversionPortfolioId ?? undefined,
-          purchasePrice:     conversionPurchasePrice ?? undefined,
-        },
+      // 15D-review section 1: the ONE authoritative conversion primitive — shared with
+      // the bulk intake workbench (see intakeWorkbench.ts confirmWorkbenchItem). This
+      // file no longer reimplements draft-status gating, commercial-provenance
+      // resolution, catalog resolution, SKU handling, buyout payout-line creation, or
+      // the converted-status/linkage write.
+      const result = await convertIntakeDraft(tx, {
+        draftId: id,
+        locationId: locationId!,
+        catalogModelId: selectedCatalogId,
+        sku,
+        confirmBuyout: formConfirmBuyout === 'on',
+        confirmConsignment: formConfirmConsignment === 'on',
+        createListing: createListing && listingTitle && listingPrice ? { title: listingTitle, price: listingPrice } : undefined,
       })
-      newItemId = item.id
-
-      // 4b. Create buyout payout eligibility line atomically with inventory creation.
-      //     Idempotent: skipped if a line with the same sourceKey already exists.
-      if (conversionSourceType === 'buyout' && conversionAgreementId && conversionBuyoutAgreedAmount) {
-        const submission = await tx.sellerSubmission.findUnique({
-          where: { id: draft.sellerSubmissionId! },
-          select: { profileId: true },
-        })
-        if (!submission) {
-          txError = { errors: { form: ['Seller submission not found.'] } }
-          throw new Error('TX_VALIDATION')
-        }
-        const sourceKey = buildBuyoutSourceKey(conversionAgreementId)
-        const existingLine = await tx.sellerPayoutLine.findUnique({ where: { sourceKey } })
-        if (!existingLine) {
-          const snap = calculateBuyoutPayoutSnapshot(conversionBuyoutAgreedAmount)
-          const buyoutLine = await tx.sellerPayoutLine.create({
-            data: {
-              sourceKey,
-              lineType: 'buyout',
-              status: 'eligible',
-              currency: 'USD',
-              customerProfileId: submission.profileId,
-              agreementId: conversionAgreementId,
-              agreedBuyoutAmount: snap.agreedBuyoutAmount,
-              netAmount: snap.netAmount,
-              eligibleAt: new Date(),
-            },
-          })
-          newBuyoutLineId = buyoutLine.id
-        }
+      if (!result.ok) {
+        txError = { errors: { [result.field]: [result.message] } }
+        throw new Error('TX_VALIDATION')
       }
 
-      // 5. Create Photo records only for non-blank URLs.
-      const front = draft.frontPhotoUrl?.trim()
-      if (front) {
-        await tx.photo.create({ data: { itemId: item.id, url: front, type: 'front', sortOrder: 0 } })
-      }
-      const back = draft.backPhotoUrl?.trim()
-      if (back) {
-        await tx.photo.create({ data: { itemId: item.id, url: back, type: 'back', sortOrder: 1 } })
-      }
-
-      // 6. Optionally create Listing — and its durable fan-out job — in the same transaction.
-      if (createListing && listingTitle && listingPrice) {
-        const listing = await tx.listing.create({
-          data: { itemId: item.id, title: listingTitle, price: listingPrice, status: 'active' },
-        })
-        await createAvailableFanoutJob(tx, catalog.id, listing.id, listing.version)
-        newListingId = listing.id
-      }
-
-      // 7. Lock the draft — only reached when all above steps succeed.
-      await tx.intakeDraft.update({
-        where: { id },
-        data:  { status: 'converted', convertedItemId: item.id },
-      })
+      newItemId = result.itemId
+      newListingId = result.listingId
+      newBuyoutLineId = result.buyoutLineId
+      sellerSubmissionId = result.sellerSubmissionId
     })
   } catch (error) {
     if (txError) return txError

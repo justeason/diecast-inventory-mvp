@@ -469,32 +469,39 @@ describe('reconciliation warnings', () => {
 
 // ─── Conversion storage structural tests ─────────────────────────────────────
 
+// 15D-review section 1: the authoritative (transaction-level) storage re-validation,
+// conflict check, and ItemInstance creation moved into the single shared
+// src/lib/intakeConversion.ts primitive (convertIntakeDraft) — reused by both
+// convertDraft (manual) and confirmWorkbenchItem (bulk workbench). intake.ts keeps
+// only its own pre-flight (non-authoritative) form validation.
 describe('conversion storage', () => {
   const intakeSrc = readFileSync('src/lib/actions/intake.ts', 'utf-8')
+  const conversionSrc = readFileSync('src/lib/intakeConversion.ts', 'utf-8')
 
   test('convertDraft requires locationId (form field validation)', () => {
     expect(intakeSrc).toContain("'Storage location is required.'")
   })
 
-  test('convertDraft re-fetches location inside transaction', () => {
-    expect(intakeSrc).toContain('storageLocation.findUnique({ where: { id: locationId }')
-    // Must appear inside the transaction block (after $transaction)
-    const txStart = intakeSrc.indexOf('prisma.$transaction')
-    const locFetchIdx = intakeSrc.indexOf('storageLocation.findUnique({ where: { id: locationId }', txStart)
-    expect(locFetchIdx).toBeGreaterThan(txStart)
+  test('the shared converter re-fetches location inside the transaction it runs in', () => {
+    expect(conversionSrc).toContain('storageLocation.findUnique({ where: { id: options.locationId }')
   })
 
-  test('convertDraft errors when pre-assigned storageLocationId conflicts with submitted locationId', () => {
-    expect(intakeSrc).toContain('draft.storageLocationId && draft.storageLocationId !== locationId')
-    expect(intakeSrc).toContain('pre-assigned storage location on this draft differs')
+  test('the shared converter errors when pre-assigned draft storage conflicts with the submitted locationId', () => {
+    expect(conversionSrc).toContain('draft.storageLocationId && draft.storageLocationId !== options.locationId')
+    expect(conversionSrc).toContain('pre-assigned storage location on this draft differs')
   })
 
-  test('convertDraft errors when location deleted between preflight and TX', () => {
-    expect(intakeSrc).toContain('Storage location was deleted')
+  test('the shared converter errors when location is deleted between preflight and TX', () => {
+    expect(conversionSrc).toContain('Storage location was deleted')
   })
 
-  test('convertDraft creates ItemInstance with locationId', () => {
-    expect(intakeSrc).toContain('locationId,')
+  test('the shared converter creates ItemInstance with options.locationId', () => {
+    expect(conversionSrc).toContain('locationId: options.locationId,')
+  })
+
+  test('intake.ts no longer contains any of this authoritative storage logic itself (single source of truth)', () => {
+    expect(intakeSrc).not.toMatch(/pre-assigned storage location on this draft differs/)
+    expect(intakeSrc).not.toMatch(/Storage location was deleted\./)
   })
 })
 
@@ -738,30 +745,32 @@ describe('new reconciliation warnings', () => {
 
 // ─── Lock ordering structural tests ─────────────────────────────────────────
 
+// 15D-review section 1: canonical lock ordering is now split across two files —
+// intake.ts acquires its OWN caller-specific lock (SellerSubmission) before handing
+// off; the shared src/lib/intakeConversion.ts primitive acquires the final, universal
+// IntakeDraft lock (shared by both convertDraft and confirmWorkbenchItem) and re-reads
+// the row itself.
 describe('lock ordering', () => {
   const intakeSrc = readFileSync('src/lib/actions/intake.ts', 'utf-8')
+  const conversionSrc = readFileSync('src/lib/intakeConversion.ts', 'utf-8')
 
-  test('convertDraft acquires IntakeDraft FOR UPDATE lock inside transaction', () => {
-    const convertDraftStart = intakeSrc.indexOf('async function convertDraft')
-    const txStart = intakeSrc.indexOf('prisma.$transaction', convertDraftStart)
-    const intakeLockIdx = intakeSrc.indexOf('"IntakeDraft" WHERE id = ${id} FOR UPDATE', txStart)
-    expect(intakeLockIdx).toBeGreaterThan(txStart)
-  })
-
-  test('convertDraft locks SellerSubmission before IntakeDraft inside transaction', () => {
+  test('convertDraft acquires the SellerSubmission lock inside its own transaction before handing off', () => {
     const convertDraftStart = intakeSrc.indexOf('async function convertDraft')
     const txStart = intakeSrc.indexOf('prisma.$transaction', convertDraftStart)
     const subLockIdx = intakeSrc.indexOf('"SellerSubmission" WHERE id = ${sellerSubmissionIdForLock} FOR UPDATE', txStart)
-    const intakeLockIdx = intakeSrc.indexOf('"IntakeDraft" WHERE id = ${id} FOR UPDATE', txStart)
+    const convertCallIdx = intakeSrc.indexOf('await convertIntakeDraft(tx,', txStart)
     expect(subLockIdx).toBeGreaterThan(txStart)
-    expect(intakeLockIdx).toBeGreaterThan(subLockIdx)
+    expect(convertCallIdx).toBeGreaterThan(subLockIdx)
   })
 
-  test('convertDraft re-reads draft after acquiring IntakeDraft lock', () => {
-    const convertDraftStart = intakeSrc.indexOf('async function convertDraft')
-    const txStart = intakeSrc.indexOf('prisma.$transaction', convertDraftStart)
-    const intakeLockIdx = intakeSrc.indexOf('"IntakeDraft" WHERE id = ${id} FOR UPDATE', txStart)
-    const draftReadIdx = intakeSrc.indexOf('intakeDraft.findUnique({ where: { id } })', txStart)
+  test('the shared converter acquires the IntakeDraft FOR UPDATE lock — the single, final lock shared by both callers', () => {
+    const intakeLockIdx = conversionSrc.indexOf('"IntakeDraft" WHERE id = ${options.draftId} FOR UPDATE')
+    expect(intakeLockIdx).toBeGreaterThan(-1)
+  })
+
+  test('the shared converter re-reads the draft immediately after acquiring the IntakeDraft lock', () => {
+    const intakeLockIdx = conversionSrc.indexOf('"IntakeDraft" WHERE id = ${options.draftId} FOR UPDATE')
+    const draftReadIdx = conversionSrc.indexOf('intakeDraft.findUnique({ where: { id: options.draftId } })')
     expect(draftReadIdx).toBeGreaterThan(intakeLockIdx)
   })
 

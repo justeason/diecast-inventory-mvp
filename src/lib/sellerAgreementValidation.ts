@@ -14,9 +14,11 @@ export type AgreementDraftInput = {
   commissionMinimumFee?: string | null
   // 15A-review section 1: the authoritative volume-tier denominator for THIS
   // agreement — distinct from SellerSubmission.quantity (seller-requested). Required
-  // for consignment (drives tiering even when no override is set); not applicable to
-  // buyout. The <= submission.quantity cap check needs DB access and happens in the
-  // action layer, not here.
+  // for consignment (drives tiering even when no override is set). 15D-review (final
+  // approval pass): also OPTIONAL for buyout — a value of exactly 1 is the
+  // authoritative signal that the agreement's total is a true single-item price (see
+  // intakeConversion.ts). The <= submission.quantity cap check needs DB access and
+  // happens in the action layer, not here.
   acceptedItemCount?: string | null
 }
 
@@ -133,9 +135,11 @@ export function validateAgreementDraft(input: AgreementDraftInput): AgreementVal
         'Minimum seller payout is not applicable for buyout agreements',
       ]
     }
-    if (acceptedItemCountResult.ok && acceptedItemCountResult.value !== null) {
-      errors.acceptedItemCount = ['Accepted quantity is not applicable for buyout agreements']
-    }
+    // 15D-review (final approval pass): acceptedItemCount is OPTIONAL for buyout —
+    // when set to exactly 1, it is the authoritative signal that agreedBuyoutAmount
+    // is a true single-item price (intake then assigns it as that item's cost basis).
+    // Left blank (null) or >1, item-level cost stays unallocated — never guessed. No
+    // consignment-style commission-tier logic attaches to it for buyout.
   } else if (input.type === 'consignment') {
     // 15A: commissionPercent is no longer required — leaving it blank means "let the
     // Commission Policy Engine auto-resolve." Providing it is an explicit

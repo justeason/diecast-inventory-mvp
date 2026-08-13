@@ -51,12 +51,21 @@ export type ItemSourceInfo = {
   submissionId: string | null
   agreementId: string | null
   agreementStatus: string | null
-  inboundShipmentId: string | null // only set when exactly one shipment unambiguously covers this item's submission
-  // true when the submission has MULTIPLE non-cancelled shipments — this ItemInstance
-  // cannot prove which one physically contained it (no per-item shipment FK exists).
-  // Never guessed from seller/timestamp/order/quantity — see 15C-review section 6.
-  // 15D handoff: intake must capture an explicit inbound-shipment identity so
-  // converted ItemInstance lineage can preserve it; until then this stays ambiguous.
+  // 15D: authoritative when set directly from ItemInstance.sellerInboundShipmentId
+  // (see shipmentLineageExplicit) — the workbench sets this exactly once at
+  // conversion, never inferred. Falls back to the legacy single-shipment inference
+  // below only for items created before 15D.
+  inboundShipmentId: string | null
+  // true only for the legacy (pre-15D) inference path: exactly one non-cancelled
+  // shipment exists for the submission, so it PROBABLY — not provably — covered this
+  // item. False whenever inboundShipmentId came from the explicit 15D field.
+  shipmentLineageExplicit: boolean
+  // true when the submission has MULTIPLE non-cancelled shipments AND this item has no
+  // explicit 15D lineage — this ItemInstance cannot prove which one physically
+  // contained it (no per-item shipment FK existed pre-15D). Never guessed from seller/
+  // timestamp/order/quantity — see 15C-review section 6. 15D added the explicit FK
+  // (ItemInstance.sellerInboundShipmentId) so this ambiguity can no longer occur for
+  // items created via the bulk intake workbench.
   shipmentLineageAmbiguous: boolean
   intakeDraftId: string | null
 }
@@ -158,6 +167,7 @@ export async function getItemLifecycleRecord(itemId: string): Promise<ItemLifecy
       cardedOrLoose: true, condition: true, conditionNotes: true,
       purchasePrice: true, listPrice: true, status: true, notes: true,
       sourceType: true, sellerAgreementId: true, sellerPortfolioId: true,
+      sellerInboundShipmentId: true,
       createdAt: true, updatedAt: true,
       catalog: { select: { brand: true, name: true, series: true, year: true, color: true, scale: true } },
       location: { select: { id: true, label: true } },
@@ -253,8 +263,9 @@ export async function getItemLifecycleRecord(itemId: string): Promise<ItemLifecy
     submissionId,
     agreementId: item.sellerAgreementId,
     agreementStatus: agreement?.status ?? null,
-    inboundShipmentId: shipments.length === 1 ? shipments[0].id : null,
-    shipmentLineageAmbiguous: shipments.length > 1,
+    inboundShipmentId: item.sellerInboundShipmentId ?? (shipments.length === 1 ? shipments[0].id : null),
+    shipmentLineageExplicit: item.sellerInboundShipmentId !== null,
+    shipmentLineageAmbiguous: item.sellerInboundShipmentId === null && shipments.length > 1,
     intakeDraftId: item.intakeDraft?.id ?? null,
   }
 

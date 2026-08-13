@@ -255,16 +255,21 @@ describe('buyerAlertsTrigger: createAvailableFanoutJob / createPriceChangeFanout
     expect(updateFnSrc).toContain('createPriceChangeFanoutJob(tx')
   })
 
-  it('intake.ts creates the fan-out job inside the same conversion transaction as the listing', () => {
-    const intakeSrc = readSrc('src/lib/actions/intake.ts')
-    const txIdx = intakeSrc.indexOf('tx.listing.create')
-    const jobIdx = intakeSrc.indexOf('createAvailableFanoutJob(tx')
-    // The convertDraft transaction's OWN closing tx.intakeDraft.update — earlier
-    // functions (markDraftReviewed, rejectDraft) have their own, unrelated ones.
-    const txEndIdx = intakeSrc.indexOf('await tx.intakeDraft.update', txIdx)
+  it('intake conversion creates the fan-out job inside the same transaction as the listing — 15D-review section 1: this now lives in the shared intakeConversion.ts primitive, called by convertDraft (manual) inside its own $transaction', () => {
+    const conversionSrc = readSrc('src/lib/intakeConversion.ts')
+    const txIdx = conversionSrc.indexOf('tx.listing.create')
+    const jobIdx = conversionSrc.indexOf('createAvailableFanoutJob(tx')
+    // The shared primitive's own closing tx.intakeDraft.update (converted+link write).
+    const txEndIdx = conversionSrc.indexOf('await tx.intakeDraft.update', txIdx)
     expect(txIdx).toBeGreaterThan(-1)
     expect(jobIdx).toBeGreaterThan(txIdx)
-    expect(jobIdx).toBeLessThan(txEndIdx) // still inside the same $transaction callback
+    expect(jobIdx).toBeLessThan(txEndIdx)
+    // intake.ts itself calls convertIntakeDraft from inside its OWN $transaction, so
+    // the whole chain (listing create -> fan-out -> draft link) still runs atomically.
+    const intakeSrc = readSrc('src/lib/actions/intake.ts')
+    const intakeTxIdx = intakeSrc.indexOf('prisma.$transaction')
+    const convertCallIdx = intakeSrc.indexOf('await convertIntakeDraft(tx,')
+    expect(convertCallIdx).toBeGreaterThan(intakeTxIdx)
   })
 
   it('best-effort processing after commit never blocks the action on failure', () => {

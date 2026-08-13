@@ -129,18 +129,43 @@ export function SellerAgreementForm({
 
       {/* Buyout-specific */}
       {selectedType === 'buyout' && (
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Agreed buyout amount (USD) <span className="text-red-500">*</span>
-          </label>
-          <input
-            type="text"
-            name="agreedBuyoutAmount"
-            defaultValue={defaultValues?.agreedBuyoutAmount ?? ''}
-            placeholder="0.00"
-            className={inputCls(!!e.agreedBuyoutAmount)}
-          />
-          <FieldError messages={e.agreedBuyoutAmount} />
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Agreed buyout amount (USD) <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              name="agreedBuyoutAmount"
+              defaultValue={defaultValues?.agreedBuyoutAmount ?? ''}
+              placeholder="0.00"
+              className={inputCls(!!e.agreedBuyoutAmount)}
+            />
+            <FieldError messages={e.agreedBuyoutAmount} />
+          </div>
+          {/* 15D-review (final approval pass): this amount is the TOTAL for the whole
+              agreement, not automatically a per-item price. Leave blank unless exactly
+              one physical item is covered — that is the only case where the total and
+              the item's cost basis are mathematically identical. */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Physical item count covered (optional)
+            </label>
+            <input
+              type="text"
+              inputMode="numeric"
+              name="acceptedItemCount"
+              defaultValue={defaultValues?.acceptedItemCount ?? ''}
+              placeholder="Leave blank if unknown or more than one item"
+              className={inputCls(!!e.acceptedItemCount)}
+            />
+            <p className="mt-1 text-xs text-gray-400">
+              Set this to exactly <strong>1</strong> only when the buyout amount above pays for a single
+              physical item — intake will then record that amount as the item&apos;s cost basis. For
+              multiple items or an unknown split, leave this blank; item-level cost stays unallocated.
+            </p>
+            <FieldError messages={e.acceptedItemCount} />
+          </div>
         </div>
       )}
 

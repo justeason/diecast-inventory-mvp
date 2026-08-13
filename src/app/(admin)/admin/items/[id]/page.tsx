@@ -167,7 +167,22 @@ export default async function AdminItemDetailPage({
                 <Row label="Submission">{source.submissionId ? <Link href={`/admin/seller-submissions/${source.submissionId}`} className="text-blue-600 hover:underline">{source.submissionId}</Link> : 'Unknown / legacy'}</Row>
                 <Row label="Shipment">
                   {source.inboundShipmentId ? (
-                    <Link href={`/admin/seller-submissions/${source.submissionId}`} className="text-blue-600 hover:underline">View shipment →</Link>
+                    <span>
+                      <Link href={`/admin/seller-submissions/${source.submissionId}`} className="text-blue-600 hover:underline">View shipment →</Link>
+                      {source.shipmentLineageExplicit ? (
+                        <span className="ml-2 text-xs text-gray-400" title="Set explicitly by the bulk intake workbench at conversion — not inferred.">
+                          (authoritative)
+                        </span>
+                      ) : (
+                        // 15D-review section 6: this item predates explicit lineage — the
+                        // submission happens to have exactly one non-cancelled shipment, so
+                        // this is a best-guess inference, NEVER labeled authoritative/
+                        // confirmed. Distinct from the ambiguous (multiple-shipment) case below.
+                        <span className="ml-2 text-xs text-amber-600" title="Inferred because the submission has exactly one non-cancelled shipment — not a confirmed per-item link. Pre-dates explicit 15D lineage.">
+                          (legacy inferred lineage — not authoritative)
+                        </span>
+                      )}
+                    </span>
                   ) : source.shipmentLineageAmbiguous ? (
                     // 15C-review section 6: the submission has multiple inbound shipments —
                     // this ItemInstance cannot prove which one physically contained it (no
@@ -252,9 +267,26 @@ export default async function AdminItemDetailPage({
             </dl>
           ) : (
             <dl className="space-y-1.5">
-              <Row label="Purchase cost">{usd(financial.purchasePrice)}</Row>
+              {/* 15D-review (final approval pass) section 1: a buyout agreement's amount is
+                  assigned as this item's cost basis ONLY when the agreement's signed
+                  acceptedItemCount is exactly 1 (see intakeConversion.ts) — otherwise
+                  individual item cost is unallocated. Never render this as $0 or as a blank
+                  "—", which would look like "no cost" rather than "not yet known". */}
+              <Row label="Purchase cost">
+                {financial.purchasePrice !== null
+                  ? usd(financial.purchasePrice)
+                  : source.type === 'buyout'
+                    ? <span className="text-gray-400">Item-level cost not allocated</span>
+                    : '—'}
+              </Row>
               <Row label="Sale amount">{financial.grossSalePrice ? usd(financial.grossSalePrice.toFixed(2)) : '—'}</Row>
-              <Row label="Gross margin">{financial.grossMargin ? usd(financial.grossMargin.toFixed(2)) : '—'}</Row>
+              <Row label="Gross margin">
+                {financial.grossMargin
+                  ? usd(financial.grossMargin.toFixed(2))
+                  : source.type === 'buyout' && financial.purchasePrice === null
+                    ? <span className="text-gray-400">Not available</span>
+                    : '—'}
+              </Row>
             </dl>
           )}
           <p className="mt-2 text-xs text-gray-400">Admin-only. Gross margin is not profit — operating costs are not deducted.</p>

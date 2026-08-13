@@ -233,28 +233,36 @@ export default async function SellerPortfolioDetailPage({
         )}
       </section>
 
-      {/* Start/Continue Intake — 15D prep: links carry full context, no re-entry needed */}
+      {/* 15D: Start/Continue Intake — one obvious action per receivable shipment. The
+          workbench reads seller/portfolio/agreement/commission/shipment context
+          directly from the shipment id, no re-entry needed. */}
       {detail.currentAgreement?.status === 'accepted' && (
         <section className="mb-8">
           <h2 className="text-sm font-semibold text-gray-900 mb-3">Intake</h2>
-          <div className="rounded-md border border-gray-200 bg-gray-50 p-4 text-sm">
-            <p className="text-gray-600 mb-2">
-              Start or continue intake for this portfolio&apos;s submissions. The bulk intake workbench (15D) will read
-              portfolio, seller, agreement, commission snapshot, shipment, and accepted-count context directly — no
-              re-entry needed.
+          {detail.shipments.filter((s) => s.status === 'received' || s.status === 'issue').length === 0 ? (
+            <p className="text-sm text-gray-500">
+              No received shipment yet — the workbench opens once a shipment is marked received.
             </p>
-            <div className="flex flex-wrap gap-3">
-              {detail.submissions.map((s) => (
-                <Link
-                  key={s.id}
-                  href={`/admin/seller-submissions/${s.id}?sellerPortfolioId=${detail.id}`}
-                  className="text-xs text-blue-600 hover:underline"
-                >
-                  Start/continue intake for &quot;{[s.brand, s.name].filter(Boolean).join(' ') || 'Untitled'}&quot; →
-                </Link>
-              ))}
+          ) : (
+            <div className="space-y-2">
+              {detail.shipments
+                .filter((s) => s.status === 'received' || s.status === 'issue')
+                .map((s) => (
+                  <div key={s.id} className="rounded-md border border-gray-200 bg-gray-50 p-3 text-sm flex items-center justify-between gap-3">
+                    <span className="text-gray-600">
+                      {s.trackingNumber ?? s.id} · received {s.receivedQuantity ?? '—'}
+                      {s.status === 'issue' && <span className="ml-2 text-amber-700">(issue noted)</span>}
+                    </span>
+                    <Link
+                      href={`/admin/intake/workbench/${s.id}`}
+                      className="inline-block rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700"
+                    >
+                      Start / Continue Intake →
+                    </Link>
+                  </div>
+                ))}
             </div>
-          </div>
+          )}
         </section>
       )}
 

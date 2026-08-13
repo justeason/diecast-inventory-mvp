@@ -25,40 +25,38 @@ vi.mock('next/navigation', () => ({
   redirect: vi.fn((url: string) => { throw new Error(`REDIRECT:${url}`) }),
 }))
 
+// 15D-review section 1: conversion (draft lock, status gate, ItemInstance creation,
+// converted+link write) is no longer implemented in intake.ts — it was extracted into
+// the single shared src/lib/intakeConversion.ts primitive (also used by the bulk
+// intake workbench). intake.ts now only owns its own canonical-ordering lock
+// (SellerSubmission) and hands off; the deeper invariants below are asserted against
+// the shared primitive, once, in intakeConversion.test.ts — see that file for
+// "exactly one itemInstance.create call site", the lock→status-check→create ordering,
+// and the create→converted-link ordering.
 describe('intake.ts: one physical intake converts to exactly one ItemInstance (section 3)', () => {
   const src = readSrc('src/lib/actions/intake.ts')
 
-  it('there is exactly one itemInstance.create call site in the whole conversion flow', () => {
-    const occurrences = src.match(/tx\.itemInstance\.create\(|prisma\.itemInstance\.create\(/g) ?? []
-    expect(occurrences.length).toBe(1)
+  it('convertDraft no longer creates an ItemInstance itself — it delegates to the shared conversion primitive', () => {
+    expect(src).not.toMatch(/tx\.itemInstance\.create\(|prisma\.itemInstance\.create\(/)
+    expect(src).toMatch(/import \{ convertIntakeDraft \} from '@\/lib\/intakeConversion'/)
+    expect(src).toMatch(/await convertIntakeDraft\(tx,/)
   })
 
-  it('locks the IntakeDraft row before re-checking its status, inside the same transaction as the create', () => {
+  it('acquires the SellerSubmission lock (its own canonical-ordering responsibility) before handing off to the shared converter', () => {
     const fnStart = src.indexOf('export async function convertDraft')
     const fnSrc = src.slice(fnStart, src.indexOf('\nexport async function', fnStart + 1))
-    const lockIdx = fnSrc.indexOf('SELECT id FROM "IntakeDraft"')
-    const statusCheckIdx = fnSrc.indexOf("draft.status !== 'reviewed'")
-    const createIdx = fnSrc.indexOf('tx.itemInstance.create(')
+    const lockIdx = fnSrc.indexOf('SELECT id FROM "SellerSubmission"')
+    const convertIdx = fnSrc.indexOf('await convertIntakeDraft(tx,')
     expect(lockIdx).toBeGreaterThan(-1)
-    expect(statusCheckIdx).toBeGreaterThan(-1)
-    expect(createIdx).toBeGreaterThan(-1)
-    expect(lockIdx).toBeLessThan(statusCheckIdx)
-    expect(statusCheckIdx).toBeLessThan(createIdx)
+    expect(convertIdx).toBeGreaterThan(-1)
+    expect(lockIdx).toBeLessThan(convertIdx)
   })
 
-  it('rejects re-conversion of an already-converted draft (repeated conversion attempts cannot create a duplicate ItemInstance)', () => {
+  it('rejects re-conversion of an already-converted draft (repeated conversion attempts cannot create a duplicate ItemInstance) — pre-flight check preserved, authoritative gate now inside the shared primitive', () => {
     expect(src).toMatch(/status === 'converted'/)
     expect(src).toMatch(/already been converted/)
-  })
-
-  it('marks the draft converted (with convertedItemId, unique in schema) inside the same transaction as the create — never a separate, racable step', () => {
-    const fnStart = src.indexOf('export async function convertDraft')
-    const fnSrc = src.slice(fnStart, src.indexOf('\nexport async function', fnStart + 1))
-    const createIdx = fnSrc.indexOf('tx.itemInstance.create(')
-    const markConvertedIdx = fnSrc.indexOf("status: 'converted', convertedItemId: item.id")
-    expect(createIdx).toBeGreaterThan(-1)
-    expect(markConvertedIdx).toBeGreaterThan(-1)
-    expect(createIdx).toBeLessThan(markConvertedIdx)
+    // Authoritative (transaction-level) gate: see intakeConversion.test.ts's
+    // 'draft-state gating' describe block for behavioral coverage of the actual reject.
   })
 })
 
