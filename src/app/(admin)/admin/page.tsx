@@ -74,6 +74,8 @@ export default async function AdminDashboardPage() {
             href={data.workQueues.availableNotListed.href}
             emptyText="Everything available is already listed."
             isEmpty={data.workQueues.availableNotListed.count === 0}
+            footerHref={data.workQueues.availableNotListed.readinessHref}
+            footerLabel="Review Listing Readiness →"
           />
           <QueueCard
             label="Open Orders"
@@ -185,6 +187,8 @@ function QueueCard({
   href,
   emptyText,
   isEmpty,
+  footerHref,
+  footerLabel,
 }: {
   label: string
   primary: string
@@ -192,21 +196,31 @@ function QueueCard({
   href: string
   emptyText: string
   isEmpty: boolean
+  footerHref?: string
+  footerLabel?: string
 }) {
   if (isEmpty) {
     return (
       <div className="rounded-md border border-gray-200 bg-gray-50 p-4">
         <p className="text-sm font-medium text-gray-500">{label}</p>
         <p className="text-xs text-gray-400 mt-1">{emptyText}</p>
+        {footerHref && footerLabel && (
+          <Link href={footerHref} className="mt-1 inline-block text-xs text-blue-600 hover:underline">{footerLabel}</Link>
+        )}
       </div>
     )
   }
   return (
-    <Link href={href} className="block rounded-md border border-gray-200 bg-white p-4 hover:bg-gray-50 transition-colors">
-      <p className="text-sm font-medium text-gray-500">{label}</p>
-      <p className="text-lg font-bold text-gray-900 mt-1">{primary}</p>
-      {secondary && <p className="text-xs text-gray-400">{secondary}</p>}
-    </Link>
+    <div className="rounded-md border border-gray-200 bg-white p-4 hover:bg-gray-50 transition-colors">
+      <Link href={href} className="block">
+        <p className="text-sm font-medium text-gray-500">{label}</p>
+        <p className="text-lg font-bold text-gray-900 mt-1">{primary}</p>
+        {secondary && <p className="text-xs text-gray-400">{secondary}</p>}
+      </Link>
+      {footerHref && footerLabel && (
+        <Link href={footerHref} className="mt-1 inline-block text-xs text-blue-600 hover:underline">{footerLabel}</Link>
+      )}
+    </div>
   )
 }
 

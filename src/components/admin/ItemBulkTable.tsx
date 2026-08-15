@@ -18,11 +18,16 @@ export type ItemBulkRow = {
   brand: string
   name: string
   status: string
-  condition: string
-  locationLabel: string | null
-  listingStatus: string | null
-  listPrice: number | null
-  photoUrl: string | null
+  // 15J: optional/absent when the page is rendering the Readiness-filtered view
+  // (searchReadyToListPage doesn't hydrate these — Part Q, no per-row 14C/extra
+  // joins beyond what readiness itself already needed).
+  condition?: string
+  locationLabel?: string | null
+  listingStatus?: string | null
+  listPrice?: number | null
+  photoUrl?: string | null
+  // 15J: present only when the list is scoped to a readiness filter.
+  readiness?: { status: 'ready' | 'review_required' | 'blocked'; firstReason: string | null }
 }
 
 const CONDITIONS = ['mint', 'near_mint', 'good', 'fair', 'poor', 'damaged']
@@ -43,6 +48,10 @@ const LISTING_STATUS_COLORS: Record<string, string> = {
   active: 'bg-green-100 text-green-700', sold: 'bg-blue-100 text-blue-700', archived: 'bg-gray-100 text-gray-600',
 }
 const LISTING_STATUS_LABELS: Record<string, string> = { active: 'Active', sold: 'Sold', archived: 'Archived' }
+const READINESS_LABELS: Record<string, string> = { ready: 'Ready', review_required: 'Review', blocked: 'Blocked' }
+const READINESS_COLORS: Record<string, string> = {
+  ready: 'bg-green-100 text-green-700', review_required: 'bg-amber-100 text-amber-700', blocked: 'bg-red-100 text-red-700',
+}
 
 const OUTCOME_LABELS: Record<BulkItemRowResult['outcome'], string> = {
   updated: 'Updated', unchanged: 'Already set', approval_required: 'Approval required',
@@ -50,6 +59,7 @@ const OUTCOME_LABELS: Record<BulkItemRowResult['outcome'], string> = {
 }
 
 export function ItemBulkTable({ items }: { items: ItemBulkRow[] }) {
+  const showReadiness = items.some((i) => i.readiness)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [storageQuery, setStorageQuery] = useState('')
   const [storageMatches, setStorageMatches] = useState<{ id: string; label: string }[]>([])
@@ -213,11 +223,12 @@ export function ItemBulkTable({ items }: { items: ItemBulkRow[] }) {
               <th className="px-4 py-3 font-medium w-14"></th>
               <th className="px-4 py-3 font-medium">SKU</th>
               <th className="px-4 py-3 font-medium">Catalog</th>
-              <th className="px-4 py-3 font-medium">Location</th>
-              <th className="px-4 py-3 font-medium">Condition</th>
+              {!showReadiness && <th className="px-4 py-3 font-medium">Location</th>}
+              {!showReadiness && <th className="px-4 py-3 font-medium">Condition</th>}
               <th className="px-4 py-3 font-medium">Status</th>
-              <th className="px-4 py-3 font-medium">List Price</th>
-              <th className="px-4 py-3 font-medium">Listing</th>
+              {!showReadiness && <th className="px-4 py-3 font-medium">List Price</th>}
+              {!showReadiness && <th className="px-4 py-3 font-medium">Listing</th>}
+              {showReadiness && <th className="px-4 py-3 font-medium">Readiness</th>}
               <th className="px-4 py-3" />
             </tr>
           </thead>
@@ -232,14 +243,19 @@ export function ItemBulkTable({ items }: { items: ItemBulkRow[] }) {
                   <Link href={`/admin/items/${item.id}`} className="hover:underline">{item.sku}</Link>
                 </td>
                 <td className="px-4 py-3">{item.brand} – {item.name}</td>
-                <td className="px-4 py-3 text-gray-500">{item.locationLabel ?? '—'}</td>
-                <td className="px-4 py-3 text-gray-500">{CONDITION_LABELS[item.condition] ?? item.condition}</td>
+                {!showReadiness && <td className="px-4 py-3 text-gray-500">{item.locationLabel ?? '—'}</td>}
+                {!showReadiness && (
+                  <td className="px-4 py-3 text-gray-500">{item.condition ? (CONDITION_LABELS[item.condition] ?? item.condition) : '—'}</td>
+                )}
                 <td className="px-4 py-3">
                   <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_COLORS[item.status] ?? 'bg-gray-100 text-gray-600'}`}>
                     {STATUS_LABELS[item.status] ?? item.status}
                   </span>
                 </td>
-                <td className="px-4 py-3 text-gray-500">{item.listPrice != null ? `$${item.listPrice.toFixed(2)}` : '—'}</td>
+                {!showReadiness && (
+                  <td className="px-4 py-3 text-gray-500">{item.listPrice != null ? `$${item.listPrice.toFixed(2)}` : '—'}</td>
+                )}
+                {!showReadiness && (
                 <td className="px-4 py-3">
                   {item.listingStatus ? (
                     <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${LISTING_STATUS_COLORS[item.listingStatus] ?? 'bg-gray-100 text-gray-600'}`}>
@@ -251,6 +267,15 @@ export function ItemBulkTable({ items }: { items: ItemBulkRow[] }) {
                     <span className="text-gray-400">—</span>
                   )}
                 </td>
+                )}
+                {showReadiness && item.readiness && (
+                  <td className="px-4 py-3">
+                    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${READINESS_COLORS[item.readiness.status]}`}>
+                      {READINESS_LABELS[item.readiness.status]}
+                    </span>
+                    {item.readiness.firstReason && <span className="ml-1.5 text-xs text-gray-400">{item.readiness.firstReason}</span>}
+                  </td>
+                )}
                 <td className="px-4 py-3 text-right">
                   <Link href={`/admin/items/${item.id}`} className="text-blue-600 hover:underline text-sm">View</Link>
                 </td>

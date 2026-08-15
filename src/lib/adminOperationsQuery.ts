@@ -22,6 +22,14 @@ import { todayRange } from '@/lib/businessAnalyticsDates'
 import { fmtUsdDecimal } from '@/lib/businessAnalyticsFormat'
 import { type AttentionItem, sortByAttentionBand } from '@/lib/adminOperations'
 
+// 15J focused-review (count-semantics pass): "Ready to List" as a label is reserved
+// EXCLUSIVELY for evaluateReadyToList(...).status === 'ready' — a blockers-free item
+// with low/insufficient pricing confidence is 'review_required', not 'ready', so no
+// cheap DB-only count (which cannot evaluate 14C pricing at scale) may ever be
+// labeled "Ready to List". This card keeps the OLD, narrower, still-exact
+// "Available, Not Listed" metric (status='available' + no active listing) under its
+// own honest name, and only LINKS to the real (non-precomputed) readiness filter.
+
 // ── Nav badges — cheap enough to run on every admin page load ──────────────────────
 
 export type AdminAttentionBadges = {
@@ -50,7 +58,7 @@ export type CommandCenterData = {
   workQueues: {
     readyForIntake: { shipments: number; units: number; href: string }
     intakeInProgress: { shipments: number; href: string }
-    availableNotListed: { count: number; href: string }
+    availableNotListed: { count: number; href: string; readinessHref: string }
     openOrders: { count: number; href: string }
     payoutReady: { count: number; href: string }
   }
@@ -111,9 +119,11 @@ export async function getCommandCenterData(now: Date = new Date()): Promise<Comm
     prisma.sellerInboundShipment.count({
       where: { status: 'received', intakeDraftLineage: { some: {} } },
     }),
-    // "Available, not listed" (section 12) — a provable current-state filter, not a
-    // formal Ready-to-List certification (that's 15J). No listing at all, or a
-    // listing that's no longer active (archived), both count.
+    // "Available, not listed" (restored — 15J focused-review section 2) — a
+    // provable current-state filter, not a Ready-to-List certification. No listing
+    // at all, or a listing that's no longer active (archived), both count. Kept
+    // under its OWN honest label — never relabeled "Ready to List" (that requires
+    // 14C pricing evaluation this cheap DB-only count cannot do at scale).
     prisma.itemInstance.count({
       where: { status: 'available', OR: [{ listing: null }, { listing: { status: { not: 'active' } } }] },
     }),
@@ -190,6 +200,9 @@ export async function getCommandCenterData(now: Date = new Date()): Promise<Comm
       availableNotListed: {
         count: availableNotListedCount,
         href: '/admin/items?status=available',
+        // Link-only — never a precomputed count — to the real readiness filter,
+        // which DOES evaluate the full policy (including 14C pricing) per row.
+        readinessHref: '/admin/items?readiness=ready',
       },
       openOrders: {
         count: openOrdersCount,

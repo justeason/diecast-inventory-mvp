@@ -1,6 +1,8 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { getItemLifecycleRecord } from '@/lib/itemLifecycleQuery'
+import { getItemReadyToListStatus } from '@/lib/readyToListQuery'
+import type { ReadyToListOutcome } from '@/lib/readyToList'
 import { AGREEMENT_STATUS_LABELS } from '@/lib/sellerAgreementDisplay'
 import { PricingIntelligenceSummary, type SerializedPricingIntelligence } from '@/components/store/PricingIntelligenceSummary'
 
@@ -54,7 +56,10 @@ export default async function AdminItemDetailPage({
   params: Promise<{ id: string }>
 }) {
   const { id } = await params
-  const record = await getItemLifecycleRecord(id)
+  const [record, readiness] = await Promise.all([
+    getItemLifecycleRecord(id),
+    getItemReadyToListStatus(id),
+  ])
   if (!record) notFound()
 
   const { item, location, source, listing, order, financial, pricing, lifecycleStage, contradictions, timeline } = record
@@ -97,6 +102,19 @@ export default async function AdminItemDetailPage({
         </dl>
         <Link href={`/admin/items/${item.id}/edit`} className="mt-3 inline-block text-xs text-blue-600 hover:underline">Edit item →</Link>
       </div>
+
+      {/* 15J — read-only readiness card. The engine only ANSWERS eligibility; the
+          actual listing action (and its own 15F listing_activation gate) still lives
+          entirely in the existing create/edit listing pages linked below. */}
+      {readiness && (
+        <ReadyToListCard
+          readiness={readiness}
+          itemId={item.id}
+          listingId={listing?.id ?? null}
+          portfolioId={source.sellerPortfolioId}
+          catalogId={item.catalogId}
+        />
+      )}
 
       {contradictions.length > 0 && (
         <section className="mb-6 space-y-2">
@@ -333,5 +351,95 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
       <dt className="text-gray-500 w-32 shrink-0">{label}</dt>
       <dd className="text-gray-900">{children}</dd>
     </div>
+  )
+}
+
+// 15J — Part J. Every "fix" link below points at an existing authoritative page;
+// this card contains no mutation logic of its own (Part O).
+const READINESS_STYLES = {
+  ready: { badge: 'bg-green-100 text-green-700', border: 'border-green-200 bg-green-50', label: 'Ready to List' },
+  review_required: { badge: 'bg-amber-100 text-amber-700', border: 'border-amber-200 bg-amber-50', label: 'Ready — Review Suggested' },
+  blocked: { badge: 'bg-red-100 text-red-700', border: 'border-red-200 bg-red-50', label: 'Not Ready to List' },
+} as const
+
+const PRICING_LABELS: Record<string, string> = {
+  supported: 'Evidence available',
+  low_confidence: 'Low confidence',
+  no_evidence: 'No evidence',
+  not_evaluated: 'Not evaluated',
+}
+
+function blockerFixLink(code: string, itemId: string, portfolioId: string | null): { label: string; href: string } | null {
+  if (code === 'storage_missing' || code === 'missing_storage_location') {
+    return { label: 'Fix storage →', href: `/admin/items/${itemId}/edit` }
+  }
+  if (code === 'agreement_missing' || code === 'agreement_not_accepted' || code === 'portfolio_agreement_mismatch') {
+    return portfolioId ? { label: 'View portfolio / agreement →', href: `/admin/seller-portfolios/${portfolioId}` } : null
+  }
+  if (code === 'return_case_open') {
+    return portfolioId ? { label: 'View portfolio →', href: `/admin/seller-portfolios/${portfolioId}` } : null
+  }
+  return null
+}
+
+function ReadyToListCard({
+  readiness, itemId, listingId, portfolioId, catalogId,
+}: {
+  readiness: ReadyToListOutcome
+  itemId: string
+  listingId: string | null
+  portfolioId: string | null
+  catalogId: string
+}) {
+  const style = READINESS_STYLES[readiness.status]
+  const listingHref = readiness.listingPath === 'reactivate' && listingId
+    ? `/admin/listings/${listingId}/edit`
+    : `/admin/listings/new?itemId=${itemId}`
+  const listingLabel = readiness.listingPath === 'reactivate' ? 'Reactivate Listing' : 'Create Listing'
+
+  return (
+    <section className={`mb-6 rounded-md border p-4 ${style.border}`}>
+      <div className="flex items-center justify-between gap-3 mb-2">
+        <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ${style.badge}`}>{style.label}</span>
+        <span className="text-xs text-gray-500">
+          Pricing: {PRICING_LABELS[readiness.pricing.status]}
+          {readiness.pricing.isAskOnly && readiness.pricing.status !== 'not_evaluated' ? ' (ask-only)' : ''}
+        </span>
+      </div>
+
+      {readiness.status === 'blocked' && (
+        <ul className="space-y-1.5 mb-3">
+          {readiness.blockers.map((b) => {
+            const fix = blockerFixLink(b.code, itemId, portfolioId)
+            return (
+              <li key={b.code} className="text-sm text-red-800">
+                • {b.message}
+                {fix && <Link href={fix.href} className="ml-2 text-xs text-blue-600 hover:underline">{fix.label}</Link>}
+              </li>
+            )
+          })}
+        </ul>
+      )}
+
+      {readiness.status === 'review_required' && (
+        <ul className="space-y-1.5 mb-3">
+          {readiness.reviewReasons.map((r) => (
+            <li key={r.code} className="text-sm text-amber-800">
+              • {r.message}
+              <Link href={`/admin/valuation/models/${catalogId}`} className="ml-2 text-xs text-blue-600 hover:underline">Review valuation →</Link>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {readiness.status !== 'blocked' && (
+        <Link
+          href={listingHref}
+          className="inline-block rounded-md bg-gray-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-800"
+        >
+          {listingLabel} →
+        </Link>
+      )}
+    </section>
   )
 }

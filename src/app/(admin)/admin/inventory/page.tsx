@@ -5,14 +5,24 @@ export const dynamic = 'force-dynamic'
 
 // 15H Part F section 18 — lightweight Inventory domain hub. Read-only; links into
 // the existing authoritative Items/Listings/Storage/Valuation/Reconciliation pages
-// rather than duplicating their tables (Part J section 33). The only queries here
-// are the same cheap status groupBy the old /admin homepage already ran.
+// rather than duplicating their tables (Part J section 33).
+//
+// 15J focused-review (count-semantics pass): "Available, Not Listed" below is the
+// SAME narrow, exact, DB-only definition adminOperationsQuery.ts uses on the
+// command center — status='available' with no active listing. It is deliberately
+// NOT labeled "Ready to List": that status requires evaluateReadyToList(...), which
+// depends on 14C pricing confidence and cannot be counted exactly at this cheap a
+// query cost. Ready/Review/Blocked are link-only — no derived count is shown for
+// them here (no fake zero, no capped scan pretending to be a total).
 
 export default async function InventoryHubPage() {
-  const [itemCountRows, locationCount, listingCountRows] = await Promise.all([
+  const [itemCountRows, locationCount, listingCountRows, availableNotListedCount] = await Promise.all([
     prisma.itemInstance.groupBy({ by: ['status'], _count: { _all: true } }),
     prisma.storageLocation.count(),
     prisma.listing.groupBy({ by: ['status'], _count: { _all: true } }),
+    prisma.itemInstance.count({
+      where: { status: 'available', OR: [{ listing: null }, { listing: { status: { not: 'active' } } }] },
+    }),
   ])
 
   const itemCounts: Record<string, number> = {}
@@ -41,6 +51,20 @@ export default async function InventoryHubPage() {
           <span className="text-xs text-gray-400">
             Select items on that list to bulk-set storage, condition, or catalog.
           </span>
+        </div>
+      </Section>
+
+      <Section title="Listing Readiness (15J)">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <StatCard label="Available, Not Listed" count={availableNotListedCount} href="/admin/items?status=available" />
+        </div>
+        <div className="mt-3 flex items-center gap-4 text-sm">
+          {/* Ready/Review/Blocked are the REAL readiness policy — no precomputed
+              count is shown for any of them (Ready alone would need 14C pricing at
+              scale to be exact; Blocked spans every status). Link-only, on purpose. */}
+          <Link href="/admin/items?readiness=ready" className="text-blue-600 hover:underline">Ready to List →</Link>
+          <Link href="/admin/items?readiness=review_required" className="text-blue-600 hover:underline">Review Required →</Link>
+          <Link href="/admin/items?readiness=blocked" className="text-blue-600 hover:underline">Blocked →</Link>
         </div>
       </Section>
 

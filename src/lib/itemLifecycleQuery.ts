@@ -416,7 +416,11 @@ function searchOrderBy(sort: ItemSearchFilter['sort']): Prisma.ItemInstanceOrder
   }
 }
 
-function buildSearchWhere(filter: ItemSearchFilter): Prisma.ItemInstanceWhereInput {
+// 15J (composable-filters pass): exported so readyToListQuery.ts's readiness scan
+// can AND this exact predicate with its own candidate filter, instead of
+// reimplementing q/status/condition/type search semantics a second time. There is
+// only ever ONE interpretation of these ordinary filters in the codebase.
+export function buildSearchWhere(filter: ItemSearchFilter): Prisma.ItemInstanceWhereInput {
   const where: Prisma.ItemInstanceWhereInput = {}
   if (filter.status) where.status = filter.status
   if (filter.condition) where.condition = filter.condition

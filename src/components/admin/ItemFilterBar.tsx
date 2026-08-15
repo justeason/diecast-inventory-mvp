@@ -39,15 +39,22 @@ type Props = {
   condition: string
   cardedOrLoose: string
   sort: string
+  // 15J (composable-filters pass): the current readiness tab, if any. Submitting
+  // this form must not silently drop it — readiness is an additional filter
+  // dimension, not a competing search mode, so changing q/status/condition/type
+  // preserves whatever readiness tab is currently selected (section 6).
+  readiness?: string
 }
 
-export function ItemFilterBar({ q, status, condition, cardedOrLoose, sort }: Props) {
+export function ItemFilterBar({ q, status, condition, cardedOrLoose, sort, readiness = '' }: Props) {
   const isActive =
     q !== '' || status !== '' || condition !== '' || cardedOrLoose !== '' || sort !== 'sku'
-  const formKey = [q, status, condition, cardedOrLoose, sort].join('|')
+  const formKey = [q, status, condition, cardedOrLoose, sort, readiness].join('|')
+  const clearHref = readiness ? `/admin/items?readiness=${readiness}` : '/admin/items'
 
   return (
     <form key={formKey} method="GET" action="/admin/items" className="flex flex-wrap items-end gap-3 mb-6">
+      {readiness && <input type="hidden" name="readiness" value={readiness} />}
       <div className="flex-1 min-w-48">
         <label htmlFor="item-q" className="block text-xs font-medium text-gray-600 mb-1">
           Search
@@ -136,7 +143,7 @@ export function ItemFilterBar({ q, status, condition, cardedOrLoose, sort }: Pro
         Apply
       </button>
       {isActive && (
-        <Link href="/admin/items" className="text-sm text-gray-500 hover:text-gray-900">
+        <Link href={clearHref} className="text-sm text-gray-500 hover:text-gray-900">
           Clear
         </Link>
       )}
