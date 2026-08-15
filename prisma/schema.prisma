@@ -616,13 +616,29 @@ model IntakeDraft {
   // non-workbench drafts.
   workbenchClientToken String?
 
-  // 15D: exception hand-off signal (feeds 15E). Set when a workbench-created draft
-  // could not be safely auto-converted (unknown model, invalid storage, overage,
-  // missing condition). The draft stays unresolved (status remains 'draft', never
-  // silently converted or discarded) so the admin can continue to the next physical
-  // item without the whole shipment stopping.
+  // 15D: exception hand-off signal (feeds 15E) — LIVE/CURRENT state. Set when a
+  // workbench-created draft could not be safely auto-converted (unknown model,
+  // invalid storage, overage, missing condition). The draft stays unresolved (status
+  // remains 'draft', never silently converted or discarded) so the admin can continue
+  // to the next physical item without the whole shipment stopping. During 15E
+  // resolution this MAY change as a fix reveals a different blocking issue (e.g.
+  // unknown_model -> missing_condition) — these two fields always reflect the CURRENT
+  // blocker, never the original one (see initialException* below for that).
   workbenchExceptionCode String?
   workbenchExceptionNote String?
+
+  // 15E-review (evidence pass): IMMUTABLE first-detection evidence. Written exactly
+  // once, at the moment a draft FIRST becomes an exception (workbenchExceptionCode
+  // transitions from null to non-null) — never changed afterward, even as the live
+  // fields above evolve through subsequent resolution attempts or eventually clear
+  // into a successful conversion. This is what makes "why did this physical item
+  // originally enter the queue" permanently recoverable regardless of how its
+  // classification changed since. Never used to decide queue membership (see
+  // openIntakeExceptionWhere in intakeExceptions.ts, which uses only the live/current
+  // state) — only for audit/detail display.
+  initialExceptionCode String?
+  initialExceptionNote String?
+  initialExceptionAt   DateTime?
 
   rejectedAt            DateTime?
   rejectionReason       String?
@@ -635,6 +651,9 @@ model IntakeDraft {
   @@index([sellerSubmissionId])
   @@index([storageLocationId])
   @@index([catalogModelId])
+  // 15E: the exception queue's primary filter (open exceptions) + default sort
+  // (oldest first) — see intakeExceptions.ts openIntakeExceptionWhere().
+  @@index([workbenchExceptionCode, createdAt])
 }
 
 model SellerAgreement {

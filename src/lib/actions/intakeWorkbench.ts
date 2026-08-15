@@ -24,6 +24,7 @@ import {
   computeObservedPhysical,
   computeReconciliationVariance,
 } from '@/lib/intakeWorkbench'
+import { openIntakeExceptionWhere } from '@/lib/intakeExceptions'
 
 type TxClient = Prisma.TransactionClient
 
@@ -311,7 +312,7 @@ export async function confirmWorkbenchItem(input: ConfirmWorkbenchItemInput): Pr
         const [processedCount, exceptionCount] = await Promise.all([
           tx.itemInstance.count({ where: { sellerInboundShipmentId: input.shipmentId } }),
           tx.intakeDraft.count({
-            where: { sellerInboundShipmentId: input.shipmentId, status: { not: 'converted' }, workbenchExceptionCode: { not: null } },
+            where: { sellerInboundShipmentId: input.shipmentId, ...openIntakeExceptionWhere() },
           }),
         ])
         if (wouldExceedReceived(shipment.receivedQuantity, processedCount + exceptionCount, input.quantity)) {
@@ -334,6 +335,11 @@ export async function confirmWorkbenchItem(input: ConfirmWorkbenchItemInput): Pr
               conditionNotes: input.conditionNotes, storageLocationId: location?.id ?? null,
               notes: input.notes, workbenchClientToken: token,
               workbenchExceptionCode: exceptionCode, workbenchExceptionNote: exceptionNote,
+              // 15E-review section 1: this draft is being created directly WITH an
+              // exception code, so this is unconditionally its first occurrence —
+              // immutable initial evidence is written here exactly once, never touched
+              // again regardless of how the live fields above evolve during resolution.
+              initialExceptionCode: exceptionCode, initialExceptionNote: exceptionNote, initialExceptionAt: new Date(),
             },
             select: { id: true, status: true, convertedItemId: true, workbenchExceptionCode: true, workbenchExceptionNote: true },
           })
@@ -370,7 +376,13 @@ export async function confirmWorkbenchItem(input: ConfirmWorkbenchItemInput): Pr
           // limbo (section 7: never converted-without-item or reviewed-without-either).
           await tx.intakeDraft.update({
             where: { id: draft.id },
-            data: { status: 'draft', workbenchExceptionCode: 'conversion_failed', workbenchExceptionNote: result.message },
+            data: {
+              status: 'draft', workbenchExceptionCode: 'conversion_failed', workbenchExceptionNote: result.message,
+              // 15E-review section 1: this draft was created moments earlier in this
+              // same transaction WITHOUT an exception code — this is its first
+              // transition into exception state, so initial evidence is written here too.
+              initialExceptionCode: 'conversion_failed', initialExceptionNote: result.message, initialExceptionAt: new Date(),
+            },
           })
           units.push({ outcome: 'exception', draftId: draft.id, code: 'conversion_failed', note: result.message })
           continue
@@ -485,7 +497,7 @@ export async function reconcileWorkbenchShipment(shipmentId: string, claimToken:
       const [processedCount, exceptionCount] = await Promise.all([
         tx.itemInstance.count({ where: { sellerInboundShipmentId: shipmentId } }),
         tx.intakeDraft.count({
-          where: { sellerInboundShipmentId: shipmentId, status: { not: 'converted' }, workbenchExceptionCode: { not: null } },
+          where: { sellerInboundShipmentId: shipmentId, ...openIntakeExceptionWhere() },
         }),
       ])
 

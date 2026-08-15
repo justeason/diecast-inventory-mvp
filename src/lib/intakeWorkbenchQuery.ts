@@ -32,6 +32,7 @@ import {
   isReconciliationCurrent, deriveIntakeReconciliationStatus,
   type WorkbenchProgress, type IntakeReconciliationStatus,
 } from '@/lib/intakeWorkbench'
+import { openIntakeExceptionWhere } from '@/lib/intakeExceptions'
 
 const RECENT_ITEMS_LIMIT = 10
 
@@ -121,7 +122,7 @@ export async function getWorkbenchContext(shipmentId: string): Promise<Workbench
     // simple, authoritative, single-table count.
     prisma.itemInstance.count({ where: { sellerInboundShipmentId: shipmentId } }),
     prisma.intakeDraft.count({
-      where: { sellerInboundShipmentId: shipmentId, status: { not: 'converted' }, workbenchExceptionCode: { not: null } },
+      where: { sellerInboundShipmentId: shipmentId, ...openIntakeExceptionWhere() },
     }),
     // Bounded, presentation-only recent-items strip (section 27) — never the full
     // shipment's item list.

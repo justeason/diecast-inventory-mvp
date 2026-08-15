@@ -113,7 +113,8 @@ describe('getWorkbenchContext (section 3/4)', () => {
     expect((prisma.itemInstance.count as Mock).mock.calls.length).toBe(1)
     expect((prisma.intakeDraft.count as Mock).mock.calls.length).toBe(1)
     const exceptionCountArgs = (prisma.intakeDraft.count as Mock).mock.calls[0][0]
-    expect(exceptionCountArgs.where).toMatchObject({ sellerInboundShipmentId: 'ship1', status: { not: 'converted' }, workbenchExceptionCode: { not: null } })
+    // 15E: uses the shared openIntakeExceptionWhere() predicate (one source of truth).
+    expect(exceptionCountArgs.where).toMatchObject({ sellerInboundShipmentId: 'ship1', status: { not: 'rejected' }, convertedItemId: null, workbenchExceptionCode: { not: null } })
   })
 
   it('exception count is a physical-unit count: a 5-unit exception batch (5 IntakeDraft rows sharing the same batch) reports exceptions=5, not 1 (section 5)', async () => {

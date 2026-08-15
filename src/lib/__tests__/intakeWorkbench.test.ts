@@ -3,6 +3,7 @@ import {
   computeWorkbenchProgress,
   evaluateWorkbenchCompletion,
   wouldExceedReceived,
+  existingExceptionStillOverage,
   deriveIntakeRiskFlags,
   describeCatalogConfidence,
   isLeaseActive,
@@ -37,6 +38,15 @@ describe('computeWorkbenchProgress (section 13/14)', () => {
     const p = computeWorkbenchProgress({ expectedQuantity: 5, receivedQuantity: 5, processedCount: 2, exceptionCount: 1 })
     expect(p.processed).toBe(2)
     expect(p.exceptions).toBe(1)
+  })
+})
+
+describe('computeWorkbenchProgress — 15E exception resolution interaction (section 24)', () => {
+  it('resolving one exception (processed +1, exceptions -1) leaves remaining/observedPhysical unchanged — only the bucket composition shifts', () => {
+    const before = computeWorkbenchProgress({ expectedQuantity: 200, receivedQuantity: 200, processedCount: 194, exceptionCount: 3 })
+    const after = computeWorkbenchProgress({ expectedQuantity: 200, receivedQuantity: 200, processedCount: 195, exceptionCount: 2 })
+    expect(before.remaining).toBe(after.remaining)
+    expect(before.processed + before.exceptions).toBe(after.processed + after.exceptions)
   })
 })
 
@@ -83,6 +93,25 @@ describe('wouldExceedReceived (section 17)', () => {
     // expectedQuantity is not even a parameter — this is a structural guarantee, not
     // just a runtime one. Received=50, already-accounted=48, +3 exceeds 50 -> true.
     expect(wouldExceedReceived(50, 48, 3)).toBe(true)
+  })
+})
+
+describe('existingExceptionStillOverage (15E-review section 5) — recheck for an EXISTING exception unit being resolved, distinct from wouldExceedReceived (new units)', () => {
+  it('never flags overage when the shipment has not been marked received', () => {
+    expect(existingExceptionStillOverage(null, 999, 5)).toBe(false)
+  })
+
+  it('worked example: received=100, processed=99, exceptions=1 (this draft) — not overage, resolves', () => {
+    expect(existingExceptionStillOverage(100, 99, 1)).toBe(false)
+  })
+
+  it('worked example: received=100, processed=99, exceptions=2 — a genuine second exception unit is still overage', () => {
+    expect(existingExceptionStillOverage(100, 99, 2)).toBe(true)
+  })
+
+  it('flags exactly at the boundary and not one under it', () => {
+    expect(existingExceptionStillOverage(100, 100, 0)).toBe(false)
+    expect(existingExceptionStillOverage(100, 101, 0)).toBe(true)
   })
 })
 

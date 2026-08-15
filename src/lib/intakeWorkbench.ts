@@ -79,6 +79,24 @@ export function wouldExceedReceived(
   return alreadyAccountedFor + incomingQuantity > receivedQuantity
 }
 
+// 15E-review section 5: overage recheck for an EXISTING exception unit being resolved
+// (as opposed to wouldExceedReceived above, which is for a genuinely NEW physical
+// observation arriving through the workbench). The unit represented by the exception
+// being resolved was already counted once when it first entered the queue — converting
+// it changes its bucket (exception -> processed) but does not add a physical unit, so
+// it must never be double-counted as though it were a new arrival. processedCount and
+// exceptionCount here already include the unit being resolved (it is still an open
+// exception at the moment this is evaluated), so the two together are exactly the
+// current observed-physical total — no adjustment/cancellation arithmetic needed.
+export function existingExceptionStillOverage(
+  receivedQuantity: number | null,
+  processedCount: number,
+  exceptionCount: number,
+): boolean {
+  if (receivedQuantity == null) return false
+  return processedCount + exceptionCount > receivedQuantity
+}
+
 // ── Section 19: deterministic hand-off flags for 15E/15F — never an invented risk
 // score, just named, individually-explainable booleans. ──────────────────────────────
 

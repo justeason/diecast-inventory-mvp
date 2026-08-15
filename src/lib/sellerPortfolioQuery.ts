@@ -14,6 +14,7 @@ import {
   type PortfolioStageInput,
   type PortfolioAttentionSignal,
 } from '@/lib/sellerPortfolio'
+import { openIntakeExceptionWhere } from '@/lib/intakeExceptions'
 
 export const LIST_PAGE_SIZE = 25
 // Each underlying DB page fetched while scanning for filter matches stays this size,
@@ -372,6 +373,8 @@ export type PortfolioDetail = {
     receivedQuantity: number | null
     shippedAt: Date | null
     receivedAt: Date | null
+    // 15E: open intake-exception count scoped to this specific shipment.
+    openExceptionCount: number
   }>
   counts: {
     submitted: number
@@ -394,6 +397,11 @@ export type PortfolioDetail = {
     paidPayout: Prisma.Decimal
   }
   attentionSignals: PortfolioAttentionSignal[]
+  // 15E: count of OPEN 15D/15E intake exception drafts (workbenchExceptionCode set,
+  // unconverted, not rejected) for this portfolio — distinct from `counts.exceptions`
+  // above (15B's older rejected-draft/lifecycle-case + not_for_sale inventory signal,
+  // left unchanged). Links to /admin/intake/exceptions?portfolioId=...
+  openIntakeExceptionCount: number
 }
 
 export async function getPortfolioDetail(id: string): Promise<PortfolioDetail | null> {
@@ -450,7 +458,7 @@ export async function getPortfolioDetail(id: string): Promise<PortfolioDetail | 
   const received = nonCancelledShipments.reduce((sum, s) => sum + (s.receivedQuantity ?? 0), 0)
   const anyShipmentInTransit = nonCancelledShipments.some(s => s.status === 'shipped')
 
-  const [listedCount, intakeCompleteCount, openExceptionCount] = await Promise.all([
+  const [listedCount, intakeCompleteCount, openExceptionCount, openIntakeExceptionCount, shipmentExceptionGroups] = await Promise.all([
     prisma.itemInstance.count({ where: { sellerPortfolioId: id, listing: { status: 'active' } } }),
     prisma.intakeDraft.count({ where: { status: 'converted', sellerSubmission: { sellerPortfolioId: id } } }),
     prisma.intakeDraft.count({ where: { sellerSubmission: { sellerPortfolioId: id }, status: 'rejected' } }).then(async rejected => {
@@ -459,6 +467,25 @@ export async function getPortfolioDetail(id: string): Promise<PortfolioDetail | 
       })
       return rejected + openCases
     }),
+    // 15E: distinct from openExceptionCount above (legacy rejected-draft/case signal)
+    // — this is the 15D/15E workbenchExceptionCode queue count, portfolio-scoped via
+    // either the shipment or the submission link (workbench drafts always have a
+    // shipment; legacy/manual ones would only have the submission).
+    prisma.intakeDraft.count({
+      where: {
+        ...openIntakeExceptionWhere(),
+        OR: [{ sellerInboundShipment: { sellerPortfolioId: id } }, { sellerSubmission: { sellerPortfolioId: id } }],
+      },
+    }),
+    // Bounded, single grouped query (not per-shipment) for each shipment's own open
+    // exception count.
+    shipments.length > 0
+      ? prisma.intakeDraft.groupBy({
+          by: ['sellerInboundShipmentId'],
+          where: { ...openIntakeExceptionWhere(), sellerInboundShipmentId: { in: shipments.map((s) => s.id) } },
+          _count: { _all: true },
+        })
+      : Promise.resolve([] as Array<{ sellerInboundShipmentId: string | null; _count: { _all: number } }>),
   ])
 
   const statusByCount = new Map(items.map(g => [g.status, g._count._all]))
@@ -540,7 +567,10 @@ export async function getPortfolioDetail(id: string): Promise<PortfolioDetail | 
           submissionId: currentAgreement.submissionId,
         }
       : null,
-    shipments,
+    shipments: shipments.map((s) => ({
+      ...s,
+      openExceptionCount: shipmentExceptionGroups.find((g) => g.sellerInboundShipmentId === s.id)?._count._all ?? 0,
+    })),
     counts: {
       submitted,
       accepted,
@@ -555,6 +585,7 @@ export async function getPortfolioDetail(id: string): Promise<PortfolioDetail | 
     },
     financial,
     attentionSignals,
+    openIntakeExceptionCount,
   }
 }
 

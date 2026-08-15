@@ -272,6 +272,33 @@ describe('sellerPortfolioQuery: getPortfolioDetail — counts (section 6)', () =
     // Listed (64) is a SUBSET concept of available, never summed into submitted/accepted.
     expect(detail!.counts.submitted).not.toBe(detail!.counts.accepted)
   })
+
+  it('15E: openIntakeExceptionCount is a distinct field from counts.exceptions, scoped via shipment OR submission portfolio link', async () => {
+    ;(prisma.sellerPortfolio.findUnique as Mock).mockResolvedValueOnce({
+      id: 'p1', name: null, status: 'open', notes: null,
+      createdAt: new Date(), updatedAt: new Date(), closedAt: null,
+      expectedItemCount: null, acceptedItemCount: 10,
+      sellerProfile: { id: 'sp1', profile: { name: null, email: 'a@x.com' } },
+    })
+    ;(prisma.sellerSubmission.findMany as Mock).mockResolvedValueOnce([])
+    ;(prisma.sellerAgreement.findMany as Mock).mockResolvedValueOnce([])
+    ;(prisma.sellerInboundShipment.findMany as Mock).mockResolvedValueOnce([
+      { id: 'sh1', status: 'received', carrier: null, trackingNumber: null, expectedQuantity: 10, receivedQuantity: 10, shippedAt: null, receivedAt: null },
+    ])
+    ;(prisma.itemInstance.count as Mock).mockResolvedValueOnce(0)
+    ;(prisma.itemInstance.groupBy as Mock).mockResolvedValueOnce([])
+    ;(prisma.intakeDraft.count as Mock).mockImplementation((args: { where: Record<string, unknown> }) => {
+      if (args.where.workbenchExceptionCode) return Promise.resolve(4) // 15E openIntakeExceptionCount
+      return Promise.resolve(0)
+    })
+    ;(prisma.intakeDraft.groupBy as Mock).mockResolvedValueOnce([{ sellerInboundShipmentId: 'sh1', _count: { _all: 4 } }])
+
+    const detail = await getPortfolioDetail('p1')
+    expect(detail!.openIntakeExceptionCount).toBe(4)
+    expect(detail!.shipments[0].openExceptionCount).toBe(4)
+    // Distinct from the legacy counts.exceptions field (rejected drafts + lifecycle cases).
+    expect(detail!.counts.exceptions).toBe(0)
+  })
 })
 
 describe('sellerPortfolioQuery: getPortfolioDetail — deterministic current-agreement identification (section 2)', () => {

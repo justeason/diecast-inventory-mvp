@@ -286,6 +286,16 @@ describe('confirmWorkbenchItem — exception-in-place (section 16/17), whole shi
     expect(tx.intakeDraft.create).toHaveBeenCalledTimes(1)
   })
 
+  it('15E-review section 1: an exception draft is created with immutable initial evidence equal to its live evidence — its first (and so far only) occurrence', async () => {
+    const tx = makeTx()
+    mockTransaction(tx)
+    await confirmWorkbenchItem(baseInput({ catalogModelId: null }))
+    const created = (tx.intakeDraft.create as Mock).mock.calls[0][0].data
+    expect(created.initialExceptionCode).toBe('unknown_model')
+    expect(created.initialExceptionNote).toBe(created.workbenchExceptionNote)
+    expect(created.initialExceptionAt).toBeInstanceOf(Date)
+  })
+
   it('a catalogModelId that no longer resolves (deleted concurrently) becomes an exception, not a hard failure', async () => {
     const tx = makeTx({ catalogModel: { findUnique: vi.fn().mockResolvedValue(null) } })
     mockTransaction(tx)
@@ -369,6 +379,22 @@ describe('confirmWorkbenchItem — exception-in-place (section 16/17), whole shi
     // Each exception draft has its own distinct workbenchClientToken (its own physical identity).
     const tokens = (tx.intakeDraft.create as Mock).mock.calls.map((c) => c[0].data.workbenchClientToken)
     expect(new Set(tokens).size).toBe(5)
+  })
+
+  it('15E-review section 1: the conversion_failed rescue (rare race on the normal path) also writes initial evidence — the draft had none until this, its first transition', async () => {
+    const tx = makeTx({
+      storageLocation: { findUnique: vi.fn().mockResolvedValueOnce({ id: 'loc1', label: 'B-14-03' }).mockResolvedValue(null) },
+    })
+    mockTransaction(tx)
+    const result = await confirmWorkbenchItem(baseInput())
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('unreachable')
+    expect(result.units[0]).toMatchObject({ outcome: 'exception', code: 'conversion_failed' })
+    const updateCalls = (tx.intakeDraft.update as Mock).mock.calls
+    const rescueCall = updateCalls.find(([args]) => args.data.workbenchExceptionCode === 'conversion_failed')
+    expect(rescueCall).toBeTruthy()
+    expect(rescueCall![0].data.initialExceptionCode).toBe('conversion_failed')
+    expect(rescueCall![0].data.initialExceptionAt).toBeInstanceOf(Date)
   })
 
   it('an eligibility failure (e.g. no accepted agreement) is a form-level error, not per-unit — nothing is created', async () => {

@@ -117,6 +117,16 @@ export default async function SellerPortfolioDetailPage({
         <p className="mt-2 text-xs text-gray-400">
           &quot;Listed&quot; is a subset of &quot;Available&quot; (items with an active listing). Counts are not summed into a combined total.
         </p>
+        {/* 15E: distinct from the "Exceptions" stat above (legacy rejected-draft/case
+            signal) — this is the open intake-conversion exception queue. */}
+        {detail.openIntakeExceptionCount > 0 && (
+          <div className="mt-3 flex items-center justify-between rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm">
+            <span className="text-red-800">Intake exceptions: <span className="font-semibold">{detail.openIntakeExceptionCount}</span></span>
+            <Link href={`/admin/intake/exceptions?portfolioId=${detail.id}`} className="font-medium text-red-700 hover:underline">
+              Review exceptions →
+            </Link>
+          </div>
+        )}
       </section>
 
       {/* Agreement */}
@@ -227,6 +237,11 @@ export default async function SellerPortfolioDetailPage({
                 <span className="text-gray-500">Received {s.receivedQuantity ?? '—'}</span>
                 {s.shippedAt && <span className="text-gray-400 text-xs">Shipped {s.shippedAt.toLocaleDateString()}</span>}
                 {s.receivedAt && <span className="text-gray-400 text-xs">Received {s.receivedAt.toLocaleDateString()}</span>}
+                {s.openExceptionCount > 0 && (
+                  <Link href={`/admin/intake/exceptions?shipmentId=${s.id}`} className="text-red-700 font-medium hover:underline">
+                    Exceptions {s.openExceptionCount} →
+                  </Link>
+                )}
               </div>
             ))}
           </div>

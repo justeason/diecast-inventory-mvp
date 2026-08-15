@@ -336,7 +336,11 @@ export function IntakeWorkbench({ context }: { context: WorkbenchContextProps })
           <span>Expected shipment {context.expected}</span>
           <span>Recorded received {context.received ?? '—'}</span>
           <span className="font-medium text-gray-900">Processed {progress.processed}{context.received != null ? ` / ${context.received}` : ''}</span>
-          {progress.exceptions > 0 && <span className="font-medium text-red-700">Exceptions {progress.exceptions}</span>}
+          {progress.exceptions > 0 && (
+            <Link href={`/admin/intake/exceptions?shipmentId=${context.shipmentId}`} className="font-medium text-red-700 hover:underline">
+              Exceptions {progress.exceptions} · Review →
+            </Link>
+          )}
           {progress.remaining != null && <span>Remaining {progress.remaining}</span>}
         </div>
         {/* Reconciliation (15D-review reconciliation pass, sections 2/3) — never
