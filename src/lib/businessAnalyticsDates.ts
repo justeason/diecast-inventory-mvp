@@ -80,6 +80,13 @@ function defaultRange(now: Date): DateRange {
   return { preset: '30d', start: new Date(now.getTime() - days * 86_400_000), end: now, label: PRESET_LABELS['30d'] }
 }
 
+// 15H: UTC-calendar-day "today" range for command-center business pulse — same UTC
+// convention as every other range in this module, never browser-local.
+export function todayRange(now: Date = new Date()): DateRange {
+  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0))
+  return { preset: 'custom', start, end: now, label: 'Today' }
+}
+
 // The immediately preceding period of equal length, for flow/cohort comparisons.
 // Snapshot metrics and 'all'/'ytd' ranges have no meaningful equal-length predecessor.
 export function previousPeriod(range: DateRange): { start: Date; end: Date } | null {

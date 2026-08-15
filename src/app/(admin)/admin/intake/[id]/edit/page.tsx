@@ -48,20 +48,6 @@ const CONDITION_LABELS: Record<string, string> = {
 }
 
 
-function buildListingTitle(draft: {
-  brand: string | null
-  name: string | null
-  year: number | null
-  color: string | null
-}): string {
-  const parts: string[] = []
-  if (draft.brand) parts.push(draft.brand)
-  if (draft.name) parts.push(draft.name)
-  if (draft.year) parts.push(`(${draft.year})`)
-  if (draft.color) parts.push(`— ${draft.color}`)
-  return parts.join(' ')
-}
-
 export default async function EditIntakeDraftPage({
   params,
   searchParams,
@@ -241,9 +227,6 @@ export default async function EditIntakeDraftPage({
 
   const frontUrl = draft.frontPhotoUrl ?? null
   const backUrl  = draft.backPhotoUrl  ?? null
-
-  const suggestedTitle = buildListingTitle(draft)
-  const suggestedPrice = draft.listPrice ?? null
 
   return (
     <>
@@ -518,14 +501,12 @@ export default async function EditIntakeDraftPage({
                 <h3 className="text-sm font-semibold text-gray-700 mb-2">Convert to Item</h3>
                 <p className="text-xs text-gray-500 mb-3">
                   Creates a CatalogModel (or reuses an existing match), a new ItemInstance, and
-                  Photo records. Optionally creates an active Listing in the same transaction.
+                  Photo records. Listing (if wanted) is a separate step right after, from the item page.
                 </p>
                 <ConvertDraftForm
                   action={convertAction}
                   locations={locations}
                   suggestedSku={suggestedSku}
-                  suggestedTitle={suggestedTitle || undefined}
-                  suggestedPrice={suggestedPrice}
                   exactCatalogMatch={exactCatalogMatch}
                   similarCatalogModels={similarCatalogModels}
                   sellerSubmissionId={draft.sellerSubmissionId}

@@ -31,6 +31,16 @@ vi.mock('@/lib/buyerSession', () => ({ getBuyerSession: vi.fn() }))
 vi.mock('@/lib/adminAuth', () => ({ isAdminAuthenticated: vi.fn() }))
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }))
 vi.mock('next/navigation', () => ({ redirect: vi.fn(() => { throw new Error('NEXT_REDIRECT') }) }))
+// 15F: this file tests fan-out job behavior, not risk gating — stub the gate as a
+// pass-through allow so createListing's normal-value path reaches its transaction
+// exactly as before 15F (risk gate behavior itself is covered in riskPolicy.test.ts /
+// riskApprovalsActions.test.ts / riskGateIntegration.test.ts).
+vi.mock('@/lib/actions/riskApprovals', () => ({
+  checkRiskGate: vi.fn().mockResolvedValue({ decision: 'allow' }),
+  consumeApprovedRiskGate: vi.fn(),
+  markApprovalConsumed: vi.fn(),
+}))
+vi.mock('@/lib/pricingIntelligenceQuery', () => ({ getPricingIntelligence: vi.fn().mockResolvedValue(null) }))
 
 const mockSend = vi.fn()
 vi.mock('resend', () => ({
@@ -255,17 +265,12 @@ describe('buyerAlertsTrigger: createAvailableFanoutJob / createPriceChangeFanout
     expect(updateFnSrc).toContain('createPriceChangeFanoutJob(tx')
   })
 
-  it('intake conversion creates the fan-out job inside the same transaction as the listing — 15D-review section 1: this now lives in the shared intakeConversion.ts primitive, called by convertDraft (manual) inside its own $transaction', () => {
+  it('15F-review section 1: intake conversion no longer creates a Listing (or its fan-out job) at all — that capability was removed to eliminate a listing_activation risk-gate bypass. Listing creation lives exactly once, in the risk-gated actions/listings.ts createListing', () => {
     const conversionSrc = readSrc('src/lib/intakeConversion.ts')
-    const txIdx = conversionSrc.indexOf('tx.listing.create')
-    const jobIdx = conversionSrc.indexOf('createAvailableFanoutJob(tx')
-    // The shared primitive's own closing tx.intakeDraft.update (converted+link write).
-    const txEndIdx = conversionSrc.indexOf('await tx.intakeDraft.update', txIdx)
-    expect(txIdx).toBeGreaterThan(-1)
-    expect(jobIdx).toBeGreaterThan(txIdx)
-    expect(jobIdx).toBeLessThan(txEndIdx)
-    // intake.ts itself calls convertIntakeDraft from inside its OWN $transaction, so
-    // the whole chain (listing create -> fan-out -> draft link) still runs atomically.
+    expect(conversionSrc).not.toMatch(/tx\.listing\.create/)
+    expect(conversionSrc).not.toMatch(/createAvailableFanoutJob/)
+    // intake.ts itself calls convertIntakeDraft from inside its OWN $transaction —
+    // that part of the atomicity story is unchanged, just narrower in scope now.
     const intakeSrc = readSrc('src/lib/actions/intake.ts')
     const intakeTxIdx = intakeSrc.indexOf('prisma.$transaction')
     const convertCallIdx = intakeSrc.indexOf('await convertIntakeDraft(tx,')

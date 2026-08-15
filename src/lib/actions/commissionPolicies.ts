@@ -1,6 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
+import { prisma } from '@/lib/prisma'
 import {
   createCommissionPolicy,
   endDateCommissionPolicy,
@@ -8,8 +9,12 @@ import {
   endSellerCommissionOverride,
 } from '@/lib/commissionPolicyQuery'
 import { isAdminAuthenticated } from '@/lib/adminAuth'
+import { checkRiskGate, consumeApprovedRiskGate, markApprovalConsumed } from '@/lib/actions/riskApprovals'
+import type { SellerCommissionOverrideContext } from '@/lib/riskPolicy'
 
-export type CommissionPolicyActionState = { errors?: Record<string, string[]> } | null
+// 15F: approvalRequestId is set only when a risk gate routed this action to the
+// approval queue instead of performing the mutation.
+export type CommissionPolicyActionState = { errors?: Record<string, string[]>; approvalRequestId?: string } | null
 
 function parseAmountToCents(raw: string | null): number | null {
   if (!raw || raw.trim() === '') return null
@@ -113,16 +118,44 @@ export async function createSellerCommissionOverrideAction(
   const effectiveToRaw = String(formData.get('effectiveTo') ?? '')
   const effectiveTo = effectiveToRaw ? new Date(`${effectiveToRaw}T00:00:00.000Z`) : null
 
+  const commissionBps = parsePercentToBps(formData.get('commissionPercent') as string | null)
+  const minimumFeeCents = parseAmountToCents(formData.get('minimumFeeAmount') as string | null)
+
+  // 15F: manual seller-specific overrides always require approval (never automatic
+  // volume-tier resolution — see riskPolicy.ts). This is a create-new-row action, not
+  // a mutation of existing shared state, so consumption is applied AFTER a successful
+  // create rather than wrapped around it (createSellerCommissionOverride owns its own
+  // transaction) — a crash between create and consume leaves the approval reusable,
+  // but a literal retry is safely rejected by the overlap check below, never
+  // duplicated.
+  const riskContext: SellerCommissionOverrideContext = {
+    sellerProfileId, commissionBps, minimumFeeCents, reason,
+    effectiveFromIso: effectiveFrom.toISOString(),
+    effectiveToIso: effectiveTo ? effectiveTo.toISOString() : null,
+  }
+  const gate = await checkRiskGate({ action: 'seller_commission_override', context: riskContext, targetType: 'seller_profile', targetId: sellerProfileId, requestedBy: 'admin' })
+  if (gate.decision === 'deny') return { errors: { _form: [gate.reasons.join(' ')] } }
+  if (gate.decision === 'pending') {
+    return { errors: { _form: ['A seller-specific commission override requires approval.'] }, approvalRequestId: gate.approvalRequestId }
+  }
+
   const result = await createSellerCommissionOverride({
     sellerProfileId,
-    commissionBps: parsePercentToBps(formData.get('commissionPercent') as string | null),
-    minimumFeeCents: parseAmountToCents(formData.get('minimumFeeAmount') as string | null),
+    commissionBps,
+    minimumFeeCents,
     effectiveFrom,
     effectiveTo,
     reason,
     createdBy: 'admin', // no per-admin identity in this system; matches existing audit convention elsewhere
   })
   if (!result.ok) return { errors: { _form: [result.error] } }
+
+  if (gate.decision === 'consume_approved') {
+    await prisma.$transaction(async (tx) => {
+      const consumed = await consumeApprovedRiskGate(tx, { approvalRequestId: gate.approvalRequestId, action: 'seller_commission_override', targetId: sellerProfileId, context: riskContext })
+      if (consumed.ok) await markApprovalConsumed(tx, gate.approvalRequestId)
+    })
+  }
 
   revalidatePath('/admin/commission-policies')
   revalidatePath(`/admin/seller-profiles/${sellerProfileId}`)

@@ -40,6 +40,12 @@ export function PairMergeForm({ action, canonicalId, duplicateId, canonicalLabel
       {state?.errors?.form && (
         <p className="text-sm text-red-600">{state.errors.form[0]}</p>
       )}
+      {state?.approvalRequestId && (
+        <p className="text-sm text-amber-700">
+          Approval required —{' '}
+          <a className="underline" href={`/admin/approvals/${state.approvalRequestId}`}>view request #{state.approvalRequestId}</a>
+        </p>
+      )}
 
       <button
         type="submit"

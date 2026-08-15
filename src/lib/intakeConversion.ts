@@ -12,7 +12,6 @@
 import { Prisma } from '@prisma/client'
 import { resolveConversionEligibility, validateConversionConfirmation } from '@/lib/sellerAgreementInventory'
 import { buildBuyoutSourceKey, calculateBuyoutPayoutSnapshot } from '@/lib/sellerPayoutCalculation'
-import { createAvailableFanoutJob } from '@/lib/buyerAlertsTrigger'
 
 type TxClient = Prisma.TransactionClient
 
@@ -56,10 +55,6 @@ export type ConvertIntakeDraftOptions = {
   // already establishes consent once for the whole shipment, not per physical unit.
   confirmBuyout?: boolean
   confirmConsignment?: boolean
-  // Manual-flow-only: optionally create a Listing (with its buyer-alert fan-out job)
-  // in the same transaction. The workbench never passes this — 15D creates no
-  // listings (no automatic listing activation).
-  createListing?: { title: string; price: number }
 }
 
 export type ConvertIntakeDraftResult =
@@ -68,7 +63,6 @@ export type ConvertIntakeDraftResult =
       itemId: string
       sku: string
       catalogId: string
-      listingId?: string
       buyoutLineId?: string
       sellerSubmissionId: string | null
     }
@@ -265,19 +259,20 @@ export async function convertIntakeDraft(
   const back = draft.backPhotoUrl?.trim()
   if (back) await tx.photo.create({ data: { itemId: item.id, url: back, type: 'back', sortOrder: 1 } })
 
-  let listingId: string | undefined
-  if (options.createListing) {
-    const listing = await tx.listing.create({
-      data: { itemId: item.id, title: options.createListing.title, price: options.createListing.price, status: 'active' },
-    })
-    await createAvailableFanoutJob(tx, catalog.id, listing.id, listing.version)
-    listingId = listing.id
-  }
+  // 15F-review section 1: intake conversion no longer creates a Listing directly.
+  // This function used to accept an optional `createListing` option, but that path
+  // could never be risk-gated without either (a) reimplementing a second listing-risk
+  // formula here, or (b) evaluating/consuming approval mid-transaction after the
+  // ItemInstance already exists — neither is acceptable (see 15F-review). Converting
+  // intake and activating a listing are separate risk boundaries: this function's job
+  // ends at "physical item exists, ready, unlisted." Listing activation always goes
+  // through the one authoritative, fully risk-gated path: actions/listings.ts
+  // createListing (which the admin is directed to immediately after conversion).
 
   // Only reached when every prior step succeeded — the draft is marked converted and
   // linked to its ItemInstance in the SAME transaction as the ItemInstance write
   // above, so a converted draft with no ItemInstance (or vice versa) cannot occur.
   await tx.intakeDraft.update({ where: { id: options.draftId }, data: { status: 'converted', convertedItemId: item.id } })
 
-  return { ok: true, itemId: item.id, sku, catalogId: catalog.id, listingId, buyoutLineId, sellerSubmissionId: draft.sellerSubmissionId }
+  return { ok: true, itemId: item.id, sku, catalogId: catalog.id, buyoutLineId, sellerSubmissionId: draft.sellerSubmissionId }
 }

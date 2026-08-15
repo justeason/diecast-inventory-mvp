@@ -10,10 +10,15 @@ import {
   resolveCommissionForFinalization,
 } from '@/lib/commissionPolicyQuery'
 import type { AgreementOverrideDef } from '@/lib/commissionPolicy'
+import { checkRiskGate, consumeApprovedRiskGate, markApprovalConsumed } from '@/lib/actions/riskApprovals'
+import type { AgreementCommissionOverrideContext } from '@/lib/riskPolicy'
 
 export type SellerAgreementActionState = {
   errors?: Record<string, string[]>
   message?: string
+  // 15F: set only when a risk gate routed this action to the approval queue instead
+  // of performing the mutation.
+  approvalRequestId?: string
 }
 
 function extractInput(formData: FormData) {
@@ -404,13 +409,41 @@ export async function recordSellerAgreementAcceptance(
     // sellerPortfolioId is read here purely to decide lock order below — it is
     // immutable once an agreement is created (no action ever changes it), so this
     // pre-transaction read is safe to rely on for ordering, same as createSellerAgreement.
-    select: { id: true, status: true, submissionId: true, type: true, sellerProfileId: true, sellerPortfolioId: true },
+    // commissionSource/etc are read here ONLY to decide whether a risk gate applies
+    // (an override in effect vs. automatic policy resolution) — re-verified fresh,
+    // inside the lock, before the gate is actually consumed.
+    select: {
+      id: true, status: true, submissionId: true, type: true, sellerProfileId: true, sellerPortfolioId: true,
+      commissionSource: true, commissionPercent: true, commissionMinimumFee: true, commissionOverrideReason: true, acceptedItemCount: true,
+    },
   })
   if (!agreement) return { errors: { _form: ['Agreement not found'] } }
 
   // Eager status check (fast path before acquiring lock)
   const earlyTransition = canTransitionStatus(agreement.status, 'accepted')
   if (!earlyTransition.allowed) return { errors: { _form: [earlyTransition.reason] } }
+
+  // 15F: a manual commission override is about to be locked into a signed agreement —
+  // this is the moment it becomes irreversible (updateSellerAgreement only edits
+  // drafts), so it is gated here rather than at every intermediate draft save.
+  // Automatic policy/tier resolution (commissionSource !== 'agreement_override')
+  // remains completely approval-free (section 6).
+  let overrideGate: Awaited<ReturnType<typeof checkRiskGate>> | null = null
+  let overrideRiskContext: AgreementCommissionOverrideContext | null = null
+  if (agreement.type === 'consignment' && agreement.commissionSource === 'agreement_override' && agreement.commissionPercent) {
+    overrideRiskContext = {
+      agreementId,
+      commissionBps: Math.round(parseFloat(agreement.commissionPercent.toString()) * 10_000),
+      minimumFeeCents: agreement.commissionMinimumFee ? Math.round(parseFloat(agreement.commissionMinimumFee.toString()) * 100) : 0,
+      reason: agreement.commissionOverrideReason ?? '',
+      acceptedItemCount: agreement.acceptedItemCount,
+    }
+    overrideGate = await checkRiskGate({ action: 'agreement_commission_override', context: overrideRiskContext, targetType: 'seller_agreement', targetId: agreementId, requestedBy: 'admin' })
+    if (overrideGate.decision === 'deny') return { errors: { _form: [overrideGate.reasons.join(' ')] } }
+    if (overrideGate.decision === 'pending') {
+      return { errors: { _form: ['This commission override requires approval before the agreement can be accepted.'] }, approvalRequestId: overrideGate.approvalRequestId }
+    }
+  }
 
   // Lock SellerPortfolio (if any) then SellerSubmission, then re-validate inside the
   // transaction. Canonical order portfolio → submission — MUST match
@@ -507,12 +540,30 @@ export async function recordSellerAgreementAcceptance(
         commissionExplanation: r.explanation,
         commissionOverrideReason: r.source === 'agreement_override' ? (existingOverride?.reason ?? null) : null,
       }
+
+      // 15F: consume the approval atomically with the acceptance write — re-verifies
+      // the override that was actually approved still matches what is about to be
+      // frozen into the signed agreement (section 16/17). If the override no longer
+      // applies (e.g. cleared concurrently, now resolving from policy instead), the
+      // approval is simply left unconsumed rather than forced onto a different outcome.
+      if (overrideGate?.decision === 'consume_approved' && overrideRiskContext && r.source === 'agreement_override') {
+        const consumed = await consumeApprovedRiskGate(tx, {
+          approvalRequestId: overrideGate.approvalRequestId,
+          action: 'agreement_commission_override',
+          targetId: agreementId,
+          context: overrideRiskContext,
+        })
+        if (!consumed.ok) return { errors: { _form: [consumed.error] } }
+      }
     }
 
     await tx.sellerAgreement.update({
       where: { id: agreementId },
       data: { status: 'accepted', acceptedAt: new Date(), acceptanceMethod, ...commissionFields },
     })
+    if (overrideGate?.decision === 'consume_approved' && overrideRiskContext && commissionFields.commissionSource === 'agreement_override') {
+      await markApprovalConsumed(tx, overrideGate.approvalRequestId)
+    }
     return null
   })
   if (txResult !== null) return txResult

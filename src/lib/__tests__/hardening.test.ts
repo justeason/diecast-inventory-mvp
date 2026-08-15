@@ -19,7 +19,8 @@ const nextConfigSrc  = src('next.config.ts')
 const sysHealthSrc   = src('src/app/(admin)/admin/system-health/page.tsx')
 const errorTsx       = src('src/app/error.tsx')
 const globalErrorTsx = src('src/app/global-error.tsx')
-const adminNavSrc    = src('src/app/(admin)/layout.tsx')
+// 15H: nav content moved from layout.tsx into AdminNav.tsx's grouped nav data.
+const adminNavSrc    = src('src/components/admin/AdminNav.tsx')
 const storageRoute   = src('src/app/api/admin/storage-locations/search/route.ts')
 const authActionSrc  = src('src/lib/actions/auth.ts')
 const buyerAuthSrc   = src('src/lib/actions/buyerAuth.ts')
@@ -503,7 +504,7 @@ describe('/admin/system-health', () => {
 
   it('nav link added to admin layout', () => {
     expect(adminNavSrc).toContain('/admin/system-health')
-    expect(adminNavSrc).toContain('Sys Health')
+    expect(adminNavSrc).toContain('System Health')
   })
 })
 

@@ -7,8 +7,28 @@ import { redirect } from 'next/navigation'
 import { searchCatalogModels } from '@/lib/catalogSearch'
 import { DUPLICATE_SCORE_THRESHOLD } from '@/lib/catalogMatching'
 import { computeImpactCounts, type MergeImpactSummary } from '@/lib/catalogDataQualityQuery'
+import { checkRiskGate, consumeApprovedRiskGate, markApprovalConsumed } from '@/lib/actions/riskApprovals'
+import type { CatalogModelMergeContext } from '@/lib/riskPolicy'
 
-export type MergeActionState = { errors: Record<string, string[]> } | null
+// 15F-review (catalog-merge pass): approvalRequestId is set only when a risk gate
+// routed this action to the approval queue instead of performing the mutation.
+export type MergeActionState = { errors: Record<string, string[]>; approvalRequestId?: string } | null
+
+function toMergeRiskContext(sourceCatalogModelId: string, canonicalCatalogModelId: string, impact: MergeImpactSummary): CatalogModelMergeContext {
+  return {
+    sourceCatalogModelId,
+    canonicalCatalogModelId,
+    affectedItemCount: impact.itemInstances,
+    soldItemCount: impact.soldItems,
+    activeListingCount: impact.activeListings,
+    affectedCollectionCount: impact.collectionItems,
+    affectedWantedCount: impact.wantedBy,
+    affectedSellerSubmissionCount: impact.sellerSubmissions,
+    affectedPhotoCount: impact.photos,
+    affectedFingerprintCount: impact.fingerprints,
+    affectedExternalObservationCount: impact.externalObs,
+  }
+}
 
 const CatalogSchema = z.object({
   brand: z.string().min(1, 'Brand is required'),
@@ -104,6 +124,25 @@ export async function mergeCatalogModels(
   if (existCount !== allIds.length)
     return { errors: { form: ['One or more selected models no longer exist. Please refresh and try again.'] } }
 
+  // 15F-review (catalog-merge pass) section 7: "on initial request" steps 1-6 —
+  // server computes fresh impact per duplicate (never trusting the client-supplied
+  // expectedImpactSnapshot, which is only used later for the existing staleness
+  // check), builds the risk context, and evaluates policy BEFORE any mutation. One
+  // administrative action per duplicate model (never per ItemInstance). If ANY
+  // duplicate in this batch requires approval or is denied, the WHOLE batch is
+  // aborted — never a partial merge of only the low-risk pairs.
+  const gateByDupeId = new Map<string, Awaited<ReturnType<typeof checkRiskGate>>>()
+  for (const dupeId of duplicateIds) {
+    const impact = await computeImpactCounts(dupeId)
+    const riskContext = toMergeRiskContext(dupeId, canonicalId, impact)
+    const gate = await checkRiskGate({ action: 'catalog_model_merge', context: riskContext, targetType: 'CatalogModelMerge', targetId: dupeId, requestedBy: 'admin' })
+    if (gate.decision === 'deny') return { errors: { form: [gate.reasons.join(' ')] } }
+    if (gate.decision === 'pending') {
+      return { errors: { form: ['This merge requires approval before it can be applied.'] }, approvalRequestId: gate.approvalRequestId }
+    }
+    gateByDupeId.set(dupeId, gate)
+  }
+
   let mergeError: MergeActionState = null
 
   try {
@@ -135,14 +174,24 @@ export async function mergeCatalogModels(
         const dupeId = duplicateIds[i]
         const dupSnap = dupeSnapshotsOrNull[i]!
 
-        // Stale-preview + direction check after acquiring locks.
-        // Verifies canonical/source IDs match submitted direction, then recalculates all 9 counts.
+        // 15F-review section 7: "after approval, when merge is explicitly retried"
+        // steps 2-6 — impact is recomputed HERE, fresh, inside the lock (the same
+        // read the pre-existing stale-preview check already needs), and the risk
+        // context is reconstructed from THAT fresh read, never the pre-transaction
+        // snapshot. If this duplicate's gate required approval, the freshly-rebuilt
+        // fingerprint must still match what was actually approved — a changed
+        // affectedItemCount/soldItemCount (or any other bound field) invalidates it,
+        // exactly like every other 15F-gated action.
+        const current = await computeImpactCounts(dupeId, tx)
+
+        // Stale-preview + direction check after acquiring locks (pre-existing
+        // control, unmodified — this is the UI's own staleness UX, independent of
+        // and in addition to the risk gate; approval never substitutes for it).
         if (expectedPayload) {
           if (expectedPayload.canonicalModelId !== canonicalId || expectedPayload.sourceModelId !== dupeId) {
             mergeError = { errors: { form: ['Merge direction was changed since the preview. Refresh and confirm again.'] } }
             throw new Error('TX_VALIDATION')
           }
-          const current = await computeImpactCounts(dupeId, tx)
           const exp = expectedPayload.sourceImpact
           if (
             exp.itemInstances    !== current.itemInstances    || exp.collectionItems  !== current.collectionItems  ||
@@ -154,6 +203,13 @@ export async function mergeCatalogModels(
             mergeError = { errors: { form: ['Impact changed since the preview was shown. Refresh and review before merging.'] } }
             throw new Error('TX_VALIDATION')
           }
+        }
+
+        const gate = gateByDupeId.get(dupeId)
+        if (gate?.decision === 'consume_approved') {
+          const freshContext = toMergeRiskContext(dupeId, canonicalId, current)
+          const consumed = await consumeApprovedRiskGate(tx, { approvalRequestId: gate.approvalRequestId, action: 'catalog_model_merge', targetId: dupeId, context: freshContext })
+          if (!consumed.ok) { mergeError = { errors: { form: [consumed.error] } }; throw new Error('TX_VALIDATION') }
         }
 
         const [items, collItems, suggestions, submissions, photos] = await Promise.all([
@@ -202,6 +258,12 @@ export async function mergeCatalogModels(
         }
 
         await tx.catalogModel.delete({ where: { id: dupeId } })
+
+        // Consumed only after the merge for this duplicate has fully succeeded
+        // (moves + integrity check + delete), atomically with it, in the same
+        // transaction — approval itself never performs the merge; this call only
+        // ever flips a status flag once the mutation it authorized has committed.
+        if (gate?.decision === 'consume_approved') await markApprovalConsumed(tx, gate.approvalRequestId)
       }
     })
   } catch (err) {

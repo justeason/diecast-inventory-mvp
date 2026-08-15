@@ -247,6 +247,12 @@ export function MarkPayoutPaidForm({ payoutId }: { payoutId: string }) {
         I confirm that payment was sent externally. This records the payment — no transfer is executed.
       </label>
       {errors._form && <p className="text-sm text-red-600">{errors._form[0]}</p>}
+      {state?.approvalRequestId && (
+        <p className="text-sm text-amber-700">
+          Approval required —{' '}
+          <a className="underline" href={`/admin/approvals/${state.approvalRequestId}`}>view request #{state.approvalRequestId}</a>
+        </p>
+      )}
       <Button type="submit" disabled={isPending}>
         {isPending ? 'Recording…' : 'Mark as paid'}
       </Button>

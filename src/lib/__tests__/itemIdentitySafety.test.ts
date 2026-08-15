@@ -16,7 +16,11 @@ function readSrc(relPath: string): string {
 
 vi.mock('@/lib/prisma', () => ({
   prisma: {
-    itemInstance: { update: vi.fn().mockResolvedValue({}) },
+    // 15F: updateItemInstance now also reads the item's CURRENT catalogId to decide
+    // whether a catalog-reassignment risk gate applies — same catalogId as the
+    // update input ('cat1') so this test's sku-immutability behavior is unaffected
+    // (no gate triggered, straight through to itemInstance.update).
+    itemInstance: { update: vi.fn().mockResolvedValue({}), findUnique: vi.fn().mockResolvedValue({ catalogId: 'cat1', status: 'available', listing: null, orderItems: [], sellerAgreement: null }) },
     catalogModel: { findUnique: vi.fn().mockResolvedValue({ id: 'cat1' }) },
     storageLocation: { findUnique: vi.fn() },
   },

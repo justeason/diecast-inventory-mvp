@@ -197,6 +197,14 @@ export function ItemInstanceForm({ item, defaultCatalogId, defaultCatalogLabel, 
         error={state?.errors?.notes?.[0]}
       />
 
+      {state?.errors?._form?.[0] && <p className="text-sm text-red-600">{state.errors._form[0]}</p>}
+      {state?.approvalRequestId && (
+        <p className="text-sm text-amber-700">
+          Approval required —{' '}
+          <a className="underline" href={`/admin/approvals/${state.approvalRequestId}`}>view request #{state.approvalRequestId}</a>
+        </p>
+      )}
+
       <div className="flex flex-wrap gap-3 pt-2">
         <Button type="submit" disabled={isPending}>
           {isPending ? 'Saving…' : item ? 'Update Item' : 'Create Item'}

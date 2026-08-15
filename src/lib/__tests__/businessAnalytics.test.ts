@@ -37,7 +37,7 @@ import {
   decimalFromFloatDollars, sumDecimal, subtractDecimal, decimalToCents, centsToDecimal,
   ratio, periodChange, computeDurationStats, daysBetween,
 } from '@/lib/businessAnalyticsMath'
-import { parseDateRangeParams, previousPeriod, chooseBucketGranularity, bucketStart, advanceBucket, dateRangeQueryParams } from '@/lib/businessAnalyticsDates'
+import { parseDateRangeParams, previousPeriod, chooseBucketGranularity, bucketStart, advanceBucket, dateRangeQueryParams, todayRange } from '@/lib/businessAnalyticsDates'
 import { fmtPeriodChange } from '@/lib/businessAnalyticsFormat'
 import { METRIC_REGISTRY, getMetricDefinition } from '@/lib/businessAnalyticsRegistry'
 import {
@@ -176,6 +176,21 @@ describe('businessAnalyticsDates: parseDateRangeParams', () => {
     const { range, error } = parseDateRangeParams({ period: 'bogus' }, now)
     expect(range.preset).toBe('30d')
     expect(error).not.toBeNull()
+  })
+})
+
+describe('businessAnalyticsDates: todayRange (15H)', () => {
+  it('starts at UTC midnight of `now` and ends at `now` itself', () => {
+    const now = new Date('2026-08-15T23:59:00.000Z')
+    const range = todayRange(now)
+    expect(range.start!.toISOString()).toBe('2026-08-15T00:00:00.000Z')
+    expect(range.end.getTime()).toBe(now.getTime())
+  })
+
+  it('is a genuine UTC calendar day, not a rolling 24h window', () => {
+    const now = new Date('2026-08-15T00:05:00.000Z')
+    const range = todayRange(now)
+    expect(range.start!.toISOString()).toBe('2026-08-15T00:00:00.000Z')
   })
 })
 

@@ -1201,3 +1201,73 @@ model MobileCaptureItem {
   @@unique([sessionId, catalogModelId])
   @@index([sessionId])
 }
+
+// 15F: versioned, effective-dated risk policy configuration. Plain integer
+// cents/bps fields only (no JS float financial math) — see riskPolicy.ts for the
+// pure evaluation engine that consumes a snapshot of "the" effective row. Effective
+// version at a given instant = the row with the greatest effectiveFrom <= asOf
+// (see getEffectiveRiskPolicy) — versions are never mutated after creation, only
+// superseded by a newer version with a later effectiveFrom, so there is never an
+// ambiguous "current" row for a given asOf.
+model RiskPolicyConfig {
+  id      String @id @default(cuid())
+  version Int    @unique
+
+  effectiveFrom DateTime
+
+  highValueReviewThresholdCents      Int
+  veryHighValueThresholdCents        Int
+  payoutApprovalThresholdCents       Int
+  priceDeviationToleranceBps         Int
+  destructiveActionsRequireApproval  Boolean @default(true)
+  commercialOverridesRequireApproval Boolean @default(true)
+
+  notes     String?
+  createdBy String
+  createdAt DateTime @default(now())
+
+  @@index([effectiveFrom])
+}
+
+// 15F: a single narrow approval-gate record for one risky action instance. Not a
+// generic BPM/workflow entity — targetType/targetId + contextFingerprint bind it to
+// exactly one proposed change; a changed proposal invalidates the fingerprint match,
+// so a stale approval can never authorize a different outcome (see riskApprovals.ts).
+model RiskApprovalRequest {
+  id            String @id @default(cuid())
+  action        String
+  status        String @default("pending") // pending|approved|rejected|cancelled|expired|consumed
+  riskLevel     String // medium|high
+  policyCode    String
+  policyVersion Int
+
+  targetType String
+  targetId   String
+
+  // Deterministic hash of (action, targetId, decisionContext) — see
+  // computeContextFingerprint. Used both for pending-request dedup and to detect a
+  // materially changed proposal before consumption (section 17/28).
+  contextFingerprint String
+  decisionContext    Json
+  reasons            Json
+
+  requestedBy String
+  requestedAt DateTime @default(now())
+
+  approvedBy   String?
+  approvedAt   DateTime?
+  rejectedBy   String?
+  rejectedAt   DateTime?
+  decisionNote String?
+
+  expiresAt  DateTime?
+  consumedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, riskLevel])
+  @@index([action, targetId, contextFingerprint])
+  @@index([targetType, targetId])
+  @@index([createdAt])
+}

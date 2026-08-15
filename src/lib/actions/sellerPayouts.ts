@@ -17,6 +17,8 @@ import {
   isValidPaymentMethod,
 } from '@/lib/sellerPayoutCalculation'
 import { ensureSellerLifecycleEvent } from '@/lib/actions/sellerLifecycle'
+import { checkRiskGate, consumeApprovedRiskGate, markApprovalConsumed } from '@/lib/actions/riskApprovals'
+import type { SellerPayoutMarkPaidContext } from '@/lib/riskPolicy'
 
 // Resolve the seller submission id linked to a payout line via its agreement.
 async function submissionIdForLine(lineId: string): Promise<string | null> {
@@ -45,7 +47,9 @@ async function submissionIdsForPayout(payoutId: string): Promise<string[]> {
 // ─── Shared action state ──────────────────────────────────────────────────────
 
 export type PayoutLineActionState = { errors: Record<string, string[]> } | null
-export type PayoutActionState = { errors: Record<string, string[]> } | null
+// 15F: approvalRequestId is set only when a risk gate routed this action to the
+// approval queue instead of performing the mutation — see markSellerPayoutPaid.
+export type PayoutActionState = { errors: Record<string, string[]>; approvalRequestId?: string } | null
 
 // ─── Hold line ────────────────────────────────────────────────────────────────
 
@@ -517,10 +521,31 @@ export async function markSellerPayoutPaid(
   if (!paymentReference) return { errors: { paymentReference: ['Payment reference is required.'] } }
   if (!confirmed) return { errors: { _form: ['You must confirm that payment was made.'] } }
 
+  const payout = await prisma.sellerPayout.findUnique({ where: { id: payoutId }, select: { totalAmount: true, status: true } })
+  if (!payout) return { errors: { _form: ['Payout not found.'] } }
+
+  // 15F: large payouts require an approval gate before the funds-sent record can be
+  // written — the confirm checkbox above is sufficient below the configured
+  // threshold. This action still never sends any payment either way (section 9/16).
+  const riskContext: SellerPayoutMarkPaidContext = {
+    payoutId, totalAmountCents: Math.round(parseFloat(payout.totalAmount.toString()) * 100),
+    payoutStatus: payout.status, paymentMethod, paymentReference,
+  }
+  const gate = await checkRiskGate({ action: 'seller_payout_mark_paid', context: riskContext, targetType: 'seller_payout', targetId: payoutId, requestedBy: 'admin' })
+  if (gate.decision === 'deny') return { errors: { _form: [gate.reasons.join(' ')] } }
+  if (gate.decision === 'pending') {
+    return { errors: { _form: ['This payout requires approval before it can be marked paid.'] }, approvalRequestId: gate.approvalRequestId }
+  }
+
   let txError: { errors: Record<string, string[]> } | null = null
 
   try {
     await prisma.$transaction(async (tx) => {
+      if (gate.decision === 'consume_approved') {
+        const consumed = await consumeApprovedRiskGate(tx, { approvalRequestId: gate.approvalRequestId, action: 'seller_payout_mark_paid', targetId: payoutId, context: riskContext })
+        if (!consumed.ok) { txError = { errors: { _form: [consumed.error] } }; throw new Error('TX_VALIDATION') }
+      }
+
       // Conditional update: only succeeds while the payout is still approved.
       // Prevents two simultaneous "mark paid" requests from both committing.
       const updated = await tx.sellerPayout.updateMany({
@@ -533,6 +558,8 @@ export async function markSellerPayoutPaid(
         }
         throw new Error('TX_VALIDATION')
       }
+
+      if (gate.decision === 'consume_approved') await markApprovalConsumed(tx, gate.approvalRequestId)
     })
   } catch (err) {
     if (txError) return txError

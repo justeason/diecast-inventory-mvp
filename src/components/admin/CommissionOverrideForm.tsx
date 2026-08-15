@@ -32,6 +32,11 @@ export function CreateSellerOverrideForm({ sellerProfileId }: { sellerProfileId:
     <form action={formAction} className="space-y-3 rounded-md border border-gray-200 bg-gray-50 p-4">
       <p className="text-xs font-semibold text-gray-700">New commission override</p>
       {state?.errors?._form && <p className="text-xs text-red-600">{state.errors._form[0]}</p>}
+      {state?.approvalRequestId && (
+        <p className="text-xs text-amber-700">
+          Approval required — <a className="underline" href={`/admin/approvals/${state.approvalRequestId}`}>view request #{state.approvalRequestId}</a>
+        </p>
+      )}
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="block text-xs text-gray-600 mb-1">Commission %<span className="text-gray-400 ml-1">optional</span></label>

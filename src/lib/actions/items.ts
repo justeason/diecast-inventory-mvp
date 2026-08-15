@@ -4,6 +4,9 @@ import { z } from 'zod'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { redirect } from 'next/navigation'
+import { getPricingIntelligence } from '@/lib/pricingIntelligenceQuery'
+import { checkRiskGate, consumeApprovedRiskGate, markApprovalConsumed } from '@/lib/actions/riskApprovals'
+import type { ItemCatalogReassignmentContext } from '@/lib/riskPolicy'
 
 function isValidNonNegativePrice(v: string | undefined): boolean {
   if (!v || !v.trim()) return true
@@ -41,7 +44,9 @@ const CreateItemSchema = z.object({
 
 const UpdateItemSchema = z.object(MutableItemFields)
 
-export type ItemActionState = { errors: Record<string, string[]> } | null
+// 15F: approvalRequestId is set only when a risk gate routed this action to the
+// approval queue instead of performing the mutation — see updateItemInstance.
+export type ItemActionState = { errors: Record<string, string[]>; approvalRequestId?: string } | null
 
 function toMutableDbData(d: z.infer<typeof UpdateItemSchema>) {
   return {
@@ -110,12 +115,64 @@ export async function updateItemInstance(
 
   const { catalogId, locationId: newLocationId } = result.data
 
-  const [catalog, location] = await Promise.all([
+  const [catalog, location, existing] = await Promise.all([
     prisma.catalogModel.findUnique({ where: { id: catalogId }, select: { id: true } }),
     newLocationId ? prisma.storageLocation.findUnique({ where: { id: newLocationId }, select: { id: true } }) : null,
+    prisma.itemInstance.findUnique({
+      where: { id },
+      select: {
+        catalogId: true, status: true,
+        listing: { select: { price: true } },
+        orderItems: { where: { order: { paymentStatus: 'paid' } }, select: { price: true }, take: 1 },
+        sellerAgreement: { select: { type: true, agreedBuyoutAmount: true, acceptedItemCount: true } },
+      },
+    }),
   ])
   if (!catalog) return { errors: { catalogId: ['Catalog model not found.'] } }
   if (newLocationId && !location) return { errors: { locationId: ['Storage location not found.'] } }
+  if (!existing) return { errors: { _form: ['Item not found.'] } }
+
+  // 15F: catalog-identity reassignment is the only genuinely destructive/ownership-
+  // adjacent capability this action exposes — storage/condition/price/status edits
+  // stay frictionless (section 8: never gated merely for storage). Only evaluated
+  // when catalogId is actually changing.
+  let riskContext: ItemCatalogReassignmentContext | null = null
+  if (catalogId !== existing.catalogId) {
+    const intel = await getPricingIntelligence(catalogId)
+    riskContext = {
+      itemId: id,
+      oldCatalogModelId: existing.catalogId,
+      newCatalogModelId: catalogId,
+      hasCompletedSale: existing.status === 'sold' || existing.orderItems.length > 0,
+      completedSaleAmountCents: existing.orderItems[0] ? Math.round(existing.orderItems[0].price * 100) : null,
+      currentListingPriceCents: existing.listing ? Math.round(existing.listing.price * 100) : null,
+      estimatedValueCents: intel?.estimatedValueCents ?? null,
+      agreementBuyoutTotalCents:
+        existing.sellerAgreement?.type === 'buyout' && existing.sellerAgreement.acceptedItemCount === 1 && existing.sellerAgreement.agreedBuyoutAmount
+          ? Math.round(parseFloat(existing.sellerAgreement.agreedBuyoutAmount.toString()) * 100)
+          : null,
+    }
+    const gate = await checkRiskGate({ action: 'item_catalog_reassignment', context: riskContext, targetType: 'item_instance', targetId: id, requestedBy: 'admin' })
+    if (gate.decision === 'deny') return { errors: { catalogId: [gate.reasons.join(' ')] } }
+    if (gate.decision === 'pending') {
+      return { errors: { _form: ['Catalog reassignment requires approval before it can be saved.'] }, approvalRequestId: gate.approvalRequestId }
+    }
+    if (gate.decision === 'consume_approved') {
+      let txError: ItemActionState = null
+      try {
+        await prisma.$transaction(async (tx) => {
+          const consumed = await consumeApprovedRiskGate(tx, { approvalRequestId: gate.approvalRequestId, action: 'item_catalog_reassignment', targetId: id, context: riskContext as unknown as Record<string, unknown> })
+          if (!consumed.ok) { txError = { errors: { _form: [consumed.error] } }; throw new Error('TX_VALIDATION') }
+          await tx.itemInstance.update({ where: { id }, data: toMutableDbData(result.data) })
+          await markApprovalConsumed(tx, gate.approvalRequestId)
+        })
+      } catch (e) {
+        if ((e as Error).message !== 'TX_VALIDATION') throw e
+      }
+      if (txError) return txError
+      redirect('/admin/items')
+    }
+  }
 
   await prisma.itemInstance.update({ where: { id }, data: toMutableDbData(result.data) })
   redirect('/admin/items')

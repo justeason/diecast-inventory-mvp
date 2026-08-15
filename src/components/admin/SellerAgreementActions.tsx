@@ -63,6 +63,12 @@ export function RecordAcceptanceForm({ action }: { action: LifecycleAction }) {
           {e._form[0]}
         </div>
       )}
+      {'approvalRequestId' in state && state.approvalRequestId && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          Approval required —{' '}
+          <a className="underline" href={`/admin/approvals/${state.approvalRequestId}`}>view request #{state.approvalRequestId}</a>
+        </div>
+      )}
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-1">
           Acceptance method <span className="text-red-500">*</span>

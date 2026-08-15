@@ -1,59 +1,37 @@
 import Link from 'next/link'
 import { logoutAdmin } from '@/lib/actions/auth'
+import { getAdminAttentionBadges } from '@/lib/adminOperationsQuery'
+import { AdminNav } from '@/components/admin/AdminNav'
+import { AdminSearchBox } from '@/components/admin/AdminSearchBox'
 
-const navLinks = [
-  { href: '/admin', label: 'Dashboard' },
-  { href: '/admin/catalog', label: 'Catalog' },
-  { href: '/admin/catalog/duplicates', label: 'Cat. Dups' },
-  { href: '/admin/items', label: 'Items' },
-  { href: '/admin/locations', label: 'Locations' },
-  { href: '/admin/listings', label: 'Listings' },
-  { href: '/admin/orders', label: 'Orders' },
-  { href: '/admin/customers', label: 'Customers' },
-  { href: '/admin/seller-profiles', label: 'Sellers' },
-  { href: '/admin/seller-portfolios', label: 'Portfolios' },
-  { href: '/admin/seller-payouts', label: 'Payouts' },
-  { href: '/admin/commission-policies', label: 'Commission' },
-  { href: '/admin/intake', label: 'Intake' },
-  { href: '/admin/intake/operations', label: 'Intake Ops' },
-  { href: '/admin/catalog-suggestions', label: 'Suggestions' },
-  { href: '/admin/seller-submissions', label: 'Sell Requests' },
-  { href: '/admin/seller-lifecycle', label: 'Lifecycle' },
-  { href: '/admin/reconciliation', label: 'Reconciliation' },
-  { href: '/admin/analytics', label: 'Business Analytics' },
-  { href: '/admin/resale-estimator', label: 'Resale Est.' },
-  { href: '/admin/valuation', label: 'Valuation' },
-  { href: '/admin/market-research', label: 'Mkt Research' },
-  { href: '/admin/catalog-image-intelligence', label: 'Img Intel' },
-  { href: '/admin/catalog-quality',            label: 'Cat. Quality' },
-  { href: '/admin/system-health',             label: 'Sys Health' },
-  { href: '/admin/system/alerts',             label: 'Buyer Alerts' },
-]
-
-export default function AdminLayout({ children }: { children: React.ReactNode }) {
+// 15H Part G — grouped nav replaces the flat ~28-link header. Badges are one bounded
+// query composed of cheap groupBy/count reads (Part N section 41), shared by both
+// the nav badges here and the command-center Needs Attention section.
+export default async function AdminLayout({ children }: { children: React.ReactNode }) {
+  const badges = await getAdminAttentionBadges()
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white border-b border-gray-200">
-        <nav className="mx-auto max-w-7xl px-6 flex items-center gap-6 h-14">
-          <span className="font-semibold text-gray-900 mr-4">Admin</span>
-          {navLinks.map((link) => (
-            <Link
-              key={link.href}
-              href={link.href}
-              className="text-sm text-gray-600 hover:text-gray-900"
-            >
-              {link.label}
-            </Link>
-          ))}
-          <form action={logoutAdmin} className="ml-auto">
-            <button
-              type="submit"
-              className="text-sm text-gray-500 hover:text-gray-900 transition-colors"
-            >
-              Logout
-            </button>
-          </form>
-        </nav>
+        <div className="mx-auto max-w-7xl px-6 flex items-center gap-4 h-14 border-b border-gray-100">
+          <Link href="/admin" className="font-semibold text-gray-900">Admin</Link>
+          <div className="ml-auto flex items-center gap-4">
+            <AdminSearchBox />
+            <form action={logoutAdmin}>
+              <button type="submit" className="text-sm text-gray-500 hover:text-gray-900 transition-colors">
+                Logout
+              </button>
+            </form>
+          </div>
+        </div>
+        <div className="mx-auto max-w-7xl px-6">
+          <AdminNav
+            badges={{
+              exceptions: badges.intakeExceptions,
+              approvals: badges.pendingApprovals,
+              shipments: badges.shipmentDiscrepancies,
+            }}
+          />
+        </div>
       </header>
       <main className="mx-auto max-w-7xl px-6 py-8">{children}</main>
     </div>

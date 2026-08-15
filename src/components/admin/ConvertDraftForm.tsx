@@ -6,10 +6,6 @@ import { useFormStatus } from 'react-dom'
 import Link from 'next/link'
 import type { StorageLocation } from '@prisma/client'
 import type { ConvertActionState } from '@/lib/actions/intake'
-import {
-  calculateConsignmentPreview,
-  type ConsignmentPreview,
-} from '@/lib/sellerAgreementInventory'
 import { formatCommissionDisplay } from '@/lib/sellerAgreementDisplay'
 import { CatalogModelCombobox } from '@/components/admin/CatalogModelCombobox'
 import { formatCandidateLabel } from '@/lib/catalogMatching'
@@ -41,8 +37,6 @@ type Props = {
   action: (prev: ConvertActionState, formData: FormData) => Promise<ConvertActionState>
   locations: StorageLocation[]
   suggestedSku?: string
-  suggestedTitle?: string
-  suggestedPrice?: number | null
   exactCatalogMatch?: CatalogModelSummary | null
   similarCatalogModels?: CatalogModelSummary[]
   catalogInitialQuery?: string
@@ -70,53 +64,10 @@ function ConvertButton({ label, disabled }: { label: string; disabled?: boolean 
   )
 }
 
-function PreviewRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex justify-between text-xs">
-      <dt className="text-gray-500">{label}</dt>
-      <dd className="font-mono">{value}</dd>
-    </div>
-  )
-}
-
-function ConsignmentPayoutPreview({ preview }: { preview: ConsignmentPreview }) {
-  if (!preview.valid) return null
-  return (
-    <div
-      className={`mt-3 rounded-md px-3 py-2 text-xs ${
-        preview.belowMinimum
-          ? 'bg-amber-50 border border-amber-200'
-          : 'bg-white border border-gray-200'
-      }`}
-    >
-      <p className="font-medium text-gray-700 mb-1.5">Projected seller payout</p>
-      <dl className="space-y-0.5">
-        <PreviewRow label="Listing price" value={`$${preview.listingPrice.toFixed(2)}`} />
-        <PreviewRow label="Commission" value={`− $${preview.estimatedCommission.toFixed(2)}`} />
-        {preview.estimatedFixedFee > 0 && (
-          <PreviewRow label="Fixed fee" value={`− $${preview.estimatedFixedFee.toFixed(2)}`} />
-        )}
-        <div className="flex justify-between text-xs font-medium border-t border-gray-200 pt-0.5 mt-0.5">
-          <dt>Seller proceeds</dt>
-          <dd className="font-mono">${preview.estimatedProceeds.toFixed(2)}</dd>
-        </div>
-      </dl>
-      {preview.belowMinimum && (
-        <p className="mt-1.5 text-amber-800">
-          Estimated proceeds are below the agreed minimum seller payout.
-        </p>
-      )}
-      <p className="mt-1.5 text-gray-400 italic">Advisory only. Payout is not automatic.</p>
-    </div>
-  )
-}
-
 export function ConvertDraftForm({
   action,
   locations,
   suggestedSku,
-  suggestedTitle,
-  suggestedPrice,
   exactCatalogMatch,
   similarCatalogModels = [],
   catalogInitialQuery,
@@ -128,18 +79,6 @@ export function ConvertDraftForm({
   const errors = state && 'errors' in state ? state.errors : {}
 
   const [sku, setSku] = useState('')
-  const [createListing, setCreateListing] = useState(false)
-  const [listingPriceStr, setListingPriceStr] = useState(suggestedPrice?.toString() ?? '')
-
-  const consignmentPreview =
-    acceptedAgreement?.type === 'consignment' && createListing && listingPriceStr
-      ? calculateConsignmentPreview({
-          listingPriceStr,
-          commissionPercent: acceptedAgreement.commissionPercent ?? '0',
-          fixedFee: acceptedAgreement.fixedFee,
-          minimumSellerPayout: acceptedAgreement.minimumSellerPayout,
-        })
-      : null
 
   if (locations.length === 0) {
     return (
@@ -352,75 +291,11 @@ export function ConvertDraftForm({
         </div>
       )}
 
-      {/* Create listing toggle */}
-      <div className="flex items-center gap-2">
-        <input
-          id="createListing"
-          name="createListing"
-          type="checkbox"
-          checked={createListing}
-          onChange={(e) => setCreateListing(e.target.checked)}
-          className="h-4 w-4 rounded border-gray-300 accent-gray-900"
-        />
-        <label htmlFor="createListing" className="text-sm text-gray-700 cursor-pointer">
-          Create listing immediately
-        </label>
-      </div>
-
-      {/* Listing fields — shown only when checkbox is checked */}
-      {createListing && (
-        <div className="rounded-md border border-gray-200 bg-gray-50 p-4 space-y-3">
-          <div>
-            <label htmlFor="listingTitle" className="block text-sm font-medium text-gray-700 mb-1">
-              Listing title <span className="text-red-500">*</span>
-            </label>
-            <input
-              id="listingTitle"
-              name="listingTitle"
-              type="text"
-              defaultValue={suggestedTitle ?? ''}
-              placeholder="e.g. Hot Wheels Ferrari 308 GTS (1994)"
-              className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900 ${
-                errors.listingTitle ? 'border-red-500' : 'border-gray-300'
-              }`}
-            />
-            {errors.listingTitle && (
-              <p className="mt-0.5 text-xs text-red-600">{errors.listingTitle[0]}</p>
-            )}
-          </div>
-          <div className="max-w-xs">
-            <label htmlFor="listingPrice" className="block text-sm font-medium text-gray-700 mb-1">
-              Listing price <span className="text-red-500">*</span>
-            </label>
-            <input
-              id="listingPrice"
-              name="listingPrice"
-              type="number"
-              step="0.01"
-              min="0.01"
-              defaultValue={suggestedPrice != null ? suggestedPrice.toString() : ''}
-              onChange={(e) => setListingPriceStr(e.target.value)}
-              placeholder="e.g. 12.50"
-              className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900 ${
-                errors.listingPrice ? 'border-red-500' : 'border-gray-300'
-              }`}
-            />
-            {errors.listingPrice && (
-              <p className="mt-0.5 text-xs text-red-600">{errors.listingPrice[0]}</p>
-            )}
-          </div>
-
-          {/* Consignment payout preview — only for consignment items with a listing */}
-          {consignmentPreview && (
-            <ConsignmentPayoutPreview preview={consignmentPreview} />
-          )}
-        </div>
-      )}
-
-      <ConvertButton
-        label={createListing ? 'Convert and Create Listing' : 'Convert to Item'}
-        disabled={!!agreementBlockReason}
-      />
+      {/* 15F-review section 1: intake no longer creates a listing directly — that
+          always goes through the one risk-gated listing_activation path
+          (actions/listings.ts createListing), reached from the item page right
+          after conversion. */}
+      <ConvertButton label="Convert to Item" disabled={!!agreementBlockReason} />
     </form>
   )
 }

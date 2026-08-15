@@ -9,7 +9,6 @@ import { revalidatePath } from 'next/cache'
 import { prisma } from '@/lib/prisma'
 import { convertIntakeDraft } from '@/lib/intakeConversion'
 import { ensureSellerLifecycleEvent } from '@/lib/actions/sellerLifecycle'
-import { processFanoutJobs } from '@/lib/buyerAlertsFanoutProcessor'
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -211,20 +210,6 @@ export async function convertDraft(
   const locationId = (formData.get('locationId') as string)?.trim() || null
   if (!locationId) return { errors: { locationId: ['Storage location is required.'] } }
 
-  const createListing = formData.get('createListing') === 'on'
-  let listingTitle: string | null = null
-  let listingPrice: number | null = null
-  if (createListing) {
-    listingTitle = (formData.get('listingTitle') as string)?.trim() || null
-    if (!listingTitle) return { errors: { listingTitle: ['Listing title is required.'] } }
-    const priceStr = (formData.get('listingPrice') as string)?.trim()
-    if (!priceStr) return { errors: { listingPrice: ['Listing price is required.'] } }
-    listingPrice = Number(priceStr)
-    if (!Number.isFinite(listingPrice) || listingPrice <= 0) {
-      return { errors: { listingPrice: ['Price must be a positive number greater than 0.'] } }
-    }
-  }
-
   // Capture commercial confirmation inputs now; they are user-submitted form fields,
   // not authoritative DB state — they will be validated inside the transaction.
   const formConfirmBuyout     = formData.get('confirmBuyout')     as string | null
@@ -272,7 +257,6 @@ export async function convertDraft(
   // All authoritative DB reads and writes — including commercial provenance —
   // happen inside a single transaction so no intermediate state can be observed.
   let newItemId: string | undefined
-  let newListingId: string | undefined
   let newBuyoutLineId: string | undefined
   let sellerSubmissionId: string | null = null
   let txError: { errors: Record<string, string[]> } | null = null
@@ -290,7 +274,9 @@ export async function convertDraft(
       // the bulk intake workbench (see intakeWorkbench.ts confirmWorkbenchItem). This
       // file no longer reimplements draft-status gating, commercial-provenance
       // resolution, catalog resolution, SKU handling, buyout payout-line creation, or
-      // the converted-status/linkage write.
+      // the converted-status/linkage write. 15F-review section 1: it also no longer
+      // creates a Listing — that always goes through actions/listings.ts createListing
+      // (the one risk-gated listing_activation path), never a second copy here.
       const result = await convertIntakeDraft(tx, {
         draftId: id,
         locationId: locationId!,
@@ -298,7 +284,6 @@ export async function convertDraft(
         sku,
         confirmBuyout: formConfirmBuyout === 'on',
         confirmConsignment: formConfirmConsignment === 'on',
-        createListing: createListing && listingTitle && listingPrice ? { title: listingTitle, price: listingPrice } : undefined,
       })
       if (!result.ok) {
         txError = { errors: { [result.field]: [result.message] } }
@@ -306,7 +291,6 @@ export async function convertDraft(
       }
 
       newItemId = result.itemId
-      newListingId = result.listingId
       newBuyoutLineId = result.buyoutLineId
       sellerSubmissionId = result.sellerSubmissionId
     })
@@ -349,17 +333,6 @@ export async function convertDraft(
     }
   }
 
-  // The durable BuyerAlertFanout row (if any) already committed inside the conversion
-  // transaction above. This is only a best-effort latency optimization — if it fails,
-  // the cron / admin processor still picks up the durable row.
-  if (newListingId) {
-    try {
-      await processFanoutJobs()
-    } catch (err) {
-      console.error('[convertDraft] buyer alert fan-out processing failed:', err instanceof Error ? err.message : 'UnknownError')
-    }
-  }
-
   revalidatePath('/admin/intake')
   revalidatePath(`/admin/intake/${id}/edit`)
   revalidatePath('/admin/items')
@@ -370,16 +343,10 @@ export async function convertDraft(
     revalidatePath('/admin/seller-payouts')
     revalidatePath(`/account/sell/${sellerSubmissionId}`)
   }
-  if (newListingId) {
-    revalidatePath('/admin/listings')
-    revalidatePath(`/admin/listings/${newListingId}/edit`)
-  }
 
-  if (newListingId) {
-    redirect(`/admin/listings/${newListingId}/edit`)
-  }
   // 15C: land on the unified item workspace, not the raw edit form — "View Item" is
-  // the natural next step right after conversion.
+  // the natural next step right after conversion. Listing (if wanted) is a separate,
+  // explicit, fully risk-gated next action from there — see actions/listings.ts.
   redirect(`/admin/items/${newItemId!}`)
 }
 

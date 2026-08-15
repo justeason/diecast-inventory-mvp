@@ -282,6 +282,14 @@ export function CreateListingForm({ items, preSelectedItem }: CreateProps) {
         error={state?.errors?.description?.[0]}
       />
 
+      {state?.errors?._form?.[0] && <p className="text-sm text-red-600">{state.errors._form[0]}</p>}
+      {state?.approvalRequestId && (
+        <p className="text-sm text-amber-700">
+          Approval required —{' '}
+          <a className="underline" href={`/admin/approvals/${state.approvalRequestId}`}>view request #{state.approvalRequestId}</a>
+        </p>
+      )}
+
       <div className="flex gap-3 pt-2">
         <Button type="submit" disabled={isPending || !selectedItem}>
           {isPending ? 'Saving…' : 'Create Listing'}
@@ -348,6 +356,14 @@ export function EditListingForm({ listing, consignmentContext }: EditProps) {
         defaultValue={listing.status}
         error={state?.errors?.status?.[0]}
       />
+
+      {state?.errors?._form?.[0] && <p className="text-sm text-red-600">{state.errors._form[0]}</p>}
+      {state?.approvalRequestId && (
+        <p className="text-sm text-amber-700">
+          Approval required —{' '}
+          <a className="underline" href={`/admin/approvals/${state.approvalRequestId}`}>view request #{state.approvalRequestId}</a>
+        </p>
+      )}
 
       <div className="flex gap-3 pt-2">
         <Button type="submit" disabled={isPending}>
