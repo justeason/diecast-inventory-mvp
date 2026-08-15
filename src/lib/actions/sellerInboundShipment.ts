@@ -32,6 +32,83 @@ function revalidateShipmentPaths(submissionId: string) {
   revalidatePath('/admin/intake/operations')
 }
 
+// ─── 15I: admin batch-default prefills for the intake workbench (Part B) ─────────
+// A default is a PREFILL, never an authoritative value — confirmWorkbenchItem still
+// requires and validates each unit's own submitted fields regardless of what these
+// are set to. Routine/low-risk (section 6): no 15F approval, no financial/identity
+// field involved. undefined = leave that field's current default unchanged; null =
+// explicitly clear it (no prefill).
+
+const ITEM_CONDITIONS = ['mint', 'near_mint', 'good', 'fair', 'poor', 'damaged'] as const
+
+export type ShipmentDefaults = {
+  storageLocationId: string | null
+  storageLabel: string | null
+  condition: string | null
+  cardedOrLoose: string | null
+}
+
+export type SaveShipmentDefaultsResult = { ok: true; defaults: ShipmentDefaults } | { ok: false; error: string }
+
+export async function saveShipmentDefaults(
+  shipmentId: string,
+  input: { storageLocationId?: string | null; condition?: string | null; cardedOrLoose?: string | null },
+): Promise<SaveShipmentDefaultsResult> {
+  if (!(await isAdminAuthenticated())) return { ok: false, error: 'Admin authentication required.' }
+
+  const shipment = await prisma.sellerInboundShipment.findUnique({ where: { id: shipmentId }, select: { id: true } })
+  if (!shipment) return { ok: false, error: 'Shipment not found.' }
+
+  const data: {
+    defaultStorageLocationId?: string | null
+    defaultCondition?: string | null
+    defaultCardedOrLoose?: string | null
+  } = {}
+
+  if (input.storageLocationId !== undefined) {
+    if (input.storageLocationId !== null) {
+      const loc = await prisma.storageLocation.findUnique({ where: { id: input.storageLocationId }, select: { id: true } })
+      if (!loc) return { ok: false, error: 'Storage location not found. Invalid storage cannot become a saved default.' }
+    }
+    data.defaultStorageLocationId = input.storageLocationId
+  }
+  if (input.condition !== undefined) {
+    if (input.condition !== null && !(ITEM_CONDITIONS as readonly string[]).includes(input.condition)) {
+      return { ok: false, error: 'Invalid condition.' }
+    }
+    data.defaultCondition = input.condition
+  }
+  if (input.cardedOrLoose !== undefined) {
+    if (input.cardedOrLoose !== null && input.cardedOrLoose !== 'carded' && input.cardedOrLoose !== 'loose') {
+      return { ok: false, error: 'Invalid carded/loose value.' }
+    }
+    data.defaultCardedOrLoose = input.cardedOrLoose
+  }
+
+  const updated = await prisma.sellerInboundShipment.update({
+    where: { id: shipmentId },
+    data,
+    select: {
+      defaultStorageLocationId: true,
+      defaultCondition: true,
+      defaultCardedOrLoose: true,
+      defaultStorageLocation: { select: { label: true } },
+    },
+  })
+
+  revalidatePath(`/admin/intake/workbench/${shipmentId}`)
+
+  return {
+    ok: true,
+    defaults: {
+      storageLocationId: updated.defaultStorageLocationId,
+      storageLabel: updated.defaultStorageLocation?.label ?? null,
+      condition: updated.defaultCondition,
+      cardedOrLoose: updated.defaultCardedOrLoose,
+    },
+  }
+}
+
 // ─── Seller: create or update inbound shipment ──────────────────────────────────
 
 export async function saveSellerInboundShipment(

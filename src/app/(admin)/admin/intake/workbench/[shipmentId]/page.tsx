@@ -53,6 +53,8 @@ export default async function IntakeWorkbenchPage({ params }: { params: Promise<
         remaining: context.progress.remaining,
         defaultCondition: context.defaults.condition,
         defaultCardedOrLoose: context.defaults.cardedOrLoose,
+        defaultStorageLocationId: context.defaults.storageLocationId,
+        defaultStorageLabel: context.defaults.storageLabel,
         recentItems: context.recentItems.map((i) => ({ id: i.id, sku: i.sku, catalogLabel: i.catalogLabel, storageLabel: i.storageLabel })),
         reconciliation: context.reconciliation,
       }}

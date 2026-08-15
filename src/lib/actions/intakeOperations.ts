@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { prisma } from '@/lib/prisma'
 import { ensureSellerLifecycleEvent } from '@/lib/actions/sellerLifecycle'
+import { setItemStorageInTx, type ItemMutationOutcome } from '@/lib/itemMutations'
 
 export type IntakeOpsActionState = { errors: Record<string, string[]> } | null
 
@@ -249,9 +250,15 @@ export async function bulkAssignIntakeStorage(
   return null
 }
 
-const IMMOVABLE_STATUSES = ['sold', 'reserved', 'not_for_sale'] as const
-const RETURN_PENDING_CASE_TYPES = ['return_to_seller', 'consignment_expiration', 'seller_withdrawal'] as const
-
+// 15I (focused-review pass): delegates entirely to the shared authoritative storage
+// primitive in itemMutations.ts (validateItemStorageMove/setItemStorageInTx) — the
+// IMMOVABLE_STATUSES/return-pending-case rules are no longer duplicated here. This
+// is the single-item "move" action; the bulk equivalent is 15I's own
+// executeBulkItemAction({ action: 'set_storage' }), which opens one such transaction
+// per selected item independently (partial success). There is no longer a separate
+// all-or-nothing bulkMoveInventoryItems — it was unused by any UI and its
+// all-or-nothing semantics duplicated (and diverged from) these same rules; removed
+// rather than kept as a second implementation.
 export async function moveInventoryItem(
   _prev: IntakeOpsActionState,
   formData: FormData
@@ -265,140 +272,15 @@ export async function moveInventoryItem(
   const location = await prisma.storageLocation.findUnique({ where: { id: locationId }, select: { id: true } })
   if (!location) return { errors: { storageLocationId: ['Storage location not found.'] } }
 
-  let txError: IntakeOpsActionState = null
-
+  let outcome: ItemMutationOutcome
   try {
-    await prisma.$transaction(async (tx) => {
-      await tx.$queryRaw`SELECT id FROM "ItemInstance" WHERE id = ${itemId} FOR UPDATE`
-
-      const item = await tx.itemInstance.findUnique({ where: { id: itemId }, select: { id: true, status: true } })
-      if (!item) {
-        txError = { errors: { form: ['Item not found.'] } }
-        throw new Error('TX_VALIDATION')
-      }
-      if ((IMMOVABLE_STATUSES as readonly string[]).includes(item.status)) {
-        txError = {
-          errors: { form: [`Cannot move item with status '${item.status}'.`] },
-        }
-        throw new Error('TX_VALIDATION')
-      }
-
-      // Block items with an open return-pending case
-      const openReturnCase = await tx.sellerLifecycleCase.findFirst({
-        where: {
-          itemInstanceId: itemId,
-          caseType: { in: [...RETURN_PENDING_CASE_TYPES] },
-          status: { in: ['open', 'action_required'] },
-        },
-        select: { id: true, caseType: true },
-      })
-      if (openReturnCase) {
-        txError = { errors: { form: [`Cannot move item: it has an open ${openReturnCase.caseType} case.`] } }
-        throw new Error('TX_VALIDATION')
-      }
-
-      // Re-validate location inside TX
-      const locInTx = await tx.storageLocation.findUnique({ where: { id: locationId }, select: { id: true } })
-      if (!locInTx) {
-        txError = { errors: { storageLocationId: ['Storage location was deleted. Please select another.'] } }
-        throw new Error('TX_VALIDATION')
-      }
-
-      await tx.itemInstance.update({ where: { id: itemId }, data: { locationId } })
-    })
-  } catch (err) {
-    if ((err as Error).message === 'TX_VALIDATION') return txError
-    throw err
+    outcome = await prisma.$transaction((tx) => setItemStorageInTx(tx, { itemId, locationId }))
+  } catch {
+    return { errors: { form: ['Move failed. Please retry.'] } }
   }
 
-  revalidatePath('/admin/items')
-  return null
-}
-
-export async function bulkMoveInventoryItems(
-  _prev: IntakeOpsActionState,
-  formData: FormData
-): Promise<IntakeOpsActionState> {
-  const itemIds = formData
-    .getAll('itemId')
-    .map((v) => (v as string).trim())
-    .filter(Boolean)
-  const locationId = (formData.get('storageLocationId') as string)?.trim() || ''
-
-  if (itemIds.length === 0) return { errors: { form: ['No items selected.'] } }
-  if (!locationId) return { errors: { storageLocationId: ['Storage location required.'] } }
-
-  const location = await prisma.storageLocation.findUnique({ where: { id: locationId }, select: { id: true } })
-  if (!location) return { errors: { storageLocationId: ['Storage location not found.'] } }
-
-  const sortedIds = [...itemIds].sort()
-  let txError: IntakeOpsActionState = null
-
-  try {
-    await prisma.$transaction(async (tx) => {
-      // Blocking sorted locks — entire batch fails atomically if any row is ineligible
-      for (const id of sortedIds) {
-        await tx.$queryRaw`SELECT id FROM "ItemInstance" WHERE id = ${id} FOR UPDATE`
-      }
-
-      const items = await tx.itemInstance.findMany({
-        where: { id: { in: sortedIds } },
-        select: { id: true, status: true },
-      })
-
-      const itemMap = new Map(items.map((i) => [i.id, i]))
-      const missingIds = sortedIds.filter((id) => !itemMap.has(id))
-      const immovable = items.filter((i) => (IMMOVABLE_STATUSES as readonly string[]).includes(i.status))
-
-      if (missingIds.length > 0) {
-        txError = { errors: { form: [`${missingIds.length} item(s) not found.`] } }
-        throw new Error('TX_VALIDATION')
-      }
-      if (immovable.length > 0) {
-        txError = {
-          errors: {
-            form: [
-              `${immovable.length} item(s) cannot be moved (sold, reserved, or not for sale). Deselect them and retry.`,
-            ],
-          },
-        }
-        throw new Error('TX_VALIDATION')
-      }
-
-      // Block items with open return-pending cases
-      const returnCases = await tx.sellerLifecycleCase.findMany({
-        where: {
-          itemInstanceId: { in: sortedIds },
-          caseType: { in: [...RETURN_PENDING_CASE_TYPES] },
-          status: { in: ['open', 'action_required'] },
-        },
-        select: { itemInstanceId: true },
-      })
-      if (returnCases.length > 0) {
-        txError = {
-          errors: {
-            form: [`${returnCases.length} item(s) have open return cases and cannot be moved.`],
-          },
-        }
-        throw new Error('TX_VALIDATION')
-      }
-
-      // Re-validate location inside TX
-      const locInTx = await tx.storageLocation.findUnique({ where: { id: locationId }, select: { id: true } })
-      if (!locInTx) {
-        txError = { errors: { storageLocationId: ['Storage location was deleted.'] } }
-        throw new Error('TX_VALIDATION')
-      }
-
-      await tx.itemInstance.updateMany({
-        where: { id: { in: sortedIds } },
-        data: { locationId },
-      })
-    })
-  } catch (err) {
-    if ((err as Error).message === 'TX_VALIDATION') return txError
-    return { errors: { form: ['Bulk move failed. Please retry.'] } }
-  }
+  if (outcome.outcome === 'not_found') return { errors: { form: ['Item not found.'] } }
+  if (outcome.outcome === 'validation_failed') return { errors: { form: [outcome.reason] } }
 
   revalidatePath('/admin/items')
   return null

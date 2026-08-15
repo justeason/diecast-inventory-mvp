@@ -20,9 +20,13 @@ vi.mock('@/lib/prisma', () => ({
     // whether a catalog-reassignment risk gate applies — same catalogId as the
     // update input ('cat1') so this test's sku-immutability behavior is unaffected
     // (no gate triggered, straight through to itemInstance.update).
-    itemInstance: { update: vi.fn().mockResolvedValue({}), findUnique: vi.fn().mockResolvedValue({ catalogId: 'cat1', status: 'available', listing: null, orderItems: [], sellerAgreement: null }) },
+    itemInstance: { update: vi.fn().mockResolvedValue({}), findUnique: vi.fn().mockResolvedValue({ catalogId: 'cat1', status: 'available', locationId: null, listing: null, orderItems: [], sellerAgreement: null }) },
     catalogModel: { findUnique: vi.fn().mockResolvedValue({ id: 'cat1' }) },
     storageLocation: { findUnique: vi.fn() },
+    // 15I (focused-review pass): updateItemInstance now always applies its combined
+    // write inside one transaction (Part 4 — atomicity), even when storage isn't
+    // changing. See the sku-immutability test below for how this is exercised.
+    $transaction: vi.fn(),
   },
 }))
 vi.mock('next/navigation', () => ({
@@ -173,10 +177,17 @@ describe('ItemInstanceForm.tsx: SKU is not editable in update mode (15C-review s
 describe('updateItemInstance — behavioral: a malicious/browser-submitted sku field is ignored (15C-review section 1)', () => {
   beforeEach(() => vi.resetAllMocks())
 
-  it('never passes sku through to prisma.itemInstance.update, even when formData carries one', async () => {
+  it('never passes sku through to itemInstance.update, even when formData carries one', async () => {
     const { prisma } = await import('@/lib/prisma')
     const { updateItemInstance } = await import('@/lib/actions/items')
     ;(prisma.catalogModel.findUnique as Mock).mockResolvedValueOnce({ id: 'cat1' })
+    ;(prisma.itemInstance.findUnique as Mock).mockResolvedValueOnce({ catalogId: 'cat1', status: 'available', locationId: null, listing: null, orderItems: [], sellerAgreement: null })
+
+    // 15I: the combined write now happens inside prisma.$transaction (Part 4) —
+    // no storage change is proposed here, so validateItemStorageMove is never
+    // invoked; the tx only needs itemInstance.update.
+    const tx = { itemInstance: { update: vi.fn().mockResolvedValue({}) } }
+    ;(prisma.$transaction as Mock).mockImplementationOnce(async (cb: (tx: unknown) => unknown) => cb(tx))
 
     const fd = new FormData()
     fd.set('sku', 'HACKED-SKU-999') // an update form should never send this, but simulate a tampered request
@@ -187,8 +198,8 @@ describe('updateItemInstance — behavioral: a malicious/browser-submitted sku f
 
     await expect(updateItemInstance('item1', null, fd)).rejects.toThrow('REDIRECT:')
 
-    expect(prisma.itemInstance.update).toHaveBeenCalledTimes(1)
-    const call = (prisma.itemInstance.update as Mock).mock.calls[0][0]
+    expect(tx.itemInstance.update).toHaveBeenCalledTimes(1)
+    const call = (tx.itemInstance.update as Mock).mock.calls[0][0]
     expect(call.data).not.toHaveProperty('sku')
   })
 })

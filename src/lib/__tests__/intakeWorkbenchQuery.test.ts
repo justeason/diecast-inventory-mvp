@@ -228,3 +228,40 @@ describe('getWorkbenchContext (section 3/4)', () => {
     expect(src).not.toMatch(/\.(create|update|delete|upsert|updateMany|deleteMany)\(/)
   })
 })
+
+// 15I Part B section 8 — batch-default precedence in the workbench context.
+describe('getWorkbenchContext — batch default precedence (15I)', () => {
+  beforeEach(() => vi.resetAllMocks())
+
+  it('an explicit shipment default WINS over the seller-submission condition/type', async () => {
+    ;(prisma.sellerInboundShipment.findUnique as Mock).mockResolvedValueOnce(
+      baseShipment({ defaultCondition: 'good', defaultCardedOrLoose: 'loose', defaultStorageLocationId: 'loc1', defaultStorageLocation: { label: 'B-14-03' } }),
+    )
+    ;(prisma.sellerSubmission.findUnique as Mock).mockResolvedValueOnce(baseSubmission({ condition: 'mint', cardedOrLoose: 'carded' }))
+    defaultMocks()
+
+    const ctx = await getWorkbenchContext('ship1')
+    expect(ctx!.defaults).toEqual({ condition: 'good', cardedOrLoose: 'loose', storageLocationId: 'loc1', storageLabel: 'B-14-03' })
+  })
+
+  it('falls back to the submission-reported condition/type when no shipment default is set (existing behavior unchanged)', async () => {
+    ;(prisma.sellerInboundShipment.findUnique as Mock).mockResolvedValueOnce(
+      baseShipment({ defaultCondition: null, defaultCardedOrLoose: null, defaultStorageLocationId: null, defaultStorageLocation: null }),
+    )
+    ;(prisma.sellerSubmission.findUnique as Mock).mockResolvedValueOnce(baseSubmission({ condition: 'mint', cardedOrLoose: 'carded' }))
+    defaultMocks()
+
+    const ctx = await getWorkbenchContext('ship1')
+    expect(ctx!.defaults).toEqual({ condition: 'mint', cardedOrLoose: 'carded', storageLocationId: null, storageLabel: null })
+  })
+
+  it('storage has no submission-level fallback — null shipment default means no prefill, not a guessed location', async () => {
+    ;(prisma.sellerInboundShipment.findUnique as Mock).mockResolvedValueOnce(baseShipment({ defaultStorageLocationId: null, defaultStorageLocation: null }))
+    ;(prisma.sellerSubmission.findUnique as Mock).mockResolvedValueOnce(baseSubmission())
+    defaultMocks()
+
+    const ctx = await getWorkbenchContext('ship1')
+    expect(ctx!.defaults.storageLocationId).toBeNull()
+    expect(ctx!.defaults.storageLabel).toBeNull()
+  })
+})

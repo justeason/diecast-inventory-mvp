@@ -31,9 +31,17 @@ export default async function InventoryHubPage() {
           <StatCard label="Sold" count={itemCounts['sold'] ?? 0} href="/admin/items?status=sold" />
           <StatCard label="Draft" count={itemCounts['draft'] ?? 0} href="/admin/items?status=draft" />
         </div>
-        <Link href="/admin/items" className="mt-3 inline-block text-sm text-blue-600 hover:underline">
-          Open Items →
-        </Link>
+        <div className="mt-3 flex items-center gap-4">
+          <Link href="/admin/items" className="text-sm text-blue-600 hover:underline">
+            Open Items →
+          </Link>
+          {/* 15I Part N section 34 — the Items list itself hosts selection + bulk
+              actions (Set Storage / Set Condition / Catalog Correction); no separate
+              bulk-action page. */}
+          <span className="text-xs text-gray-400">
+            Select items on that list to bulk-set storage, condition, or catalog.
+          </span>
+        </div>
       </Section>
 
       <Section title="Listings">

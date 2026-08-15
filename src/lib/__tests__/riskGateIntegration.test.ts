@@ -341,13 +341,21 @@ describe('15F-review section 6/7: server-authoritative context reconstruction, n
   })
 
   it('items.ts: item_catalog_reassignment context is built from a fresh prisma.itemInstance.findUnique read, not from client input', () => {
+    // 15I (focused-review pass): the context-building literal itself now lives once,
+    // in itemMutations.ts#buildItemCatalogReassignmentContext (shared with the bulk
+    // engine) — items.ts calls it with `existing`, its own freshly-read row, rather
+    // than inlining the object literal a second time.
     const src = readSrc('src/lib/actions/items.ts')
-    const contextIdx = src.indexOf('riskContext = {')
+    const contextIdx = src.indexOf('buildItemCatalogReassignmentContext(')
     const readIdx = src.indexOf('prisma.itemInstance.findUnique')
     expect(readIdx).toBeGreaterThan(-1)
     expect(contextIdx).toBeGreaterThan(readIdx)
-    // hasCompletedSale is derived from server-read status/orderItems, never a form field.
-    expect(src).toMatch(/hasCompletedSale:\s*existing\.status === 'sold'/)
+    expect(src).toMatch(/buildItemCatalogReassignmentContext\(id, catalogId, existing,/)
+
+    // The shared builder itself derives hasCompletedSale from the server-read
+    // status/orderItems it's passed — never a form field.
+    const mutationsSrc = readSrc('src/lib/itemMutations.ts')
+    expect(mutationsSrc).toMatch(/hasCompletedSale:\s*existing\.status === 'sold'/)
   })
 
   it('listings.ts: listing_price_change old price and guidance come from a fresh DB read (before.price) and 14C, never from the submitted "price" field alone', () => {

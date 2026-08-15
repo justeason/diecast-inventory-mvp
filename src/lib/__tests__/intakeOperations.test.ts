@@ -523,28 +523,34 @@ describe('bulk action atomicity', () => {
     expect(bulkFn).not.toContain('SKIP LOCKED')
   })
 
-  test('bulkMoveInventoryItems rejects sold items', () => {
-    expect(actionsSrc).toContain('sold, reserved, or not for sale')
-  })
-
-  test('bulkMoveInventoryItems rejects if any item not found', () => {
-    expect(actionsSrc).toContain('item(s) not found')
-  })
-
-  test('bulkMoveInventoryItems sorts IDs for deterministic locking', () => {
-    expect(actionsSrc).toContain('sortedIds = [...itemIds].sort()')
-  })
-
-  test('moveInventoryItem validates location inside TX', () => {
+  // 15I mutation-consistency pass: moveInventoryItem no longer implements storage
+  // rules itself — it delegates to the shared authoritative primitive in
+  // itemMutations.ts (setItemStorageInTx/validateItemStorageMove). The all-or-
+  // nothing bulkMoveInventoryItems (unused by any UI, and duplicating/diverging
+  // from these same rules) was removed; the bulk equivalent is 15I's own
+  // executeBulkItemAction({ action: 'set_storage' }), covered in
+  // itemBulkActions.test.ts / itemMutations.test.ts.
+  test('moveInventoryItem delegates to the shared itemMutations.ts storage primitive', () => {
     const moveFnStart = actionsSrc.indexOf('async function moveInventoryItem')
-    const moveFnEnd = actionsSrc.indexOf('async function bulkMoveInventoryItems')
-    const moveFn = actionsSrc.slice(moveFnStart, moveFnEnd)
+    const moveFn = actionsSrc.slice(moveFnStart)
+    expect(moveFn).toContain('setItemStorageInTx')
+    expect(actionsSrc).toContain("from '@/lib/itemMutations'")
+  })
+
+  test('moveInventoryItem still does an outer pre-check that the target location exists', () => {
+    const moveFnStart = actionsSrc.indexOf('async function moveInventoryItem')
+    const moveFn = actionsSrc.slice(moveFnStart)
     expect(moveFn).toContain('storageLocation.findUnique')
   })
 
-  test('moveInventoryItem blocks sold/reserved/not_for_sale', () => {
-    expect(actionsSrc).toContain("IMMOVABLE_STATUSES")
-    expect(actionsSrc).toContain("'sold', 'reserved', 'not_for_sale'")
+  test('moveInventoryItem no longer duplicates the immovable-status rule inline — it lives once, in itemMutations.ts', () => {
+    const moveFnStart = actionsSrc.indexOf('async function moveInventoryItem')
+    const moveFn = actionsSrc.slice(moveFnStart)
+    expect(moveFn).not.toContain("'sold', 'reserved', 'not_for_sale'")
+  })
+
+  test('bulkMoveInventoryItems no longer exists — the dead all-or-nothing implementation was removed, not left as a second storage-mutation path', () => {
+    expect(actionsSrc).not.toContain('async function bulkMoveInventoryItems')
   })
 
   test('no financial/order/payout changes in move actions', () => {
@@ -800,47 +806,18 @@ describe('lock ordering', () => {
 
 // ─── Return-pending move guard ────────────────────────────────────────────────
 
+// 15I mutation-consistency pass: the return-pending-case guard (RETURN_PENDING_CASE_TYPES,
+// its 'open'/'action_required' status filter, and the "checked after the item lock,
+// inside the transaction" ordering) now lives exactly once, in
+// itemMutations.ts#validateItemStorageMove — see itemMutations.test.ts for the
+// behavioral coverage of the rule itself. This file only confirms
+// moveInventoryItem doesn't keep a second copy.
 describe('return-pending move guard', () => {
-  test('RETURN_PENDING_CASE_TYPES contains all three return-pending case types', () => {
-    expect(actionsSrc).toContain('RETURN_PENDING_CASE_TYPES')
-    expect(actionsSrc).toContain('return_to_seller')
-    expect(actionsSrc).toContain('consignment_expiration')
-    expect(actionsSrc).toContain('seller_withdrawal')
-  })
-
-  test('moveInventoryItem uses RETURN_PENDING_CASE_TYPES for case type filter', () => {
+  test('moveInventoryItem does not duplicate the return-pending-case rule inline', () => {
     const fnStart = actionsSrc.indexOf('async function moveInventoryItem')
-    const fnEnd = actionsSrc.indexOf('async function bulkMoveInventoryItems')
-    const fnSrc = actionsSrc.slice(fnStart, fnEnd)
-    expect(fnSrc).toContain('sellerLifecycleCase')
-    expect(fnSrc).toContain('RETURN_PENDING_CASE_TYPES')
-    expect(fnSrc).toContain("status: { in: ['open', 'action_required'] }")
-  })
-
-  test('bulkMoveInventoryItems uses RETURN_PENDING_CASE_TYPES for case type filter', () => {
-    const fnStart = actionsSrc.indexOf('async function bulkMoveInventoryItems')
     const fnSrc = actionsSrc.slice(fnStart)
-    expect(fnSrc).toContain('sellerLifecycleCase')
-    expect(fnSrc).toContain('RETURN_PENDING_CASE_TYPES')
-    expect(fnSrc).toContain('open return cases')
-  })
-
-  test('move guard does not block resolved or cancelled cases (status filter)', () => {
-    // Only 'open' and 'action_required' are blocked — not resolved/cancelled
-    const fnStart = actionsSrc.indexOf('async function moveInventoryItem')
-    const fnEnd = actionsSrc.indexOf('async function bulkMoveInventoryItems')
-    const fnSrc = actionsSrc.slice(fnStart, fnEnd)
-    expect(fnSrc).not.toContain("'resolved'")
-    expect(fnSrc).not.toContain("'cancelled'")
-  })
-
-  test('return cases checked inside transaction (after item lock)', () => {
-    const fnStart = actionsSrc.indexOf('async function moveInventoryItem')
-    const fnEnd = actionsSrc.indexOf('async function bulkMoveInventoryItems')
-    const fnSrc = actionsSrc.slice(fnStart, fnEnd)
-    const txStart = fnSrc.indexOf('prisma.$transaction')
-    const returnCheckIdx = fnSrc.indexOf('sellerLifecycleCase', txStart)
-    expect(returnCheckIdx).toBeGreaterThan(txStart)
+    expect(fnSrc).not.toContain('RETURN_PENDING_CASE_TYPES')
+    expect(fnSrc).not.toContain('sellerLifecycleCase')
   })
 })
 

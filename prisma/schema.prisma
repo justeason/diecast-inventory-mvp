@@ -144,13 +144,14 @@ model Photo {
 }
 
 model StorageLocation {
-  id           String         @id @default(cuid())
-  label        String
-  notes        String?
-  createdAt    DateTime       @default(now())
-  updatedAt    DateTime       @updatedAt
-  items        ItemInstance[]
-  intakeDrafts IntakeDraft[]  @relation("IntakeDraftLocation")
+  id                  String                  @id @default(cuid())
+  label               String
+  notes               String?
+  createdAt           DateTime                @default(now())
+  updatedAt           DateTime                @updatedAt
+  items               ItemInstance[]
+  intakeDrafts        IntakeDraft[]           @relation("IntakeDraftLocation")
+  defaultForShipments SellerInboundShipment[] @relation("ShipmentDefaultStorage")
 }
 
 model Listing {
@@ -892,6 +893,17 @@ model SellerInboundShipment {
   conditionStatus String?
   issueSummary    String?
 
+  // 15I: batch-default PREFILLS for the intake workbench (section 2-8) — never
+  // written to any ItemInstance/IntakeDraft directly, and never retroactive. Each
+  // workbench unit still submits (and confirmWorkbenchItem still validates) its own
+  // explicit condition/cardedOrLoose/storageLocationId; these three fields only seed
+  // the form's initial/reset values. Null = no prefill (never confused with a real
+  // domain value like a specific condition).
+  defaultStorageLocationId String?
+  defaultStorageLocation   StorageLocation? @relation("ShipmentDefaultStorage", fields: [defaultStorageLocationId], references: [id], onDelete: SetNull)
+  defaultCondition         String?
+  defaultCardedOrLoose     String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -907,6 +919,7 @@ model SellerInboundShipment {
   @@index([status])
   @@index([receivedAt])
   @@index([sellerPortfolioId])
+  @@index([defaultStorageLocationId])
 }
 
 // 15D: lightweight DB-backed lease so two admins accidentally opening the same

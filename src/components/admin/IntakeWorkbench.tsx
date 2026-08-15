@@ -20,6 +20,7 @@ import {
   type WorkbenchUnitResult,
   type WorkbenchPricingAdvisory,
 } from '@/lib/actions/intakeWorkbench'
+import { saveShipmentDefaults } from '@/lib/actions/sellerInboundShipment'
 
 const CONDITIONS = ['mint', 'near_mint', 'good', 'fair', 'poor', 'damaged']
 const CONDITION_LABELS: Record<string, string> = {
@@ -44,6 +45,8 @@ export type WorkbenchContextProps = {
   remaining: number | null
   defaultCondition: string | null
   defaultCardedOrLoose: string | null
+  defaultStorageLocationId: string | null
+  defaultStorageLabel: string | null
   recentItems: Array<{ id: string; sku: string; catalogLabel: string; storageLabel: string | null }>
   reconciliation: {
     status: 'in_progress' | 'reconciled' | 'reconciled_with_variance'
@@ -77,10 +80,22 @@ export function IntakeWorkbench({ context }: { context: WorkbenchContextProps })
   const [notes, setNotes] = useState('')
   const [quantity, setQuantity] = useState(1)
 
-  const [storageQuery, setStorageQuery] = useState('')
-  const [storageResolved, setStorageResolved] = useState<StorageMatch | null>(null)
+  // 15I: seeded from the shipment's persisted batch default (Part B) — a prefill
+  // only; confirmWorkbenchItem still requires and validates storageLocationId on
+  // every submit regardless of where this value came from.
+  const [storageQuery, setStorageQuery] = useState(context.defaultStorageLabel ?? '')
+  const [storageResolved, setStorageResolved] = useState<StorageMatch | null>(
+    context.defaultStorageLocationId ? { id: context.defaultStorageLocationId, label: context.defaultStorageLabel ?? '' } : null,
+  )
   const [storageMatches, setStorageMatches] = useState<StorageMatch[]>([])
   const [storageLoading, setStorageLoading] = useState(false)
+
+  const [defaults, setDefaults] = useState({
+    condition: context.defaultCondition, cardedOrLoose: context.defaultCardedOrLoose,
+    storageLocationId: context.defaultStorageLocationId, storageLabel: context.defaultStorageLabel,
+  })
+  const [savingDefaults, setSavingDefaults] = useState(false)
+  const [defaultsOpen, setDefaultsOpen] = useState(false)
 
   const [pricing, setPricing] = useState<WorkbenchPricingAdvisory | null>(null)
   const [busy, setBusy] = useState(false)
@@ -153,6 +168,30 @@ export function IntakeWorkbench({ context }: { context: WorkbenchContextProps })
     setStorageMatches([])
   }
 
+  // 15I: saving/clearing a batch default is routine (no 15F gate) — it only ever
+  // changes this SellerInboundShipment's prefill, never any IntakeDraft/ItemInstance/
+  // listing/payout (section 4). Applying the result back into the live form fields
+  // means "Save as default" immediately reflects in the unit currently being entered.
+  async function saveDefaults(patch: { storageLocationId?: string | null; condition?: string | null; cardedOrLoose?: string | null }) {
+    if (savingDefaults) return
+    setSavingDefaults(true)
+    const result = await saveShipmentDefaults(context.shipmentId, patch)
+    setSavingDefaults(false)
+    if (!result.ok) { setFeedback({ kind: 'error', lines: [result.error] }); return }
+    setDefaults(result.defaults)
+    if (patch.condition !== undefined) setCondition(result.defaults.condition ?? '')
+    if (patch.cardedOrLoose !== undefined) setCardedOrLoose(result.defaults.cardedOrLoose ?? '')
+    if (patch.storageLocationId !== undefined) {
+      if (result.defaults.storageLocationId) {
+        setStorageResolved({ id: result.defaults.storageLocationId, label: result.defaults.storageLabel ?? '' })
+        setStorageQuery(result.defaults.storageLabel ?? '')
+      } else {
+        setStorageResolved(null)
+        setStorageQuery('')
+      }
+    }
+  }
+
   // ── Pricing advisory (14C, section 18/19) — fetched only for the selected model.
   // The null case is cleared directly by the selection handlers below (event
   // handlers, not effect bodies), so this effect only ever needs to fetch. ──────────
@@ -194,12 +233,13 @@ export function IntakeWorkbench({ context }: { context: WorkbenchContextProps })
     setConditionNotes('')
     setNotes('')
     setQuantity(1)
-    setStorageQuery('')
-    setStorageResolved(null)
     setStorageMatches([])
     setPricing(null)
-    // condition/cardedOrLoose intentionally keep their last (batch-typical) value —
-    // most physical units in one shipment share condition/type, saving re-selection.
+    // 15I: condition/cardedOrLoose/storage intentionally keep their last (batch-
+    // typical) value — most physical units in one shipment share condition, type,
+    // AND shelf, so re-scanning storage for every single unit was pure repetition.
+    // Confirm still requires and re-validates whatever is in these fields at submit
+    // time regardless of whether it came from a default or a manual override.
   }
 
   async function handleConfirm() {
@@ -381,6 +421,44 @@ export function IntakeWorkbench({ context }: { context: WorkbenchContextProps })
             <button type="button" onClick={takeOverLease} className="font-medium underline shrink-0">Take over</button>
           </div>
         )}
+
+        {/* 15I Batch Defaults (Part B) — persisted PREFILLS for this shipment only.
+            Never written to any draft/item; Confirm still validates every submit. */}
+        <div className="mt-2 border-t border-gray-100 pt-2">
+          <button type="button" onClick={() => setDefaultsOpen((o) => !o)} className="text-xs font-medium text-gray-600 hover:text-gray-900">
+            Batch Defaults {defaultsOpen ? '▾' : '▸'}
+            <span className="ml-1 font-normal text-gray-400">
+              (Storage {defaults.storageLabel ?? '—'} · Condition {defaults.condition ? CONDITION_LABELS[defaults.condition] : '—'}
+              {defaults.cardedOrLoose ? ` / ${defaults.cardedOrLoose}` : ''})
+            </span>
+          </button>
+          {defaultsOpen && (
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+              <button
+                type="button" disabled={savingDefaults || !storageResolved}
+                onClick={() => void saveDefaults({ storageLocationId: storageResolved!.id })}
+                className="rounded border border-gray-300 px-2 py-1 font-medium hover:bg-gray-50 disabled:opacity-40"
+              >
+                Save current storage as default
+              </button>
+              {defaults.storageLocationId && (
+                <button type="button" disabled={savingDefaults} onClick={() => void saveDefaults({ storageLocationId: null })}
+                  className="text-gray-500 underline hover:text-gray-800">Clear storage default</button>
+              )}
+              <button
+                type="button" disabled={savingDefaults || !condition || !cardedOrLoose}
+                onClick={() => void saveDefaults({ condition, cardedOrLoose })}
+                className="rounded border border-gray-300 px-2 py-1 font-medium hover:bg-gray-50 disabled:opacity-40"
+              >
+                Save current condition/type as default
+              </button>
+              {(defaults.condition || defaults.cardedOrLoose) && (
+                <button type="button" disabled={savingDefaults} onClick={() => void saveDefaults({ condition: null, cardedOrLoose: null })}
+                  className="text-gray-500 underline hover:text-gray-800">Clear condition default</button>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {feedback && (

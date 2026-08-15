@@ -72,7 +72,7 @@ export type WorkbenchContext = {
   // accepted agreement yet); the workbench page surfaces this instead of the entry form.
   sourceType: SourceType | null
   eligibilityBlocked: string | null
-  defaults: { condition: string | null; cardedOrLoose: string | null }
+  defaults: { condition: string | null; cardedOrLoose: string | null; storageLocationId: string | null; storageLabel: string | null }
   progress: WorkbenchProgress
   recentItems: Array<{ id: string; sku: string; catalogLabel: string; storageLabel: string | null; createdAt: Date }>
   lease: { held: boolean; expiresAt: Date | null }
@@ -98,6 +98,8 @@ export async function getWorkbenchContext(shipmentId: string): Promise<Workbench
       id: true, status: true, carrier: true, trackingNumber: true,
       expectedQuantity: true, receivedQuantity: true, shippedAt: true, receivedAt: true,
       sellerSubmissionId: true, sellerPortfolioId: true,
+      defaultCondition: true, defaultCardedOrLoose: true,
+      defaultStorageLocationId: true, defaultStorageLocation: { select: { label: true } },
     },
   })
   if (!shipment) return null
@@ -186,7 +188,16 @@ export async function getWorkbenchContext(shipmentId: string): Promise<Workbench
       : null,
     sourceType: eligibility.eligible ? eligibility.sourceType : null,
     eligibilityBlocked: eligibility.eligible ? null : eligibility.reason,
-    defaults: { condition: submission.condition, cardedOrLoose: submission.cardedOrLoose },
+    // 15I precedence (section 8): an explicit admin-set shipment default wins over
+    // the seller's self-reported submission condition/type, which remains the
+    // fallback so existing behavior is unchanged for shipments with no admin
+    // default configured yet. Storage has no such fallback — it's admin-only.
+    defaults: {
+      condition: shipment.defaultCondition ?? submission.condition,
+      cardedOrLoose: shipment.defaultCardedOrLoose ?? submission.cardedOrLoose,
+      storageLocationId: shipment.defaultStorageLocationId,
+      storageLabel: shipment.defaultStorageLocation?.label ?? null,
+    },
     progress: computeWorkbenchProgress({
       expectedQuantity: shipment.expectedQuantity,
       receivedQuantity: shipment.receivedQuantity,

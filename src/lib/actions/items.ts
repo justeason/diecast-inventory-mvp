@@ -5,8 +5,9 @@ import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { redirect } from 'next/navigation'
 import { getPricingIntelligence } from '@/lib/pricingIntelligenceQuery'
-import { checkRiskGate, consumeApprovedRiskGate, markApprovalConsumed } from '@/lib/actions/riskApprovals'
+import { checkRiskGate, consumeApprovedRiskGate, markApprovalConsumed, type RiskGateCheckResult } from '@/lib/actions/riskApprovals'
 import type { ItemCatalogReassignmentContext } from '@/lib/riskPolicy'
+import { ITEM_CONDITIONS, validateItemStorageMove, buildItemCatalogReassignmentContext } from '@/lib/itemMutations'
 
 function isValidNonNegativePrice(v: string | undefined): boolean {
   if (!v || !v.trim()) return true
@@ -23,7 +24,9 @@ const MutableItemFields = {
   catalogId: z.string().min(1, 'Catalog model is required'),
   locationId: z.string().optional(),
   cardedOrLoose: z.enum(['carded', 'loose'], { error: 'Carded or Loose is required' }),
-  condition: z.enum(['mint', 'near_mint', 'good', 'fair', 'poor', 'damaged'], {
+  // 15I (focused-review section 5): shares the ONE authoritative condition enum
+  // with itemMutations.ts's bulk set_condition — cannot silently drift.
+  condition: z.enum(ITEM_CONDITIONS, {
     error: 'Condition is required',
   }),
   conditionNotes: z.string().optional(),
@@ -101,6 +104,24 @@ export async function createItemInstance(
   redirect('/admin/items')
 }
 
+const CATALOG_REASSIGNMENT_SELECT = {
+  catalogId: true, status: true, locationId: true,
+  listing: { select: { price: true } },
+  orderItems: { where: { order: { paymentStatus: 'paid' } }, select: { price: true }, take: 1 },
+  sellerAgreement: { select: { type: true, agreedBuyoutAmount: true, acceptedItemCount: true } },
+} as const
+
+// 15I (focused-review pass, Part 4): a single-item full-form edit may propose a
+// storage change, a condition/status/price change, AND a catalog reassignment all
+// at once — this is now genuinely atomic. The risk gate (which needs to run BEFORE
+// any mutation, and internally opens its own dedupe transaction) is still evaluated
+// first, using a pre-fetch snapshot purely to decide allow/deny/pending; nothing is
+// written yet at that point, so a deny/pending short-circuit is always a true no-op.
+// Everything that DOES write — the storage-move re-validation (via the same
+// authoritative primitive moveInventoryItem and bulk set_storage use) and the
+// approval-consumption — happens inside ONE transaction that ends with exactly one
+// combined `itemInstance.update`. If storage validation fails, the whole edit rolls
+// back — condition/price/status changes never partially apply.
 export async function updateItemInstance(
   id: string,
   _prev: ItemActionState,
@@ -115,65 +136,66 @@ export async function updateItemInstance(
 
   const { catalogId, locationId: newLocationId } = result.data
 
-  const [catalog, location, existing] = await Promise.all([
+  const [catalog, existing] = await Promise.all([
     prisma.catalogModel.findUnique({ where: { id: catalogId }, select: { id: true } }),
-    newLocationId ? prisma.storageLocation.findUnique({ where: { id: newLocationId }, select: { id: true } }) : null,
-    prisma.itemInstance.findUnique({
-      where: { id },
-      select: {
-        catalogId: true, status: true,
-        listing: { select: { price: true } },
-        orderItems: { where: { order: { paymentStatus: 'paid' } }, select: { price: true }, take: 1 },
-        sellerAgreement: { select: { type: true, agreedBuyoutAmount: true, acceptedItemCount: true } },
-      },
-    }),
+    prisma.itemInstance.findUnique({ where: { id }, select: CATALOG_REASSIGNMENT_SELECT }),
   ])
   if (!catalog) return { errors: { catalogId: ['Catalog model not found.'] } }
-  if (newLocationId && !location) return { errors: { locationId: ['Storage location not found.'] } }
   if (!existing) return { errors: { _form: ['Item not found.'] } }
+
+  const catalogChanging = catalogId !== existing.catalogId
+  const storageChanging = !!newLocationId && newLocationId !== existing.locationId
 
   // 15F: catalog-identity reassignment is the only genuinely destructive/ownership-
   // adjacent capability this action exposes — storage/condition/price/status edits
   // stay frictionless (section 8: never gated merely for storage). Only evaluated
-  // when catalogId is actually changing.
+  // when catalogId is actually changing, and always BEFORE the mutation transaction
+  // opens — a deny/pending result has touched nothing.
+  let gate: RiskGateCheckResult | null = null
   let riskContext: ItemCatalogReassignmentContext | null = null
-  if (catalogId !== existing.catalogId) {
+  if (catalogChanging) {
     const intel = await getPricingIntelligence(catalogId)
-    riskContext = {
-      itemId: id,
-      oldCatalogModelId: existing.catalogId,
-      newCatalogModelId: catalogId,
-      hasCompletedSale: existing.status === 'sold' || existing.orderItems.length > 0,
-      completedSaleAmountCents: existing.orderItems[0] ? Math.round(existing.orderItems[0].price * 100) : null,
-      currentListingPriceCents: existing.listing ? Math.round(existing.listing.price * 100) : null,
-      estimatedValueCents: intel?.estimatedValueCents ?? null,
-      agreementBuyoutTotalCents:
-        existing.sellerAgreement?.type === 'buyout' && existing.sellerAgreement.acceptedItemCount === 1 && existing.sellerAgreement.agreedBuyoutAmount
-          ? Math.round(parseFloat(existing.sellerAgreement.agreedBuyoutAmount.toString()) * 100)
-          : null,
-    }
-    const gate = await checkRiskGate({ action: 'item_catalog_reassignment', context: riskContext, targetType: 'item_instance', targetId: id, requestedBy: 'admin' })
+    riskContext = buildItemCatalogReassignmentContext(id, catalogId, existing, intel?.estimatedValueCents ?? null)
+    gate = await checkRiskGate({ action: 'item_catalog_reassignment', context: riskContext, targetType: 'item_instance', targetId: id, requestedBy: 'admin' })
     if (gate.decision === 'deny') return { errors: { catalogId: [gate.reasons.join(' ')] } }
     if (gate.decision === 'pending') {
       return { errors: { _form: ['Catalog reassignment requires approval before it can be saved.'] }, approvalRequestId: gate.approvalRequestId }
     }
-    if (gate.decision === 'consume_approved') {
-      let txError: ItemActionState = null
-      try {
-        await prisma.$transaction(async (tx) => {
-          const consumed = await consumeApprovedRiskGate(tx, { approvalRequestId: gate.approvalRequestId, action: 'item_catalog_reassignment', targetId: id, context: riskContext as unknown as Record<string, unknown> })
-          if (!consumed.ok) { txError = { errors: { _form: [consumed.error] } }; throw new Error('TX_VALIDATION') }
-          await tx.itemInstance.update({ where: { id }, data: toMutableDbData(result.data) })
-          await markApprovalConsumed(tx, gate.approvalRequestId)
-        })
-      } catch (e) {
-        if ((e as Error).message !== 'TX_VALIDATION') throw e
-      }
-      if (txError) return txError
-      redirect('/admin/items')
-    }
   }
 
-  await prisma.itemInstance.update({ where: { id }, data: toMutableDbData(result.data) })
+  let txError: ItemActionState = null
+  try {
+    await prisma.$transaction(async (tx) => {
+      if (storageChanging) {
+        const storageResult = await validateItemStorageMove(tx, { itemId: id, locationId: newLocationId! })
+        if (!storageResult.ok) {
+          txError = storageResult.outcome === 'not_found'
+            ? { errors: { _form: ['Item not found.'] } }
+            : { errors: { locationId: [storageResult.reason] } }
+          throw new Error('TX_VALIDATION')
+        }
+      }
+
+      if (catalogChanging && gate!.decision === 'consume_approved') {
+        const consumed = await consumeApprovedRiskGate(tx, {
+          approvalRequestId: gate!.approvalRequestId, action: 'item_catalog_reassignment', targetId: id,
+          context: riskContext as unknown as Record<string, unknown>,
+        })
+        if (!consumed.ok) { txError = { errors: { _form: [consumed.error] } }; throw new Error('TX_VALIDATION') }
+      }
+
+      // The one, single, combined write — storage/condition/catalog/status/price/
+      // notes all commit together or not at all.
+      await tx.itemInstance.update({ where: { id }, data: toMutableDbData(result.data) })
+
+      if (catalogChanging && gate!.decision === 'consume_approved') {
+        await markApprovalConsumed(tx, gate!.approvalRequestId)
+      }
+    })
+  } catch (e) {
+    if ((e as Error).message !== 'TX_VALIDATION') throw e
+  }
+  if (txError) return txError
+
   redirect('/admin/items')
 }
