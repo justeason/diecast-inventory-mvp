@@ -193,7 +193,9 @@ describe('getCommandCenterData — today business pulse uses a UTC calendar day 
   })
 
   it('items-listed uses Listing.createdAt — every Listing row is created with status active (createListing never persists a draft row), so createdAt IS the activation moment', async () => {
-    const listingsSrc = fs.readFileSync(path.join(process.cwd(), 'src/lib/actions/listings.ts'), 'utf-8')
+    // 15K: the raw tx.listing.create call site lives in listingActivation.ts now
+    // (shared boundary — see listingActivation.test.ts), not actions/listings.ts.
+    const listingsSrc = fs.readFileSync(path.join(process.cwd(), 'src/lib/listingActivation.ts'), 'utf-8')
     // The only Listing.create call site in the codebase always writes status: 'active'.
     const createCallIdx = listingsSrc.indexOf('tx.listing.create(')
     expect(createCallIdx).toBeGreaterThan(-1)

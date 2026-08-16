@@ -36,6 +36,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/admin/items', label: 'Items' },
       { href: '/admin/listings', label: 'Listings' },
       { href: '/admin/valuation', label: 'Valuation' },
+      { href: '/admin/auto-listing', label: 'Auto-Listing' },
     ],
   },
   {

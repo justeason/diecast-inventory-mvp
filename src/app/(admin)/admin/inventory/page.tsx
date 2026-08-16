@@ -1,5 +1,7 @@
 import Link from 'next/link'
 import { prisma } from '@/lib/prisma'
+import { getEffectiveAutoListingPolicy } from '@/lib/autoListingPolicyQuery'
+import { getNeedsManualReviewCount } from '@/lib/autoListingReview'
 
 export const dynamic = 'force-dynamic'
 
@@ -16,13 +18,18 @@ export const dynamic = 'force-dynamic'
 // them here (no fake zero, no capped scan pretending to be a total).
 
 export default async function InventoryHubPage() {
-  const [itemCountRows, locationCount, listingCountRows, availableNotListedCount] = await Promise.all([
+  const [itemCountRows, locationCount, listingCountRows, availableNotListedCount, autoListingPolicy, needsReviewCount] = await Promise.all([
     prisma.itemInstance.groupBy({ by: ['status'], _count: { _all: true } }),
     prisma.storageLocation.count(),
     prisma.listing.groupBy({ by: ['status'], _count: { _all: true } }),
     prisma.itemInstance.count({
       where: { status: 'available', OR: [{ listing: null }, { listing: { status: { not: 'active' } } }] },
     }),
+    getEffectiveAutoListingPolicy(),
+    // 15K Part V/46 (execution-snapshot pass, Part 6/11): the SAME authoritative
+    // "currently unresolved" predicate the review list uses — never a raw historical
+    // COUNT(outcome='review_required') that would only ever grow.
+    getNeedsManualReviewCount(),
   ])
 
   const itemCounts: Record<string, number> = {}
@@ -65,6 +72,22 @@ export default async function InventoryHubPage() {
           <Link href="/admin/items?readiness=ready" className="text-blue-600 hover:underline">Ready to List →</Link>
           <Link href="/admin/items?readiness=review_required" className="text-blue-600 hover:underline">Review Required →</Link>
           <Link href="/admin/items?readiness=blocked" className="text-blue-600 hover:underline">Blocked →</Link>
+        </div>
+      </Section>
+
+      <Section title="Auto-Listing">
+        <div className="flex items-center gap-4">
+          <Link href="/admin/auto-listing" className="rounded-md border border-gray-200 bg-white px-4 py-3 hover:bg-gray-50 transition-colors">
+            <p className="text-sm font-medium text-gray-900">
+              Policy: {autoListingPolicy?.enabled ? 'Enabled' : 'Disabled'}
+            </p>
+            <p className="text-xs text-gray-400 mt-0.5">Manage Auto-Listing →</p>
+          </Link>
+          {needsReviewCount > 0 && (
+            <Link href="/admin/auto-listing" className="text-sm text-amber-700 hover:underline">
+              {needsReviewCount} need{needsReviewCount === 1 ? 's' : ''} manual review
+            </Link>
+          )}
         </div>
       </Section>
 

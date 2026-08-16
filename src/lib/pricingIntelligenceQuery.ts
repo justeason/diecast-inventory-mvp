@@ -4,7 +4,7 @@
 // `asOf` per request, passed through to both existing engines (both already accept
 // an explicit asOf param, so no new "current time" read is introduced here).
 
-import { prisma } from '@/lib/prisma'
+import { prisma, type DbClient } from '@/lib/prisma'
 import type { TargetModel } from '@/lib/resaleEstimator'
 import { getCatalogValuations } from '@/lib/advancedValuationQuery'
 import { getExternalMarketSummaries } from '@/lib/externalMarketResearch'
@@ -16,8 +16,8 @@ import type { PricingIntelligenceResult, ListingPriceComparison } from '@/lib/pr
 // one batch for just that page. Never a full CatalogModel table scan per request.
 export const OPPORTUNITY_PAGE_SIZE = 25
 
-async function fetchTargets(catalogModelIds: string[]): Promise<TargetModel[]> {
-  const rows = await prisma.catalogModel.findMany({
+async function fetchTargets(catalogModelIds: string[], client: DbClient): Promise<TargetModel[]> {
+  const rows = await client.catalogModel.findMany({
     where: { id: { in: catalogModelIds } },
     select: { id: true, brand: true, name: true, series: true, year: true },
   })
@@ -26,16 +26,20 @@ async function fetchTargets(catalogModelIds: string[]): Promise<TargetModel[]> {
 
 // Shared by getPricingIntelligenceBatch and scanOpportunities so callers that already
 // have `targets` (e.g. a paginated scan) never re-issue the CatalogModel lookup.
+// 15K (execution-snapshot pass): `client` threads through to BOTH evidence queries
+// below, so a transaction-holding caller gets one consistent snapshot for the entire
+// 14C computation — never a mix of in-transaction and disconnected reads.
 async function buildBatchFromTargets(
   targets: TargetModel[],
   asOf: Date,
+  client: DbClient,
 ): Promise<Map<string, PricingIntelligenceResult>> {
   if (targets.length === 0) return new Map()
   const ids = targets.map(t => t.id)
 
   const [fpMap, extMap] = await Promise.all([
-    getCatalogValuations(ids, asOf),
-    getExternalMarketSummaries(ids, asOf),
+    getCatalogValuations(ids, asOf, client),
+    getExternalMarketSummaries(ids, asOf, client),
   ])
 
   const result = new Map<string, PricingIntelligenceResult>()
@@ -56,21 +60,29 @@ async function buildBatchFromTargets(
 
 // Batch build: 1 CatalogModel lookup + 2 evidence queries (first-party, external)
 // regardless of batch size.
+// 15K (execution-snapshot pass): `client` defaults to the global prisma client —
+// every existing (non-transactional) caller is completely unaffected. A caller
+// holding an open transaction (auto-listing execution) passes its `tx` so the
+// ENTIRE 14C read here — CatalogModel + first-party + external evidence — happens
+// inside that one transaction's isolation snapshot, with no gap before the
+// Listing-creation write that follows in the same transaction.
 export async function getPricingIntelligenceBatch(
   catalogModelIds: string[],
   asOf: Date = new Date(),
+  client: DbClient = prisma,
 ): Promise<Map<string, PricingIntelligenceResult>> {
   const deduped = [...new Set(catalogModelIds)]
   if (deduped.length === 0) return new Map()
-  const targets = await fetchTargets(deduped)
-  return buildBatchFromTargets(targets, asOf)
+  const targets = await fetchTargets(deduped, client)
+  return buildBatchFromTargets(targets, asOf, client)
 }
 
 export async function getPricingIntelligence(
   catalogModelId: string,
   asOf: Date = new Date(),
+  client: DbClient = prisma,
 ): Promise<PricingIntelligenceResult | null> {
-  const map = await getPricingIntelligenceBatch([catalogModelId], asOf)
+  const map = await getPricingIntelligenceBatch([catalogModelId], asOf, client)
   return map.get(catalogModelId) ?? null
 }
 
@@ -215,8 +227,8 @@ export async function scanOpportunities(
 
     // Single CatalogModel lookup for this page, reused for both display names and
     // valuation targets — never a second, redundant lookup.
-    const targets = await fetchTargets(ids)
-    const results = await buildBatchFromTargets(targets, asOf)
+    const targets = await fetchTargets(ids, prisma)
+    const results = await buildBatchFromTargets(targets, asOf, prisma)
     const nameById = new Map(targets.map(t => [t.id, t]))
 
     for (const id of ids) {

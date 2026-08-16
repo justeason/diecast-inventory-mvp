@@ -251,12 +251,20 @@ describe('buyerAlertsTrigger: createAvailableFanoutJob / createPriceChangeFanout
 
   it('createListing and updateListing create the fan-out job inside the SAME $transaction as the listing mutation', () => {
     const listingsSrc = readSrc('src/lib/actions/listings.ts')
-    // createListing: one $transaction block containing both the create and the job.
+    // 15K: createListing's raw tx.listing.create moved into listingActivation.ts's
+    // shared createListingAtomic (the one authoritative boundary, also used by
+    // automation) — createListing's own $transaction now calls that helper, which
+    // still creates the fan-out job inside the SAME transaction as the listing
+    // mutation (verified on listingActivation.ts below), just one call deeper.
     const createFnSrc = listingsSrc.slice(listingsSrc.indexOf('export async function createListing'), listingsSrc.indexOf('export async function updateListing'))
     expect(createFnSrc).toContain('await prisma.$transaction(async (tx) => {')
     const txBlock = createFnSrc.slice(createFnSrc.indexOf('$transaction'))
-    expect(txBlock).toContain('tx.listing.create')
-    expect(txBlock).toContain('createAvailableFanoutJob(tx')
+    expect(txBlock).toContain('createListingAtomic(tx')
+
+    const listingActivationSrc = readSrc('src/lib/listingActivation.ts')
+    const atomicFnSrc = listingActivationSrc.slice(listingActivationSrc.indexOf('export async function createListingAtomic'))
+    expect(atomicFnSrc).toContain('tx.listing.create')
+    expect(atomicFnSrc).toContain('createAvailableFanoutJob(tx')
 
     // updateListing: the non-sold branch's $transaction contains both the update and the job.
     const updateFnSrc = listingsSrc.slice(listingsSrc.indexOf('export async function updateListing'))

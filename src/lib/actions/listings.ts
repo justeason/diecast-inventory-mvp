@@ -6,7 +6,9 @@ import { redirect } from 'next/navigation'
 import { createAvailableFanoutJob, createPriceChangeFanoutJob } from '@/lib/buyerAlertsTrigger'
 import { processFanoutJobs } from '@/lib/buyerAlertsFanoutProcessor'
 import { getPricingIntelligence } from '@/lib/pricingIntelligenceQuery'
+import { getItemReadyToListStatus } from '@/lib/readyToListQuery'
 import { checkRiskGate, consumeApprovedRiskGate, markApprovalConsumed } from '@/lib/actions/riskApprovals'
+import { buildListingActivationContext, createListingAtomic } from '@/lib/listingActivation'
 import type { ListingActivationContext, ListingPriceChangeContext } from '@/lib/riskPolicy'
 
 // Best-effort immediate processing after a fan-out job is durably committed. Never
@@ -23,32 +25,6 @@ async function processFanoutBestEffort(): Promise<void> {
 const isValidPositivePrice = (v: string) => {
   const n = Number(v)
   return Number.isFinite(n) && n > 0
-}
-
-// 15F-review section 2/3: the ONE place that builds a listing_activation risk
-// context — shared by createListing AND updateListing's reactivation branch (an
-// archived/sold listing being flipped back to active is the same commercial-
-// activation risk as a brand-new listing; both must go through the same check,
-// never a second copy of the value-hierarchy logic).
-async function buildListingActivationContext(
-  itemId: string,
-  catalogId: string,
-  proposedPriceCents: number,
-  sellerAgreement: { type: string; agreedBuyoutAmount: unknown; acceptedItemCount: number | null } | null,
-): Promise<ListingActivationContext> {
-  const intel = await getPricingIntelligence(catalogId)
-  return {
-    itemId,
-    catalogModelId: catalogId,
-    proposedPriceCents,
-    completedSaleAmountCents: null,
-    currentListingPriceCents: null,
-    estimatedValueCents: intel?.estimatedValueCents ?? null,
-    agreementBuyoutTotalCents:
-      sellerAgreement?.type === 'buyout' && sellerAgreement.acceptedItemCount === 1 && sellerAgreement.agreedBuyoutAmount
-        ? Math.round(parseFloat((sellerAgreement.agreedBuyoutAmount as { toString(): string }).toString()) * 100)
-        : null,
-  }
 }
 
 const CreateListingSchema = z.object({
@@ -92,9 +68,21 @@ export async function createListing(
   if (item.status !== 'available') return { errors: { itemId: ['Item is not available for listing.'] } }
   if (item.listing) return { errors: { itemId: ['Item already has a listing.'] } }
 
+  // 15K Part G section 17: 15J is now the authoritative operational-readiness
+  // policy — a fresh `blocked` result (contradictions, missing storage, an
+  // unaccepted consignment agreement, an open return case, ...) rejects the manual
+  // listing action regardless of entry path. `review_required` (e.g. weak pricing
+  // evidence) is NOT blocked here — an admin may still supply a price manually,
+  // subject to 15F below; only 15J's hard blockers apply universally.
+  const readiness = await getItemReadyToListStatus(itemId)
+  if (readiness?.status === 'blocked') {
+    return { errors: { itemId: readiness.blockers.map((b) => b.message) } }
+  }
+
   // 15F: activation is gated by item value, not by price-vs-guidance (that check is
   // listing_price_change's job) — a normal-value listing activates automatically.
-  const riskContext = await buildListingActivationContext(itemId, item.catalogId, Math.round(Number(price) * 100), item.sellerAgreement)
+  const intel = await getPricingIntelligence(item.catalogId)
+  const riskContext = buildListingActivationContext(itemId, item.catalogId, Math.round(Number(price) * 100), intel?.estimatedValueCents ?? null, item.sellerAgreement)
   const gate = await checkRiskGate({ action: 'listing_activation', context: riskContext, targetType: 'item_instance', targetId: itemId, requestedBy: 'admin' })
   if (gate.decision === 'deny') return { errors: { _form: [gate.reasons.join(' ')] } }
   if (gate.decision === 'pending') {
@@ -109,16 +97,8 @@ export async function createListing(
       const consumed = await consumeApprovedRiskGate(tx, { approvalRequestId: gate.approvalRequestId, action: 'listing_activation', targetId: itemId, context: riskContext })
       if (!consumed.ok) { txError = { errors: { _form: [consumed.error] } }; throw new Error('TX_VALIDATION') }
     }
-    const listing = await tx.listing.create({
-      data: {
-        itemId,
-        title,
-        price: Number(price),
-        description: description || undefined,
-        status: 'active',
-      },
-    })
-    await createAvailableFanoutJob(tx, item.catalogId, listing.id, listing.version)
+    const created = await createListingAtomic(tx, { itemId, catalogId: item.catalogId, title, price: Number(price), description })
+    if (!created.ok) { txError = { errors: { itemId: ['Item already has a listing.'] } }; throw new Error('TX_VALIDATION') }
     if (gate.decision === 'consume_approved') await markApprovalConsumed(tx, gate.approvalRequestId)
   }).catch((e) => { if ((e as Error).message !== 'TX_VALIDATION') throw e })
   if (txError) return txError
@@ -163,7 +143,14 @@ export async function updateListing(
   let activationGate: Awaited<ReturnType<typeof checkRiskGate>> | null = null
   let activationContext: ListingActivationContext | null = null
   if (willBecomeActive) {
-    activationContext = await buildListingActivationContext(before.itemId, before.item.catalogId, proposedPriceCents, before.item.sellerAgreement)
+    // 15K Part G section 17: same hard-blocker enforcement as createListing —
+    // reactivating a `blocked` item is rejected regardless of entry path.
+    const readiness = await getItemReadyToListStatus(before.itemId)
+    if (readiness?.status === 'blocked') {
+      return { errors: { status: readiness.blockers.map((b) => b.message) } }
+    }
+    const activationIntel = await getPricingIntelligence(before.item.catalogId)
+    activationContext = buildListingActivationContext(before.itemId, before.item.catalogId, proposedPriceCents, activationIntel?.estimatedValueCents ?? null, before.item.sellerAgreement)
     activationGate = await checkRiskGate({ action: 'listing_activation', context: activationContext, targetType: 'item_instance', targetId: before.itemId, requestedBy: 'admin' })
     if (activationGate.decision === 'deny') return { errors: { status: [activationGate.reasons.join(' ')] } }
     if (activationGate.decision === 'pending') {

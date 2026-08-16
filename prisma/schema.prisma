@@ -1284,3 +1284,77 @@ model RiskApprovalRequest {
   @@index([targetType, targetId])
   @@index([createdAt])
 }
+
+// 15K: versioned, effective-dated auto-listing policy — same discipline as 15F's
+// RiskPolicyConfig above. Seeded disabled (see migration) so no deployment can
+// suddenly start creating listings; an admin must explicitly publish an enabled
+// version via /admin/auto-listing.
+model AutoListingPolicyConfig {
+  id      String @id @default(cuid())
+  version Int    @unique
+
+  effectiveFrom DateTime
+  enabled       Boolean  @default(false)
+
+  // 'medium' | 'high' — 14C confidence levels safe enough to auto-list from. 'low'
+  // and 'insufficient' can never be stored here (see autoListingPolicy.ts validation).
+  minimumPricingConfidence String
+  // 0 = recommended low, 5000 = midpoint, 10000 = recommended high.
+  pricePositionBps         Int
+
+  notes     String?
+  createdBy String
+  createdAt DateTime @default(now())
+
+  runs AutoListingRun[]
+
+  @@index([effectiveFrom])
+}
+
+// 15K: one durable record per "Run Auto-Listing" click — bounded batch, resumable
+// cursor into 15J's candidate scan. Never a background/scheduled job in 15K.
+model AutoListingRun {
+  id            String   @id @default(cuid())
+  policyId      String
+  policy        AutoListingPolicyConfig @relation(fields: [policyId], references: [id], onDelete: Restrict)
+  policyVersion Int
+  requestedBy   String
+  startedAt     DateTime @default(now())
+  completedAt   DateTime?
+  startCursor   String?
+  nextCursor    String?
+  sourceExhausted Boolean @default(false)
+
+  attempts AutoListingAttempt[]
+
+  @@index([startedAt])
+}
+
+// 15K: one row per physical item attempted within a run — the durable answer to
+// "why was/wasn't this item listed automatically?" No buyer PII (item/pricing/risk
+// facts only). unique(runId, itemId) is the idempotency backstop for Part S.
+model AutoListingAttempt {
+  id    String @id @default(cuid())
+  runId String
+  run   AutoListingRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  itemId String
+
+  // listed | review_required | denied | already_listed | stale | failed
+  outcome    String
+  reasonCode String
+
+  readinessSnapshot Json
+  pricingSnapshot   Json?
+  proposedPriceCents Int?
+  riskSnapshot      Json?
+
+  listingId String?
+  createdAt DateTime @default(now())
+
+  @@unique([runId, itemId])
+  @@index([itemId])
+  @@index([outcome])
+  // 15K (execution-snapshot pass): supports the "latest actionable attempt per item"
+  // DISTINCT ON query behind the Needs Manual Review predicate (autoListingReview.ts).
+  @@index([itemId, createdAt])
+}

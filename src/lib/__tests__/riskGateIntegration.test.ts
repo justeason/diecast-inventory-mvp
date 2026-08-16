@@ -195,15 +195,28 @@ describe('15F-review section 1: intake conversion can no longer create a Listing
     expect(src).not.toMatch(/name="createListing"|name="listingTitle"|name="listingPrice"/)
   })
 
-  it('the only Listing.create call site in the entire codebase is the risk-gated actions/listings.ts createListing', () => {
+  it('the only Listing.create call site in the entire codebase is listingActivation.ts\'s createListingAtomic, called only from risk-gated paths', () => {
+    // 15K: createListingAtomic (src/lib/listingActivation.ts) is now the ONE
+    // authoritative boundary — both actions/listings.ts createListing (interactive,
+    // via checkRiskGate) and autoListingExecution.ts (automation, via the pure
+    // evaluateRiskPolicy, only on 'allow') call it. Neither calls tx.listing.create
+    // directly, and no third caller exists anywhere else in the codebase.
+    const listingActivationSrc = readSrc('src/lib/listingActivation.ts')
     const listingsSrc = readSrc('src/lib/actions/listings.ts')
+    const autoListingExecSrc = readSrc('src/lib/autoListingExecution.ts')
     const intakeConvSrc = readSrc('src/lib/intakeConversion.ts')
     const intakeActionsSrc = readSrc('src/lib/actions/intake.ts')
     const workbenchSrc = readSrc('src/lib/actions/intakeWorkbench.ts')
     const exceptionsSrc = readSrc('src/lib/actions/intakeExceptions.ts')
-    expect([...listingsSrc.matchAll(/\.listing\.create\(/g)]).toHaveLength(1)
+
+    expect([...listingActivationSrc.matchAll(/\.listing\.create\(/g)]).toHaveLength(1)
+    expect(listingsSrc).not.toMatch(/\.listing\.create\(/)
+    expect(listingsSrc).toContain('createListingAtomic(tx')
+    expect(autoListingExecSrc).not.toMatch(/\.listing\.create\(/)
+    expect(autoListingExecSrc).toContain('createListingAtomic(tx')
     for (const src of [intakeConvSrc, intakeActionsSrc, workbenchSrc, exceptionsSrc]) {
       expect(src).not.toMatch(/\.listing\.create\(/)
+      expect(src).not.toMatch(/createListingAtomic\(/)
     }
   })
 

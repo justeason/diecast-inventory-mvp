@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client'
-import { prisma } from '@/lib/prisma'
+import { prisma, type DbClient } from '@/lib/prisma'
 import type { ComparableSale, TargetModel } from '@/lib/resaleEstimator'
 import { buildAdvancedValuation } from '@/lib/advancedValuation'
 import type { AdvancedValuation } from '@/lib/advancedValuation'
@@ -79,8 +79,9 @@ function buildOrConditions(targets: TargetModel[]): Prisma.ItemInstanceWhereInpu
 async function fetchSalePage(
   orConditions: Prisma.ItemInstanceWhereInput[],
   afterId: string | undefined,
+  client: DbClient,
 ) {
-  return prisma.orderItem.findMany({
+  return client.orderItem.findMany({
     where: {
       ...(afterId !== undefined ? { id: { gt: afterId } } : {}),
       order: { status: 'complete', completedAt: { not: null } },
@@ -109,7 +110,7 @@ async function fetchSalePage(
 // Chunks targets to keep OR-condition counts manageable; deduplicates across pages and chunks.
 // No date filter here — the 24-month cutoff and extended-history fallback are handled by
 // computeEstimate after all candidate rows are in memory.
-async function fetchComparableSalesBatch(targets: TargetModel[]): Promise<ComparableSale[]> {
+async function fetchComparableSalesBatch(targets: TargetModel[], client: DbClient): Promise<ComparableSale[]> {
   if (targets.length === 0) return []
 
   // Chunk targets so each query has at most TARGET_CHUNK_SIZE * 4 OR conditions
@@ -126,7 +127,7 @@ async function fetchComparableSalesBatch(targets: TargetModel[]): Promise<Compar
     let afterId: string | undefined = undefined
 
     while (true) {
-      const rows = await fetchSalePage(orConditions, afterId)
+      const rows = await fetchSalePage(orConditions, afterId, client)
 
       for (const row of rows) {
         if (seen.has(row.id)) continue
@@ -160,7 +161,7 @@ async function fetchComparableSalesBatch(targets: TargetModel[]): Promise<Compar
 
 // Fetches active+available listings with price > 0 for the given catalog IDs.
 // Returns a Map<catalogModelId, pricesCents[]>.
-async function fetchActiveAsksBatch(catalogModelIds: string[]): Promise<{
+async function fetchActiveAsksBatch(catalogModelIds: string[], client: DbClient): Promise<{
   pricesByCatalog: Map<string, number[]>
   countByCatalog: Map<string, number>
 }> {
@@ -168,7 +169,7 @@ async function fetchActiveAsksBatch(catalogModelIds: string[]): Promise<{
     return { pricesByCatalog: new Map(), countByCatalog: new Map() }
   }
 
-  const rows = await prisma.listing.findMany({
+  const rows = await client.listing.findMany({
     where: {
       status: 'active',
       price:  { gt: 0 },
@@ -210,15 +211,21 @@ export async function getCatalogValuation(catalogModelId: string): Promise<Advan
 // Batch multi-model lookup. One comparable-sales query and one active-asks query.
 // Never fetches one query per model (no N+1).
 // asOf must be provided by the caller so all valuations in a single build share one timestamp.
+// 15K (execution-snapshot pass): `client` defaults to the global prisma client — every
+// existing caller (resale estimator, valuation pages, collection valuation) is
+// unaffected. A caller holding an open transaction (auto-listing execution) passes
+// its `tx` so these reads participate in that transaction's isolation snapshot
+// instead of running as a disconnected implicit transaction of their own.
 export async function getCatalogValuations(
   catalogModelIds: string[],
   asOf: Date = new Date(),
+  client: DbClient = prisma,
 ): Promise<Map<string, AdvancedValuation>> {
   const deduped = [...new Set(catalogModelIds)]
   if (deduped.length === 0) return new Map()
 
   // 1. Fetch catalog model metadata
-  const catalogModels = await prisma.catalogModel.findMany({
+  const catalogModels = await client.catalogModel.findMany({
     where: { id: { in: deduped } },
     select: { id: true, brand: true, name: true, series: true, year: true },
   })
@@ -233,8 +240,8 @@ export async function getCatalogValuations(
 
   // 2. Batch fetch comparable sales and active asks (2 queries total)
   const [allComparables, { pricesByCatalog, countByCatalog }] = await Promise.all([
-    fetchComparableSalesBatch(targets),
-    fetchActiveAsksBatch(deduped),
+    fetchComparableSalesBatch(targets, client),
+    fetchActiveAsksBatch(deduped, client),
   ])
 
   // 3. Build valuation per target

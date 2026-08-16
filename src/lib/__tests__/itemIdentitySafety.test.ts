@@ -71,9 +71,12 @@ describe('intake.ts: one physical intake converts to exactly one ItemInstance (s
 describe('listings.ts: relisting/status changes never create a second Listing or ItemInstance (section 3/10/18)', () => {
   const src = readSrc('src/lib/actions/listings.ts')
 
-  it('there is exactly one listing.create call site — createListing — and it refuses an item that already has a listing', () => {
-    const occurrences = src.match(/tx\.listing\.create\(|prisma\.listing\.create\(/g) ?? []
-    expect(occurrences.length).toBe(1)
+  it('createListing never calls tx.listing.create directly — it goes through the one shared, authoritative boundary — and refuses an item that already has a listing', () => {
+    // 15K: the raw tx.listing.create call site moved to listingActivation.ts's
+    // createListingAtomic (shared with automation) — see listingActivation.test.ts /
+    // autoListingSafety.test.ts for "there is exactly one call site" coverage.
+    expect(src).not.toMatch(/tx\.listing\.create\(|prisma\.listing\.create\(/)
+    expect(src).toContain('createListingAtomic(tx')
     const fnStart = src.indexOf('export async function createListing')
     const fnSrc = src.slice(fnStart, src.indexOf('\nexport async function', fnStart + 1))
     expect(fnSrc).toMatch(/if \(item\.listing\) return/)

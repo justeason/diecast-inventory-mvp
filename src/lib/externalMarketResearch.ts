@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client'
-import { prisma } from '@/lib/prisma'
+import { prisma, type DbClient } from '@/lib/prisma'
 import { median, percentile } from '@/lib/resaleEstimator'
 
 // Below this sample count in the 12-month primary window, extend to 24-month history.
@@ -218,9 +218,14 @@ function emptyExternalSummary(catalogModelId: string, asOf: Date): ExternalMarke
 // Eligible asks: matchStatus=matched, currency=USD, totalPrice>0, observedAt within 30 days.
 // No per-record total cap — all eligible rows are fetched.
 // asOf must be provided by the caller so all summaries in one request share one timestamp.
+// 15K (execution-snapshot pass): `client` defaults to the global prisma client, so
+// every existing caller is unaffected — a caller holding an open transaction (e.g.
+// auto-listing execution) passes its `tx` so this read joins that transaction's
+// isolation snapshot instead of its own disconnected implicit transaction.
 export async function getExternalMarketSummaries(
   catalogModelIds: string[],
   asOf: Date = new Date(),
+  client: DbClient = prisma,
 ): Promise<Map<string, ExternalMarketSummary>> {
   const deduped = [...new Set(catalogModelIds)]
   if (deduped.length === 0) return new Map()
@@ -231,7 +236,7 @@ export async function getExternalMarketSummaries(
   // Single query: eligible sold (≤24 months) + eligible asks (≤30 days).
   // DB-level predicates: matchStatus=matched, currency=USD, totalPrice>0.
   // No take limit — complete coverage is required for correct medians/counts.
-  const obs = await prisma.externalMarketObservation.findMany({
+  const obs = await client.externalMarketObservation.findMany({
     where: {
       catalogModelId: { in: deduped },
       matchStatus: 'matched',

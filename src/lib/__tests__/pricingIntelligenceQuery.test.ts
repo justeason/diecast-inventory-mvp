@@ -105,6 +105,45 @@ describe('pricingIntelligenceQuery: getPricingIntelligenceBatch (no N+1)', () =>
   })
 })
 
+describe('pricingIntelligenceQuery: transaction-aware client threading (execution-snapshot pass, Part 1)', () => {
+  beforeEach(() => vi.resetAllMocks())
+
+  it('defaults to the global prisma client when no client is supplied — every pre-existing caller is unaffected', async () => {
+    ;(prisma.catalogModel.findMany as Mock).mockResolvedValueOnce([{ id: 'cat1', brand: 'H', name: 'M', series: null, year: null }])
+    ;(getCatalogValuations as Mock).mockResolvedValueOnce(new Map([['cat1', fpVal('cat1')]]))
+    ;(getExternalMarketSummaries as Mock).mockResolvedValueOnce(new Map([['cat1', extSummary('cat1')]]))
+
+    await getPricingIntelligenceBatch(['cat1'], ASOF)
+
+    expect((getCatalogValuations as Mock).mock.calls[0][2]).toBe(prisma)
+    expect((getExternalMarketSummaries as Mock).mock.calls[0][2]).toBe(prisma)
+  })
+
+  it('a caller-supplied client (e.g. an open transaction) is threaded through to BOTH evidence engines AND the CatalogModel lookup — never split across the tx client and the disconnected global client', async () => {
+    const fakeTx = { catalogModel: { findMany: vi.fn().mockResolvedValue([{ id: 'cat1', brand: 'H', name: 'M', series: null, year: null }]) } } as never
+    ;(getCatalogValuations as Mock).mockResolvedValueOnce(new Map([['cat1', fpVal('cat1')]]))
+    ;(getExternalMarketSummaries as Mock).mockResolvedValueOnce(new Map([['cat1', extSummary('cat1')]]))
+
+    await getPricingIntelligenceBatch(['cat1'], ASOF, fakeTx)
+
+    expect(prisma.catalogModel.findMany).not.toHaveBeenCalled() // the plain global client must NOT be touched
+    expect((fakeTx as { catalogModel: { findMany: Mock } }).catalogModel.findMany).toHaveBeenCalledTimes(1)
+    expect((getCatalogValuations as Mock).mock.calls[0][2]).toBe(fakeTx)
+    expect((getExternalMarketSummaries as Mock).mock.calls[0][2]).toBe(fakeTx)
+  })
+
+  it('getPricingIntelligence (single-model) forwards its client param through to the batch call', async () => {
+    const fakeTx = { catalogModel: { findMany: vi.fn().mockResolvedValue([{ id: 'cat1', brand: 'H', name: 'M', series: null, year: null }]) } } as never
+    ;(getCatalogValuations as Mock).mockResolvedValueOnce(new Map([['cat1', fpVal('cat1')]]))
+    ;(getExternalMarketSummaries as Mock).mockResolvedValueOnce(new Map([['cat1', extSummary('cat1')]]))
+
+    const { getPricingIntelligence } = await import('@/lib/pricingIntelligenceQuery')
+    await getPricingIntelligence('cat1', ASOF, fakeTx)
+
+    expect((getCatalogValuations as Mock).mock.calls[0][2]).toBe(fakeTx)
+  })
+})
+
 describe('pricingIntelligenceQuery: getListingPriceComparison (section 17, read-only)', () => {
   beforeEach(() => vi.resetAllMocks())
 
