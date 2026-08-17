@@ -59,6 +59,7 @@ export const NAV_GROUPS: NavGroup[] = [
     key: 'finance', label: 'Finance', href: '/admin/finance',
     children: [
       { href: '/admin/finance', label: 'Overview' },
+      { href: '/admin/finance/position', label: 'Financial Position' },
       { href: '/admin/seller-payouts', label: 'Payouts' },
       { href: '/admin/reconciliation', label: 'Reconciliation' },
       { href: '/admin/analytics', label: 'Analytics' },

@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import { getOverviewMetrics, getOutstandingLiability, getPayoutFlow } from '@/lib/businessAnalyticsQuery'
+import { getOwnedInventoryPosition } from '@/lib/financialPositionQuery'
 import { parseDateRangeParams } from '@/lib/businessAnalyticsDates'
 import { fmtUsdDecimal, fmtInt } from '@/lib/businessAnalyticsFormat'
 
@@ -9,14 +10,17 @@ export const dynamic = 'force-dynamic'
 // exactly as computed there (Part L section 37) — GMV, gross spread (consignment),
 // and gross margin (buyout/company-owned) are shown as three DISTINCT figures, never
 // summed into one "revenue" number, and no cash/asset/liquidity figure is fabricated.
-// "Financial Position & Liquidity" (15N) has a clearly labeled, data-free placeholder.
+// 15N: "Financial Position & Liquidity" is now a full page (/admin/finance/position)
+// — this hub shows only cheap/exact compact figures and links there rather than
+// duplicating the full dashboard (Part V/52).
 
 export default async function FinanceHubPage() {
   const { range } = parseDateRangeParams({ period: '30d' })
-  const [overview, outstandingLiability, payoutFlow] = await Promise.all([
+  const [overview, outstandingLiability, payoutFlow, owned] = await Promise.all([
     getOverviewMetrics(range),
     getOutstandingLiability(),
     getPayoutFlow(range),
+    getOwnedInventoryPosition(),
   ])
 
   return (
@@ -57,20 +61,25 @@ export default async function FinanceHubPage() {
         </div>
       </Section>
 
+      <Section title="Financial Position & Liquidity">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          <StatCard label="Owned inventory units" value={fmtInt(owned.ownedUnits)} href="/admin/finance/position" />
+          <StatCard label="Recorded owned inventory cost" value={fmtUsdDecimal(owned.allocatedCost)} href="/admin/finance/position" />
+          <StatCard label="Outstanding seller liability" value={fmtUsdDecimal(outstandingLiability)} href="/admin/finance/position" />
+        </div>
+        <Link href="/admin/finance/position" className="inline-block mt-3 text-sm text-blue-600 hover:underline">
+          Full Financial Position &amp; Liquidity dashboard →
+        </Link>
+      </Section>
+
       <Section title="Tools">
         <div className="flex flex-wrap gap-3">
+          <ToolLink href="/admin/finance/position" label="Financial Position" />
           <ToolLink href="/admin/seller-payouts" label="Payouts" />
           <ToolLink href="/admin/reconciliation" label="Reconciliation" />
           <ToolLink href="/admin/analytics" label="Business Analytics (full trends & breakdowns)" />
         </div>
       </Section>
-
-      <section className="rounded-md border border-dashed border-gray-300 bg-gray-50 p-4">
-        <h2 className="text-sm font-semibold text-gray-500">Financial Position &amp; Liquidity</h2>
-        <p className="text-sm text-gray-400 mt-1">
-          Reserved for a future milestone once authoritative settlement/accounting data exists. No cash, asset, or liquidity figures are shown here today.
-        </p>
-      </section>
     </>
   )
 }
