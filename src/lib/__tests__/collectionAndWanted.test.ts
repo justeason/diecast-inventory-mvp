@@ -538,19 +538,23 @@ describe('collectionItems.ts: updateTag for leaderboard cache', () => {
 
 // ── Account navigation ────────────────────────────────────────────────────────
 
-describe('layout.tsx: navigation links', () => {
-  const src_ = src('src/app/(store)/layout.tsx')
+// 16A: these links moved out of layout.tsx's own markup and into the shared
+// Account-menu navigation definition (src/lib/customerNav.ts, rendered by
+// CustomerHeader.tsx) — still present and reachable, just no longer competing as
+// separate top-level links. See customerNav.test.ts for full coverage.
+describe('customerNav.ts: Account-menu links (moved from layout.tsx in 16A)', () => {
+  const src_ = src('src/lib/customerNav.ts')
 
   it('has My Collection link', () => {
-    expect(src_).toContain('href="/account/collection"')
+    expect(src_).toContain("href: '/account/collection'")
   })
 
   it('has Wanted List link', () => {
-    expect(src_).toContain('href="/account/wanted"')
+    expect(src_).toContain("href: '/account/wanted'")
   })
 
   it('has Community Profile link', () => {
-    expect(src_).toContain('href="/account/community"')
+    expect(src_).toContain("href: '/account/community'")
   })
 })
 

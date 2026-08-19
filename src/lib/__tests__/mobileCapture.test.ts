@@ -743,10 +743,21 @@ describe('pages: /account/sell/capture', () => {
 
 // ── Navigation ────────────────────────────────────────────────────────────────
 
-describe('navigation: Quick Capture link', () => {
-  it('store layout has Quick Capture link', () => {
-    expect(layoutSrc).toContain('/account/capture')
-    expect(layoutSrc).toContain('Quick Capture')
+// 16A Part 11: Quick Capture is no longer a primary/global navigation destination —
+// removed from the header, but the route/access behavior itself is untouched (see
+// the "pages: /account/capture*" describe blocks above, unaffected by this pass).
+describe('navigation: Quick Capture is not a global nav destination (16A)', () => {
+  it('store layout no longer renders navigation links directly (moved to CustomerHeader/customerNav.ts)', () => {
+    expect(layoutSrc).not.toContain('Quick Capture')
+  })
+
+  it('customerNav.ts primary nav and Account-menu links do not include a Quick Capture destination', () => {
+    const navSrc = src('src/lib/customerNav.ts')
+    expect(navSrc).not.toMatch(/label:\s*'Quick Capture'/)
+  })
+
+  it('the route itself is unchanged and still reachable — not deleted', () => {
+    expect(fs.existsSync(path.join(root, 'src/app/(store)/account/capture/page.tsx'))).toBe(true)
   })
 })
 
