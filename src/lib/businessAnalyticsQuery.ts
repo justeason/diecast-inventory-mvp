@@ -309,6 +309,20 @@ async function sumLineNet(where: Prisma.SellerPayoutLineWhereInput): Promise<Pri
   return agg._sum.netAmount ?? DECIMAL_ZERO
 }
 
+// 16B focused-review: the ONE authoritative "what counts as outstanding seller
+// payout liability" predicate — exported so a customer-scoped caller (16B's
+// accountOverviewQuery.ts) can reuse it verbatim (with a customerProfileId filter
+// ANDed in) instead of hand-copying an equivalent-looking where-shape that could
+// silently drift from this definition over time. Never mutated/widened per-caller —
+// callers only ever narrow it further (by customerProfileId), never redefine it.
+export function outstandingPayoutLineWhere(customerProfileId?: string): Prisma.SellerPayoutLineWhereInput {
+  return {
+    ...(customerProfileId ? { customerProfileId } : {}),
+    status: { in: ['eligible', 'held'] },
+    OR: [{ payoutId: null }, { payout: { status: { in: ['draft', 'approved'] } } }],
+  }
+}
+
 // Edge-case behavior, confirmed against the actual schema/action code
 // (sellerPayoutCalculation.ts, actions/sellerPayouts.ts):
 //   - No double-counting: SellerPayoutLine.orderItemId is @unique and sourceKey is
@@ -330,7 +344,7 @@ async function sumLineNet(where: Prisma.SellerPayoutLineWhereInput): Promise<Pri
 //     there is no partial-amount-paid field. Liability is therefore always all-or-
 //     nothing per payout, not per-line partial.
 export async function getOutstandingLiability(): Promise<Prisma.Decimal> {
-  return sumLineNet({ status: { in: ['eligible', 'held'] }, OR: [{ payoutId: null }, { payout: { status: { in: ['draft', 'approved'] } } }] })
+  return sumLineNet(outstandingPayoutLineWhere())
 }
 
 export async function getPayoutLiabilitySnapshot(): Promise<PayoutLiabilitySnapshot> {
@@ -361,7 +375,7 @@ export async function getLiabilityAging(asOf: Date): Promise<LiabilityAgingBucke
     { key: '15-30', minDays: 15, maxDays: 30 },
     { key: '31+', minDays: 31, maxDays: null as number | null },
   ]
-  const outstandingWhere = { status: { in: ['eligible' as const, 'held' as const] }, OR: [{ payoutId: null }, { payout: { status: { in: ['draft', 'approved'] } } }] }
+  const outstandingWhere = outstandingPayoutLineWhere()
   const results = await Promise.all(
     buckets.map(async b => {
       const upper = new Date(asOf.getTime() - b.minDays * 86_400_000)

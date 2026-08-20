@@ -33,45 +33,45 @@ export const CUSTOMER_PRIMARY_NAV: CustomerNavItem[] = [
   { key: 'orderStatus', label: 'Order Status', href: '/order-status' },
 ]
 
-// Part 8/9/10/12/13: authenticated personal destinations, collapsed under Account.
-// `badgeKey` marks the item carrying the existing unread-alerts count (previously a
-// standalone top-level "Alerts" link) — Wanted and Alerts are consolidated into one
-// NAVIGATION concept only; their underlying data/routes are untouched (that is 16D).
+// Part 8/9/10/12/13 (16A) + Part C/D/S (16B): authenticated personal destinations,
+// collapsed under Account. This SAME array drives both the header Account dropdown
+// (CustomerHeader.tsx) AND the /account/* sub-navigation tabs (AccountNav.tsx) —
+// one source of truth, never a second drifting list (Part 36). `badgeKey` marks the
+// item carrying the existing unread-alerts count.
 //
-// Selling -> /account/portfolios (focused-review pass): deliberately NOT
-// /account/sell — that route is the top-level "Sell" start-selling entry point
-// above. "Selling" here means "manage/track selling I already have in progress" —
-// SellerPortfolio already aggregates agreement/shipment/payout/lifecycle status for
-// exactly that, the best existing seller-MANAGEMENT landing page. Sell and
-// Account > Selling now resolve to genuinely different destinations, matching the
-// two different customer intents ("start selling" vs. "track my selling").
+// Selling -> /account/portfolios: deliberately NOT /account/sell — that route is
+// the top-level "Sell" start-selling entry point above. "Selling" here means
+// "manage/track selling I already have in progress" — SellerPortfolio already
+// aggregates agreement/shipment/payout/lifecycle status for exactly that.
+//
+// settings/"Profile" -> /account/community: the only existing settings-shaped page
+// is community-profile configuration (handle/displayName/bio/visibility) — no
+// general account-settings (email/notifications) page exists, so this is labeled
+// "Profile", never "Settings" (Part I/19), matching what it actually lets a
+// customer manage.
 export type CustomerAccountLink = { key: string; label: string; href: string; badge?: 'unreadAlerts' }
 
 export const CUSTOMER_ACCOUNT_LINKS: CustomerAccountLink[] = [
-  { key: 'orders', label: 'My Orders', href: '/account/orders' },
-  { key: 'collection', label: 'My Collection', href: '/account/collection' },
+  { key: 'overview', label: 'Overview', href: '/account' },
+  { key: 'orders', label: 'Orders', href: '/account/orders' },
+  { key: 'collection', label: 'Collection', href: '/account/collection' },
   { key: 'wanted', label: 'Wanted & Alerts', href: '/account/wanted', badge: 'unreadAlerts' },
   { key: 'selling', label: 'Selling', href: '/account/portfolios' },
-  { key: 'settings', label: 'Community Profile', href: '/account/community' },
+  { key: 'settings', label: 'Profile', href: '/account/community' },
 ]
 
-// Part 7: no dedicated "/account" or "/login" page exists. Every /account/* page
-// already independently falls back to the same email-access sign-in form
-// (BuyerOrderAccessForm) when no session exists — this is simply the most general
-// existing landing page for that shared gate, not a new auth surface.
-export const CUSTOMER_ACCOUNT_ANONYMOUS_HREF = '/account/orders'
+// Part B/2 (16B): /account now exists as the customer home — anonymous "Account"
+// leads there directly (it renders the existing sign-in/access form itself), rather
+// than to /account/orders as a workaround.
+export const CUSTOMER_ACCOUNT_ANONYMOUS_HREF = '/account'
 
-// Part 17 — active-primary-section resolution. Sell's own subtree (/account/sell/*,
-// including its /new and /capture children) is checked separately from Account's
-// other subroutes (including /account/portfolios, where Selling now points) — Sell
-// and Account > Selling are genuinely different destinations, so starting a sale
-// highlights Sell while reviewing existing selling activity highlights Account.
+// Part 17 (16A) / Part D/9 (16B) — active-primary-section resolution. Sell's own
+// subtree (/account/sell/*, including its /new and /capture children) is checked
+// FIRST and short-circuits, so it is the one deliberate exception; every other
+// /account/* route (including the bare /account overview) resolves to Account.
 const SECTION_PREFIXES: { key: CustomerNavKey; prefixes: string[] }[] = [
   { key: 'sell', prefixes: ['/account/sell'] },
-  {
-    key: 'account',
-    prefixes: ['/account/orders', '/account/collection', '/account/wanted', '/account/alerts', '/account/community', '/account/portfolios', '/account/capture'],
-  },
+  { key: 'account', prefixes: ['/account'] },
   { key: 'shop', prefixes: ['/browse', '/market'] },
   { key: 'community', prefixes: ['/community'] },
   { key: 'orderStatus', prefixes: ['/order-status'] },

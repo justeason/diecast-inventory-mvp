@@ -5,6 +5,7 @@ import { getBuyerSession } from '@/lib/buyerSession'
 import { resolveAlertPreference, getAlertEvents, ALERT_PAGE_SIZE } from '@/lib/buyerAlertsQuery'
 import { AlertPreferencesForm } from '@/components/store/AlertPreferencesForm'
 import { MarkAlertReadButton, MarkAllAlertsReadButton } from '@/components/store/MarkAlertReadButtons'
+import { AccountNav } from '@/components/store/AccountNav'
 
 export const dynamic = 'force-dynamic'
 
@@ -41,6 +42,7 @@ export default async function AlertsPage({
 
   return (
     <div className="max-w-2xl space-y-8">
+      <AccountNav />
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Alerts</h1>
         <p className="text-sm text-gray-500 mt-1">

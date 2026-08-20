@@ -752,11 +752,17 @@ export type SellerPortfolioListEntry = {
   updatedAt: Date
 }
 
-export async function listMySellerPortfolios(profileId: string): Promise<SellerPortfolioListEntry[]> {
+// `limit` defaults to 100 — a PRESENTATION bound for the seller-facing list page
+// (/account/portfolios). Deliberately always bounded: this helper exists to back a
+// presentation list, not to support exact/uncapped counting elsewhere (the 16B
+// account overview no longer derives any number from this helper — see
+// accountOverviewQuery.ts's Selling card, which omits a numeric portfolio count
+// rather than hydrate this list uncapped).
+export async function listMySellerPortfolios(profileId: string, limit = 100): Promise<SellerPortfolioListEntry[]> {
   const rows = await prisma.sellerPortfolio.findMany({
     where: { sellerProfile: { profile: { id: profileId } } },
     orderBy: { updatedAt: 'desc' },
-    take: 100,
+    take: limit,
     select: {
       id: true, name: true, status: true, acceptedItemCount: true, updatedAt: true,
       submissions: { select: { quantity: true } },

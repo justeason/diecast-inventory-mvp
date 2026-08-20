@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 import { getBuyerSession } from '@/lib/buyerSession'
 import { listMySellerPortfolios } from '@/lib/sellerPortfolioQuery'
+import { AccountNav } from '@/components/store/AccountNav'
 
 export const dynamic = 'force-dynamic'
 
@@ -35,6 +36,7 @@ export default async function MyPortfoliosPage() {
 
   return (
     <div className="max-w-lg">
+      <AccountNav />
       <h1 className="text-2xl font-bold text-gray-900 mb-6">My Portfolios</h1>
       {portfolios.length === 0 ? (
         <p className="text-sm text-gray-500">You don&apos;t have any consignment portfolios yet.</p>

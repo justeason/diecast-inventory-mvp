@@ -35,10 +35,20 @@ describe('CUSTOMER_PRIMARY_NAV — exactly the five stable concepts (Part 2/28/2
 })
 
 describe('CUSTOMER_ACCOUNT_LINKS — personal destinations collapsed under Account (Part 8/9/10/29)', () => {
-  it('exposes My Orders, My Collection, Wanted & Alerts, Selling, and a settings-like destination', () => {
+  it('exposes Overview, Orders, Collection, Wanted & Alerts, Selling, and a Profile destination (16B)', () => {
     const labels = CUSTOMER_ACCOUNT_LINKS.map((l) => l.label)
-    expect(labels).toEqual(expect.arrayContaining(['My Orders', 'My Collection', 'Wanted & Alerts', 'Selling']))
-    expect(CUSTOMER_ACCOUNT_LINKS.length).toBeGreaterThanOrEqual(5)
+    expect(labels).toEqual(expect.arrayContaining(['Overview', 'Orders', 'Collection', 'Wanted & Alerts', 'Selling', 'Profile']))
+    expect(CUSTOMER_ACCOUNT_LINKS.length).toBeGreaterThanOrEqual(6)
+  })
+
+  it('Overview is the first entry and points to /account', () => {
+    expect(CUSTOMER_ACCOUNT_LINKS[0]).toEqual(expect.objectContaining({ label: 'Overview', href: '/account' }))
+  })
+
+  it('settings is labeled "Profile", not "Settings" — the destination is community-profile config, not general account settings (Part I/19)', () => {
+    const settings = CUSTOMER_ACCOUNT_LINKS.find((l) => l.key === 'settings')
+    expect(settings?.label).toBe('Profile')
+    expect(settings?.href).toBe('/account/community')
   })
 
   it('Wanted and Alerts are consolidated into ONE menu concept — no separate "Wanted" and "Alerts" entries', () => {
@@ -76,9 +86,9 @@ describe('CUSTOMER_ACCOUNT_LINKS — personal destinations collapsed under Accou
   })
 })
 
-describe('CUSTOMER_ACCOUNT_ANONYMOUS_HREF — Part 7', () => {
-  it('resolves to an existing account route, not an invented /login page', () => {
-    expect(CUSTOMER_ACCOUNT_ANONYMOUS_HREF).toBe('/account/orders')
+describe('CUSTOMER_ACCOUNT_ANONYMOUS_HREF — Part 7 (16A) / Part B/2 (16B)', () => {
+  it('resolves to /account — the new customer home — not an invented /login page or the old /account/orders workaround', () => {
+    expect(CUSTOMER_ACCOUNT_ANONYMOUS_HREF).toBe('/account')
   })
 })
 
@@ -101,6 +111,10 @@ describe('getCustomerPrimarySection — active-state mapping (Part 17/31)', () =
     expect(getCustomerPrimarySection('/account/portfolios')).toBe('account')
     expect(getCustomerPrimarySection('/account/portfolios/abc123')).toBe('account')
     expect(getCustomerPrimarySection('/account/portfolios')).not.toBe('sell')
+  })
+
+  it('maps the bare /account overview route to Account (16B)', () => {
+    expect(getCustomerPrimarySection('/account')).toBe('account')
   })
 
   it('maps every other personal /account/* subroute to Account', () => {

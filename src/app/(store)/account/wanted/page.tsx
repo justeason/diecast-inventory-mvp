@@ -7,6 +7,7 @@ import { matchWantedList } from '@/lib/wantedListMatching'
 import { WantedListAddForm } from '@/components/store/WantedListAddForm'
 import { RemoveFromWantedButton } from '@/components/store/RemoveFromWantedButton'
 import { WantedAlertToggle } from '@/components/store/WantedAlertToggle'
+import { AccountNav } from '@/components/store/AccountNav'
 
 export const dynamic = 'force-dynamic'
 
@@ -39,6 +40,7 @@ export default async function WantedListPage({
 
   return (
     <div className="max-w-2xl space-y-8">
+      <AccountNav />
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Wanted List</h1>

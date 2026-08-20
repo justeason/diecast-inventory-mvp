@@ -4,6 +4,7 @@ import { getBuyerSession } from '@/lib/buyerSession'
 import { signOutBuyer } from '@/lib/actions/buyerAuth'
 import { prisma } from '@/lib/prisma'
 import { BuyerOrderAccessForm } from '@/components/store/BuyerOrderAccessForm'
+import { AccountNav } from '@/components/store/AccountNav'
 
 export const dynamic = 'force-dynamic'
 
@@ -88,6 +89,7 @@ export default async function BuyerOrdersPage() {
 
   return (
     <div className="max-w-2xl">
+      <AccountNav />
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
         <div>

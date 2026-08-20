@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 import { getBuyerSession } from '@/lib/buyerSession'
 import { BuyerOrderAccessForm } from '@/components/store/BuyerOrderAccessForm'
+import { AccountNav } from '@/components/store/AccountNav'
 import { prisma } from '@/lib/prisma'
 import { toggleCollectionItemPublic } from '@/lib/actions/collectionItems'
 
@@ -102,6 +103,7 @@ export default async function CollectionListPage({
 
   return (
     <div className="max-w-2xl">
+      <AccountNav />
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">My Collection</h1>

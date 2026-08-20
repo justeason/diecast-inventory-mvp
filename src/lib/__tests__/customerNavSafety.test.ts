@@ -109,10 +109,10 @@ describe('Part 16/32 — mobile menu stays bounded, personal links nested not fi
   })
 })
 
-describe('Part 19/20/21 — scope discipline: no premature 16B/16F/16N work', () => {
-  it('no new Account overview/dashboard page was created', () => {
-    expect(exists('src/app/(store)/account/page.tsx')).toBe(false)
-  })
+describe('Part 19/20/21 — scope discipline: no premature 16F/16N work (16A snapshot)', () => {
+  // 16B intentionally adds /account/page.tsx (the unified account hub) — see
+  // accountOverview.test.ts / accountOverviewSafety.test.ts for its own scope-
+  // discipline checks (compact overview only, no analytics dashboard).
 
   it('no catalog-card action verbs (Want/I Own This/Sell One/Buy) were added to ListingCard', () => {
     const listingCardSrc = readSrc('src/components/store/ListingCard.tsx')
