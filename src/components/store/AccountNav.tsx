@@ -23,7 +23,7 @@ export function AccountNav() {
             key={link.key}
             href={link.href}
             aria-current={active ? 'page' : undefined}
-            className={`shrink-0 whitespace-nowrap px-3 py-2 text-sm border-b-2 transition-colors ${
+            className={`shrink-0 whitespace-nowrap px-3 py-2.5 text-sm border-b-2 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-900 ${
               active ? 'border-gray-900 text-gray-900 font-medium' : 'border-transparent text-gray-500 hover:text-gray-900'
             }`}
           >

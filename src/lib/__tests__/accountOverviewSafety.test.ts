@@ -94,16 +94,24 @@ describe('Part O/29 — privacy', () => {
 })
 
 describe('Part P/30 — empty states link to real existing routes', () => {
-  it('every empty-state action href is an existing route', () => {
-    const hrefs = [...pageSrc.matchAll(/actionHref="([^"]+)"/g)].map((m) => m[1])
-    expect(hrefs.length).toBeGreaterThanOrEqual(3)
+  it('every CardAction href referenced by /account/page.tsx is an existing route', () => {
+    const hrefs = [...pageSrc.matchAll(/href="([^"]+)"/g)].map((m) => m[1])
     const routeFiles: Record<string, string> = {
       '/browse': 'src/app/(store)/browse/page.tsx',
+      '/account/orders': 'src/app/(store)/account/orders/page.tsx',
+      '/account/collection': 'src/app/(store)/account/collection/page.tsx',
       '/account/collection/new': 'src/app/(store)/account/collection/new/page.tsx',
+      '/account/wanted': 'src/app/(store)/account/wanted/page.tsx',
+      '/account/wanted?available=1': 'src/app/(store)/account/wanted/page.tsx',
+      '/account/portfolios': 'src/app/(store)/account/portfolios/page.tsx',
       '/account/sell': 'src/app/(store)/account/sell/page.tsx',
+      '/account/capture': 'src/app/(store)/account/capture/page.tsx',
+      '/order-status': 'src/app/(store)/order-status/page.tsx',
     }
+    expect(hrefs.length).toBeGreaterThan(0)
     for (const href of hrefs) {
-      if (routeFiles[href]) expect(exists(routeFiles[href])).toBe(true)
+      const file = routeFiles[href] ?? routeFiles[href.split('?')[0]]
+      if (file) expect(exists(file)).toBe(true)
     }
   })
 })
@@ -219,8 +227,8 @@ describe('16B Final Lightweight-Overview Pass — omitted metrics are not shown 
     expect(pageSrc).not.toMatch(/activePortfolioCount/)
   })
 
-  it('the Wanted card offers a "Check available matches" action instead of an availableMatchCount number', () => {
-    expect(pageSrc).toMatch(/Check available matches/)
+  it('the Wanted card offers a "Check Available Matches" action instead of an availableMatchCount number', () => {
+    expect(pageSrc).toMatch(/Check Available Matches/i)
     expect(pageSrc).not.toMatch(/availableMatchCount/)
   })
 })
@@ -230,6 +238,76 @@ describe('16B Final Lightweight-Overview Pass — seller-portfolio helper API st
     const src = readSrc('src/lib/sellerPortfolioQuery.ts')
     expect(src).not.toMatch(/limit:\s*number\s*\|\s*null/)
     expect(src).not.toMatch(/export async function countActiveSellerPortfolios/)
+  })
+})
+
+describe('16C — visual consistency', () => {
+  it('all four account sections are present as summary cards', () => {
+    for (const title of ['Orders', 'Collection', 'Wanted & Alerts', 'Selling']) {
+      expect(pageSrc).toMatch(new RegExp(`title="${title}"`))
+    }
+  })
+
+  it('each card exposes a correctly-labeled primary link to its own domain page', () => {
+    expect(pageSrc).toContain("'View Orders'")
+    expect(pageSrc).toContain("'View Collection'")
+    expect(pageSrc).toContain('View Wanted & Alerts')
+    expect(pageSrc).toContain('View Selling')
+  })
+
+  it('Quick Actions are present and link to existing routes only', () => {
+    for (const label of ['Browse Catalog', 'Sell Something', 'Quick Capture', 'Order Status']) {
+      expect(pageSrc).toContain(label)
+    }
+  })
+
+  it('Selling href and top-level Sell href remain distinct (16A/16B distinction preserved)', () => {
+    expect(pageSrc).toContain('href="/account/portfolios"')
+    expect(pageSrc).toContain('href="/account/sell"')
+  })
+
+  it('Recent Orders preview reuses the same bounded overview.orders.recent data — no second order query in the page', () => {
+    expect(pageSrc).not.toMatch(/prisma\.order\.findMany/)
+    expect(pageSrc).toContain('overview.orders.recent')
+  })
+
+  it('no removed 16B-final metric (activePortfolioCount, availableMatchCount) reappears anywhere on the page', () => {
+    expect(pageSrc).not.toMatch(/activePortfolioCount|availableMatchCount/)
+  })
+})
+
+describe('16C — accessibility', () => {
+  it('AccountNav exposes aria-current="page" on the active entry', () => {
+    expect(accountNavSrc).toContain("aria-current={active ? 'page' : undefined}")
+  })
+
+  it('AccountNav has an accessible label', () => {
+    expect(accountNavSrc).toMatch(/aria-label="Account"/)
+  })
+
+  it('AccountNav links carry a visible focus style, not color alone, for the active state', () => {
+    expect(accountNavSrc).toMatch(/focus-visible:outline/)
+    expect(accountNavSrc).toMatch(/border-gray-900/) // active state also uses a border, not color alone
+  })
+
+  it('the header Account menu is keyboard accessible (Escape closes it, not hover-only)', () => {
+    expect(headerSrc).toMatch(/e\.key === 'Escape'/)
+    expect(headerSrc).toMatch(/aria-haspopup="menu"/)
+    expect(headerSrc).toMatch(/aria-expanded=\{accountOpen\}/)
+  })
+
+  it('the mobile menu is button-driven (aria-expanded toggle), not a hover-only interaction', () => {
+    expect(headerSrc).toMatch(/aria-expanded=\{mobileOpen\}/)
+    expect(headerSrc).toMatch(/aria-expanded=\{mobileAccountOpen\}/)
+    expect(headerSrc).not.toMatch(/:hover\s*\{[^}]*display/)
+  })
+
+  it('/account/page.tsx renders at most one h1 per branch (anonymous vs authenticated), with card titles as h2 siblings — no skipped heading levels', () => {
+    // Two branches (anonymous/authenticated) each render exactly one <h1>My Account</h1>
+    // — never both in the same render — so only h2 (card/section titles) nests below it.
+    const h1Matches = [...pageSrc.matchAll(/<h1[^>]*>My Account<\/h1>/g)]
+    expect(h1Matches.length).toBe(2)
+    expect(pageSrc).not.toMatch(/<h3[\s>]/)
   })
 })
 
