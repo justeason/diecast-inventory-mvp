@@ -62,7 +62,10 @@ export async function updateAlertPreferences(
     },
   })
 
-  revalidatePath('/account/alerts')
+  // 16D: Alerts UI now lives at /account/wanted (view=alerts), not /account/alerts
+  // (which is just a redirect shim) — revalidate the route that actually renders
+  // this data, or a stale cache would keep showing pre-mutation state there.
+  revalidatePath('/account/wanted')
   return null
 }
 
@@ -76,7 +79,7 @@ export async function markAlertReadAction(id: string): Promise<void> {
     where: { id, customerProfileId: session.profileId, readAt: null },
     data: { readAt: new Date() },
   })
-  revalidatePath('/account/alerts')
+  revalidatePath('/account/wanted')
 }
 
 export async function markAllAlertsReadAction(): Promise<void> {
@@ -87,28 +90,30 @@ export async function markAllAlertsReadAction(): Promise<void> {
     where: { customerProfileId: session.profileId, readAt: null },
     data: { readAt: new Date() },
   })
-  revalidatePath('/account/alerts')
+  revalidatePath('/account/wanted')
 }
 
-// ─── per-model wanted alert toggle ─────────────────────────────────────────────
+// ─── per-model wanted alert preference (16D) ───────────────────────────────────
+// Explicit desired-state mutation, not a blind toggle: two identical "enable"
+// (or "disable") requests — e.g. a double-click or a retried submit — always
+// converge on the same final state, since each call sets `field` to the exact
+// value the caller passed rather than negating whatever is currently in the DB.
+// Ownership is enforced in the WHERE clause of a single updateMany (like
+// removeFromWantedList in wantedList.ts) — never a separate findFirst-then-update
+// gap, and never a browser-supplied customerProfileId.
 
-export async function toggleWantedAlertAction(
+export async function setWantedAlertAction(
   id: string,
   field: 'availabilityAlertEnabled' | 'priceAlertEnabled',
+  enabled: boolean,
 ): Promise<void> {
   const session = await getBuyerSession()
   if (!session) return
   if (field !== 'availabilityAlertEnabled' && field !== 'priceAlertEnabled') return
 
-  const entry = await prisma.wantedCatalogModel.findFirst({
+  await prisma.wantedCatalogModel.updateMany({
     where: { id, customerProfileId: session.profileId },
-    select: { id: true, availabilityAlertEnabled: true, priceAlertEnabled: true },
-  })
-  if (!entry) return
-
-  await prisma.wantedCatalogModel.update({
-    where: { id },
-    data: { [field]: !entry[field] },
+    data: { [field]: enabled },
   })
   revalidatePath('/account/wanted')
 }

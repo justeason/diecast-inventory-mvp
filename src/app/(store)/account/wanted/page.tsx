@@ -2,32 +2,179 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { getBuyerSession } from '@/lib/buyerSession'
+import { prisma } from '@/lib/prisma'
 import { getWantedList, getAvailableWantedList, getUnavailableWantedList, WANTED_PAGE_SIZE } from '@/lib/wantedListQuery'
 import { matchWantedList } from '@/lib/wantedListMatching'
+import { getUnreadAlertCount, resolveAlertPreference, getAlertEvents, ALERT_PAGE_SIZE } from '@/lib/buyerAlertsQuery'
 import { WantedListAddForm } from '@/components/store/WantedListAddForm'
 import { RemoveFromWantedButton } from '@/components/store/RemoveFromWantedButton'
 import { WantedAlertToggle } from '@/components/store/WantedAlertToggle'
+import { AlertPreferencesForm } from '@/components/store/AlertPreferencesForm'
+import { MarkAlertReadButton, MarkAllAlertsReadButton } from '@/components/store/MarkAlertReadButtons'
 import { AccountNav } from '@/components/store/AccountNav'
 
 export const dynamic = 'force-dynamic'
 
 export const metadata: Metadata = {
-  title: 'Wanted List | CollectNTrades',
+  title: 'Wanted & Alerts | CollectNTrades',
   robots: { index: false, follow: false },
+}
+
+const ALERT_LABELS: Record<string, string> = {
+  wanted_available:      'Now available',
+  wanted_price_decrease: 'Price dropped',
+  wanted_price_increase: 'Price increased',
+}
+
+function fmtUsd(cents: number): string {
+  return `$${(cents / 100).toFixed(2)}`
+}
+
+// 16D: shared tab strip — one concept ("Wanted & Alerts"), three internal views.
+// `available=1` is preserved as a deep link (16C's /account "Check Available
+// Matches →" already points here) even though it is now reachable via the
+// "Available Now" tab too.
+function TabBar({ activeView, unreadAlertCount }: { activeView: 'all' | 'available' | 'alerts'; unreadAlertCount: number }) {
+  const tabCls = (active: boolean) =>
+    `px-3 py-2 text-sm border-b-2 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-900 ${
+      active ? 'border-gray-900 text-gray-900 font-medium' : 'border-transparent text-gray-500 hover:text-gray-900'
+    }`
+  return (
+    <nav aria-label="Wanted & Alerts views" className="flex gap-1 border-b border-gray-200">
+      <Link href="/account/wanted" aria-current={activeView === 'all' ? 'page' : undefined} className={tabCls(activeView === 'all')}>
+        All Wanted
+      </Link>
+      <Link href="/account/wanted?available=1" aria-current={activeView === 'available' ? 'page' : undefined} className={tabCls(activeView === 'available')}>
+        Available Now
+      </Link>
+      <Link href="/account/wanted?view=alerts" aria-current={activeView === 'alerts' ? 'page' : undefined} className={tabCls(activeView === 'alerts')}>
+        Recent Alerts{unreadAlertCount > 0 ? ` (${unreadAlertCount})` : ''}
+      </Link>
+    </nav>
+  )
 }
 
 export default async function WantedListPage({
   searchParams,
 }: {
-  searchParams: Promise<{ cursor?: string; available?: string }>
+  searchParams: Promise<{ cursor?: string; available?: string; view?: string }>
 }) {
   const session = await getBuyerSession()
   if (!session) notFound()
 
-  const { cursor, available } = await searchParams
+  const { cursor, available, view } = await searchParams
+  const showAlerts = view === 'alerts'
   const filterAvailable = available === '1'
   const filterUnavailable = available === '0'
 
+  const [wantedCount, unreadAlertCount] = await Promise.all([
+    prisma.wantedCatalogModel.count({ where: { customerProfileId: session.profileId } }),
+    getUnreadAlertCount(session.profileId),
+  ])
+
+  const header = (
+    <div>
+      <h1 className="text-2xl font-bold text-gray-900">Wanted & Alerts</h1>
+      <p className="text-sm text-gray-500 mt-1">
+        {wantedCount} wanted{unreadAlertCount > 0 ? ` · ${unreadAlertCount} new alert${unreadAlertCount !== 1 ? 's' : ''}` : ''}
+      </p>
+    </div>
+  )
+
+  // ── Recent Alerts view ──────────────────────────────────────────────────────
+  if (showAlerts) {
+    const [preference, { items, nextCursor }] = await Promise.all([
+      resolveAlertPreference(session.profileId),
+      getAlertEvents(session.profileId, cursor),
+    ])
+
+    return (
+      <div className="max-w-2xl space-y-6">
+        <AccountNav />
+        {header}
+        <TabBar activeView="alerts" unreadAlertCount={unreadAlertCount} />
+
+        <AlertPreferencesForm preference={preference} />
+
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-gray-900">Recent Alerts</h2>
+          <MarkAllAlertsReadButton />
+        </div>
+
+        {items.length === 0 ? (
+          <p className="text-sm text-gray-400">No alerts yet.</p>
+        ) : (
+          <div className="space-y-3">
+            {items.map(item => {
+              const name = `${item.catalogModel.brand} ${item.catalogModel.name}${item.catalogModel.year ? ` (${item.catalogModel.year})` : ''}`
+              const isPriceChange = item.alertType === 'wanted_price_decrease' || item.alertType === 'wanted_price_increase'
+
+              return (
+                <div
+                  key={item.id}
+                  className={`rounded-md border px-4 py-3 ${item.readAt === null ? 'border-gray-300 bg-white' : 'border-gray-100 bg-gray-50'}`}
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
+                        {ALERT_LABELS[item.alertType] ?? item.alertType}
+                      </p>
+                      <p className="font-medium text-gray-900 truncate">{name}</p>
+
+                      {isPriceChange && item.previousPriceCents !== null && item.currentPriceCents !== null && (
+                        <p className="text-sm text-gray-600 mt-1">
+                          <span className="line-through text-gray-400">{fmtUsd(item.previousPriceCents)}</span>
+                          {' → '}
+                          <span className="font-medium">{fmtUsd(item.currentPriceCents)}</span>
+                        </p>
+                      )}
+                      {!isPriceChange && item.currentPriceCents !== null && (
+                        <p className="text-sm text-gray-600 mt-1">{fmtUsd(item.currentPriceCents)}</p>
+                      )}
+
+                      <p className="text-xs text-gray-400 mt-1">
+                        {item.createdAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                        {' · '}
+                        {item.listingActive ? 'Available' : 'No longer available'}
+                      </p>
+
+                      {item.listingActive && item.listingId && (
+                        <Link href={`/browse/${item.listingId}`} className="text-xs font-medium text-gray-900 hover:underline underline-offset-2">
+                          View listing →
+                        </Link>
+                      )}
+                    </div>
+
+                    {item.readAt === null && <MarkAlertReadButton id={item.id} />}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+
+        {(cursor || nextCursor) && (
+          <div className="flex gap-4">
+            {cursor && (
+              <Link href="/account/wanted?view=alerts" className="text-sm text-gray-500 hover:text-gray-900 underline underline-offset-2">
+                ← First page
+              </Link>
+            )}
+            {nextCursor && (
+              <Link
+                href={`/account/wanted?view=alerts&cursor=${encodeURIComponent(nextCursor)}`}
+                className="text-sm text-gray-500 hover:text-gray-900 underline underline-offset-2"
+              >
+                Next {ALERT_PAGE_SIZE} →
+              </Link>
+            )}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // ── Wanted list view (default / available=1 / available=0) ─────────────────
   // Use DB-level availability filters to avoid in-memory filtering across pages.
   const { items, nextCursor } = filterAvailable
     ? await getAvailableWantedList(session.profileId, cursor)
@@ -39,33 +186,20 @@ export default async function WantedListPage({
   const availability = await matchWantedList(catalogIds)
 
   return (
-    <div className="max-w-2xl space-y-8">
+    <div className="max-w-2xl space-y-6">
       <AccountNav />
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Wanted List</h1>
-          <div className="flex gap-3 mt-1 text-sm text-gray-500">
-            <Link
-              href="/account/wanted"
-              className={!filterAvailable && !filterUnavailable ? 'font-medium text-gray-900' : 'underline underline-offset-2 hover:text-gray-900'}
-            >
-              All
-            </Link>
-            <Link
-              href="/account/wanted?available=1"
-              className={filterAvailable ? 'font-medium text-gray-900' : 'underline underline-offset-2 hover:text-gray-900'}
-            >
-              Available
-            </Link>
-            <Link
-              href="/account/wanted?available=0"
-              className={filterUnavailable ? 'font-medium text-gray-900' : 'underline underline-offset-2 hover:text-gray-900'}
-            >
-              Not available
-            </Link>
-          </div>
-        </div>
-      </div>
+      {header}
+      <TabBar activeView={filterAvailable ? 'available' : 'all'} unreadAlertCount={unreadAlertCount} />
+
+      {filterUnavailable ? (
+        <p className="text-xs text-gray-400">
+          Showing unavailable only. <Link href="/account/wanted" className="underline underline-offset-2 hover:text-gray-600">Show all →</Link>
+        </p>
+      ) : !filterAvailable ? (
+        <p className="text-xs text-gray-400">
+          <Link href="/account/wanted?available=0" className="underline underline-offset-2 hover:text-gray-600">Show unavailable only →</Link>
+        </p>
+      ) : null}
 
       <WantedListAddForm />
 
@@ -75,7 +209,11 @@ export default async function WantedListPage({
             ? 'None of your wanted models are currently available.'
             : filterUnavailable
             ? 'All your wanted models are currently available.'
-            : 'Your wanted list is empty. Search for a model above to add it.'}
+            : (
+              <>
+                Nothing on your wanted list yet. Browse the catalog to find something you want.
+              </>
+            )}
         </p>
       ) : (
         <div className="space-y-3">
@@ -135,12 +273,14 @@ export default async function WantedListPage({
                         field="availabilityAlertEnabled"
                         enabled={entry.availabilityAlertEnabled}
                         label="Availability alert"
+                        modelName={name}
                       />
                       <WantedAlertToggle
                         id={entry.id}
                         field="priceAlertEnabled"
                         enabled={entry.priceAlertEnabled}
                         label="Price alert"
+                        modelName={name}
                       />
                     </div>
 
@@ -159,7 +299,7 @@ export default async function WantedListPage({
                       >
                         Edit
                       </Link>
-                      <RemoveFromWantedButton id={entry.id} />
+                      <RemoveFromWantedButton id={entry.id} modelName={name} />
                     </div>
                   </div>
                 </div>
@@ -167,6 +307,15 @@ export default async function WantedListPage({
             )
           })}
         </div>
+      )}
+
+      {items.length === 0 && !filterAvailable && !filterUnavailable && (
+        <Link
+          href="/browse"
+          className="inline-block text-sm font-medium text-gray-900 hover:underline underline-offset-2"
+        >
+          Browse Catalog →
+        </Link>
       )}
 
       {(cursor || nextCursor) && (

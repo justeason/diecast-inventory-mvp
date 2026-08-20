@@ -121,7 +121,10 @@ describe('Part C/5, Part 41 — account sub-navigation present on every personal
     'src/app/(store)/account/orders/page.tsx',
     'src/app/(store)/account/collection/page.tsx',
     'src/app/(store)/account/wanted/page.tsx',
-    'src/app/(store)/account/alerts/page.tsx',
+    // 16D: account/alerts/page.tsx is now a thin session-gated redirect to
+    // /account/wanted?view=alerts (see accountAlertsRedirect describe block
+    // below) — it renders no content of its own, so it is intentionally
+    // excluded from this AccountNav-presence check.
     'src/app/(store)/account/portfolios/page.tsx',
     'src/app/(store)/account/community/page.tsx',
   ]

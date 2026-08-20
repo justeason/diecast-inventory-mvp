@@ -756,6 +756,151 @@ describe('account/wanted/page.tsx: unavailable filter', () => {
   })
 })
 
+// ── 16D: Wanted & Alerts consolidation ───────────────────────────────────────
+
+describe('account/wanted/page.tsx: 16D unified Wanted & Alerts page', () => {
+  const src_ = src('src/app/(store)/account/wanted/page.tsx')
+
+  it('page title/heading is "Wanted & Alerts", not "Wanted List"', () => {
+    expect(src_).toContain('Wanted & Alerts')
+  })
+
+  it('renders a three-tab view switcher: All Wanted / Available Now / Recent Alerts', () => {
+    expect(src_).toContain('All Wanted')
+    expect(src_).toContain('Available Now')
+    expect(src_).toContain('Recent Alerts')
+  })
+
+  it('the available=1 deep link (used by /account "Check Available Matches") still works', () => {
+    expect(src_).toContain("'/account/wanted?available=1'")
+  })
+
+  it('supports view=alerts without requiring a new route', () => {
+    expect(src_).toContain("view === 'alerts'")
+    expect(src_).toContain('/account/wanted?view=alerts')
+  })
+
+  it('the alerts view reuses buyerAlertsQuery — no second alert-read implementation', () => {
+    expect(src_).toMatch(/from '@\/lib\/buyerAlertsQuery'/)
+    expect(src_).toContain('getAlertEvents(')
+    expect(src_).toContain('resolveAlertPreference(')
+    expect(src_).toContain('getUnreadAlertCount(')
+  })
+
+  it('reuses the existing MarkAlertReadButton/MarkAllAlertsReadButton/AlertPreferencesForm components — no duplicated mark-read or preference UI', () => {
+    expect(src_).toMatch(/from '@\/components\/store\/MarkAlertReadButtons'/)
+    expect(src_).toMatch(/from '@\/components\/store\/AlertPreferencesForm'/)
+  })
+
+  it('the wanted-count header stat is an exact DB-side count, not derived from a paginated items array', () => {
+    expect(src_).toContain('wantedCatalogModel.count(')
+  })
+
+  it('alerts view does not call matchWantedList — matching only runs for the wanted-list view', () => {
+    const alertsBranchIdx = src_.indexOf('if (showAlerts)')
+    const alertsBranchEnd = src_.indexOf('// ── Wanted list view')
+    const alertsBranch = src_.slice(alertsBranchIdx, alertsBranchEnd)
+    expect(alertsBranch).not.toContain('matchWantedList')
+  })
+
+  it('rendering the page performs no mark-read mutation itself (mark-read only via explicit button actions)', () => {
+    expect(src_).not.toMatch(/buyerAlertEvent\.(update|updateMany)/)
+  })
+})
+
+describe('account/alerts/page.tsx: 16D redirect to unified Wanted & Alerts', () => {
+  const src_ = src('src/app/(store)/account/alerts/page.tsx')
+
+  it('still gates on session before redirecting (private route)', () => {
+    expect(src_).toContain('getBuyerSession')
+    expect(src_).toContain('notFound()')
+  })
+
+  it('redirects to /account/wanted?view=alerts — the same route, not a new parallel destination', () => {
+    expect(src_).toContain('/account/wanted?view=alerts')
+    expect(src_).toContain('redirect(')
+  })
+
+  it('preserves the old cursor query param (the only param the old page ever supported) through the redirect', () => {
+    expect(src_).toContain('searchParams')
+    expect(src_).toContain('cursor')
+    expect(src_).toMatch(/cursor \? `&cursor=\$\{encodeURIComponent\(cursor\)\}`/)
+  })
+
+  it('does not reimplement alert-reading logic itself', () => {
+    expect(src_).not.toContain('getAlertEvents')
+    expect(src_).not.toMatch(/prisma\./)
+  })
+})
+
+describe('WantedAlertToggle.tsx: 16D explicit desired-state mutation + accessibility', () => {
+  const src_ = src('src/components/store/WantedAlertToggle.tsx')
+
+  it('uses setWantedAlertAction (explicit desired state), not a blind toggle', () => {
+    expect(src_).toContain('setWantedAlertAction')
+    expect(src_).not.toContain('toggleWantedAlertAction')
+  })
+
+  it('binds the explicit negated-current value, never re-derives it server-side', () => {
+    expect(src_).toContain('setWantedAlertAction.bind(null, id, field, !enabled)')
+  })
+
+  it('exposes switch semantics with a model-scoped accessible label', () => {
+    expect(src_).toContain("role=\"switch\"")
+    expect(src_).toContain('aria-checked={enabled}')
+    expect(src_).toContain('modelName')
+  })
+})
+
+describe('actions/buyerAlerts.ts: 16D setWantedAlertAction replaces the blind toggle', () => {
+  const src_ = src('src/lib/actions/buyerAlerts.ts')
+
+  it('setWantedAlertAction takes an explicit boolean and writes it directly (no read-then-negate)', () => {
+    const fnIdx = src_.indexOf('export async function setWantedAlertAction')
+    expect(fnIdx).toBeGreaterThan(-1)
+    const fnSrc = src_.slice(fnIdx)
+    expect(fnSrc).toContain('enabled: boolean')
+    expect(fnSrc).not.toContain('findFirst')
+  })
+
+  it('scopes the write to id AND customerProfileId in a single updateMany (ownership + mutation atomic)', () => {
+    const fnIdx = src_.indexOf('export async function setWantedAlertAction')
+    const fnSrc = src_.slice(fnIdx)
+    expect(fnSrc).toContain('wantedCatalogModel.updateMany({')
+    expect(fnSrc).toContain('where: { id, customerProfileId: session.profileId }')
+  })
+
+  it('toggleWantedAlertAction no longer exists', () => {
+    expect(src_).not.toContain('export async function toggleWantedAlertAction')
+  })
+})
+
+describe('16D: alerts-disabled wanted models remain wanted and still match', () => {
+  it('the wanted-list view never filters items by availabilityAlertEnabled/priceAlertEnabled — alert preference does not affect Wanted membership or matching', () => {
+    const src_ = src('src/app/(store)/account/wanted/page.tsx')
+    // The only place these fields appear is passed straight through as WantedAlertToggle
+    // props — never used in a .filter()/where predicate that would hide the item itself.
+    expect(src_).not.toMatch(/\.filter\([^)]*availabilityAlertEnabled/)
+    expect(src_).not.toMatch(/\.filter\([^)]*priceAlertEnabled/)
+  })
+})
+
+describe('16D: no schema migration was required', () => {
+  it('WantedCatalogModel already had availabilityAlertEnabled/priceAlertEnabled before 16D — no new column added', () => {
+    const schema = src('prisma/schema.prisma')
+    const idx = schema.indexOf('model WantedCatalogModel {')
+    const modelSrc = schema.slice(idx, schema.indexOf('\n}', idx))
+    expect(modelSrc).toContain('availabilityAlertEnabled Boolean  @default(true)')
+    expect(modelSrc).toContain('priceAlertEnabled        Boolean  @default(true)')
+  })
+
+  it('the fan-out processor already respects both per-model toggles — 16D did not need to add this', () => {
+    const src_ = src('src/lib/buyerAlertsFanoutProcessor.ts')
+    expect(src_).toContain('row.availabilityAlertEnabled')
+    expect(src_).toContain('row.priceAlertEnabled')
+  })
+})
+
 // ── Gap 3: Complete public cache invalidation ─────────────────────────────────
 
 describe('collectionItems.ts: createCollectionItem cache invalidation', () => {

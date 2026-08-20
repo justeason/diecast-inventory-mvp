@@ -17,7 +17,7 @@ function readSrc(relPath: string): string {
 
 vi.mock('@/lib/prisma', () => ({
   prisma: {
-    wantedCatalogModel:   { findMany: vi.fn(), findUnique: vi.fn(), findFirst: vi.fn(), update: vi.fn() },
+    wantedCatalogModel:   { findMany: vi.fn(), findUnique: vi.fn(), findFirst: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
     buyerAlertPreference: { findMany: vi.fn(), findUnique: vi.fn(), upsert: vi.fn() },
     buyerAlertEvent:      { createMany: vi.fn(), findMany: vi.fn(), updateMany: vi.fn(), findUnique: vi.fn(), groupBy: vi.fn(), count: vi.fn(), findFirst: vi.fn() },
     buyerAlertFanout:     { createMany: vi.fn(), findMany: vi.fn(), updateMany: vi.fn(), findUnique: vi.fn(), groupBy: vi.fn(), findFirst: vi.fn() },
@@ -59,7 +59,7 @@ import { createAvailableFanoutJob, createPriceChangeFanoutJob } from '@/lib/buye
 import { processFanoutJobs } from '@/lib/buyerAlertsFanoutProcessor'
 import { processPendingBuyerAlerts, retryFailedAlertEvent } from '@/lib/buyerAlertsDelivery'
 import { getAlertEvents, markAlertRead, markAllAlertsRead, resolveAlertPreference } from '@/lib/buyerAlertsQuery'
-import { markAlertReadAction, markAllAlertsReadAction, updateAlertPreferences, toggleWantedAlertAction } from '@/lib/actions/buyerAlerts'
+import { markAlertReadAction, markAllAlertsReadAction, updateAlertPreferences, setWantedAlertAction } from '@/lib/actions/buyerAlerts'
 import { retryBuyerAlertEventAction, runBuyerAlertProcessorAction } from '@/lib/actions/adminBuyerAlerts'
 import { GET as buyerAlertsCronGET } from '@/app/api/cron/buyer-alerts/route'
 
@@ -1106,18 +1106,113 @@ describe('buyerAlerts actions: auth and ownership (behavioral)', () => {
     expect(prisma.buyerAlertPreference.upsert).not.toHaveBeenCalled()
   })
 
-  it('toggleWantedAlertAction is ownership-scoped via findFirst(customerProfileId)', async () => {
+  it('setWantedAlertAction is ownership-scoped via a single updateMany(id, customerProfileId)', async () => {
     ;(getBuyerSession as Mock).mockResolvedValueOnce({ profileId: 'p1' })
-    ;(prisma.wantedCatalogModel.findFirst as Mock).mockResolvedValueOnce({ id: 'w1', availabilityAlertEnabled: true, priceAlertEnabled: true })
-    ;(prisma.wantedCatalogModel.update as Mock).mockResolvedValueOnce({})
+    ;(prisma.wantedCatalogModel.updateMany as Mock).mockResolvedValueOnce({ count: 1 })
 
-    await toggleWantedAlertAction('w1', 'availabilityAlertEnabled')
+    await setWantedAlertAction('w1', 'availabilityAlertEnabled', false)
 
-    expect(prisma.wantedCatalogModel.findFirst).toHaveBeenCalledWith({
+    expect(prisma.wantedCatalogModel.updateMany).toHaveBeenCalledWith({
       where: { id: 'w1', customerProfileId: 'p1' },
-      select: { id: true, availabilityAlertEnabled: true, priceAlertEnabled: true },
+      data: { availabilityAlertEnabled: false },
     })
-    expect(prisma.wantedCatalogModel.update).toHaveBeenCalledWith({ where: { id: 'w1' }, data: { availabilityAlertEnabled: false } })
+  })
+
+  it('setWantedAlertAction is a no-op without a session (no DB call)', async () => {
+    ;(getBuyerSession as Mock).mockResolvedValueOnce(null)
+    await setWantedAlertAction('w1', 'availabilityAlertEnabled', true)
+    expect(prisma.wantedCatalogModel.updateMany).not.toHaveBeenCalled()
+  })
+
+  it('setWantedAlertAction rejects an unknown field', async () => {
+    ;(getBuyerSession as Mock).mockResolvedValueOnce({ profileId: 'p1' })
+    // @ts-expect-error deliberately invalid field to prove server-side validation
+    await setWantedAlertAction('w1', 'somethingElse', true)
+    expect(prisma.wantedCatalogModel.updateMany).not.toHaveBeenCalled()
+  })
+
+  it('setWantedAlertAction is idempotent: two identical "enable" calls both leave the field enabled with one identical write each', async () => {
+    ;(getBuyerSession as Mock).mockResolvedValue({ profileId: 'p1' })
+    ;(prisma.wantedCatalogModel.updateMany as Mock).mockResolvedValue({ count: 1 })
+
+    await setWantedAlertAction('w1', 'availabilityAlertEnabled', true)
+    await setWantedAlertAction('w1', 'availabilityAlertEnabled', true)
+
+    expect(prisma.wantedCatalogModel.updateMany).toHaveBeenNthCalledWith(1, {
+      where: { id: 'w1', customerProfileId: 'p1' },
+      data: { availabilityAlertEnabled: true },
+    })
+    expect(prisma.wantedCatalogModel.updateMany).toHaveBeenNthCalledWith(2, {
+      where: { id: 'w1', customerProfileId: 'p1' },
+      data: { availabilityAlertEnabled: true },
+    })
+  })
+
+  it('setWantedAlertAction cannot change another customer\'s wanted relationship — the WHERE clause always includes the caller\'s own profileId', async () => {
+    ;(getBuyerSession as Mock).mockResolvedValueOnce({ profileId: 'attacker' })
+    ;(prisma.wantedCatalogModel.updateMany as Mock).mockResolvedValueOnce({ count: 0 })
+
+    await setWantedAlertAction('someone-elses-wanted-row', 'priceAlertEnabled', false)
+
+    const call = (prisma.wantedCatalogModel.updateMany as Mock).mock.calls[0][0]
+    expect(call.where.customerProfileId).toBe('attacker')
+  })
+
+  it('setWantedAlertAction never touches BuyerAlertEvent — a preference change does not mutate alert history', async () => {
+    ;(getBuyerSession as Mock).mockResolvedValueOnce({ profileId: 'p1' })
+    ;(prisma.wantedCatalogModel.updateMany as Mock).mockResolvedValueOnce({ count: 1 })
+
+    await setWantedAlertAction('w1', 'availabilityAlertEnabled', false)
+
+    expect(prisma.buyerAlertEvent.update).toBeUndefined() // not even mocked/used by this action
+    expect(prisma.buyerAlertEvent.updateMany).not.toHaveBeenCalled()
+  })
+
+  it('16D Final: updateAlertPreferences revalidates /account/wanted (where the AlertPreferencesForm now actually renders), not the dead /account/alerts redirect shim', async () => {
+    ;(getBuyerSession as Mock).mockResolvedValueOnce({ profileId: 'p1' })
+    ;(prisma.buyerAlertPreference.upsert as Mock).mockResolvedValueOnce({})
+    const fd = new FormData()
+    fd.set('wantedAvailableAlerts', 'on')
+
+    const { revalidatePath } = await import('next/cache')
+    await updateAlertPreferences(null, fd)
+
+    expect(revalidatePath).toHaveBeenCalledWith('/account/wanted')
+    expect(revalidatePath).not.toHaveBeenCalledWith('/account/alerts')
+  })
+
+  it('16D Final: markAlertReadAction/markAllAlertsReadAction revalidate /account/wanted, not the dead /account/alerts redirect shim', async () => {
+    ;(getBuyerSession as Mock).mockResolvedValue({ profileId: 'p1' })
+    ;(prisma.buyerAlertEvent.updateMany as Mock).mockResolvedValue({ count: 1 })
+
+    const { revalidatePath } = await import('next/cache')
+    await markAlertReadAction('evt1')
+    await markAllAlertsReadAction()
+
+    expect(revalidatePath).toHaveBeenCalledWith('/account/wanted')
+    expect(revalidatePath).not.toHaveBeenCalledWith('/account/alerts')
+  })
+})
+
+describe('16D Final: /account/alerts redirect preserves the old cursor deep-link (behavioral)', () => {
+  beforeEach(() => vi.resetAllMocks())
+
+  it('redirects to /account/wanted?view=alerts with no cursor param', async () => {
+    ;(getBuyerSession as Mock).mockResolvedValueOnce({ profileId: 'p1' })
+    const { default: AlertsRedirectPage } = await import('@/app/(store)/account/alerts/page')
+    const { redirect } = await import('next/navigation')
+
+    await expect(AlertsRedirectPage({ searchParams: Promise.resolve({}) })).rejects.toThrow()
+    expect(redirect).toHaveBeenCalledWith('/account/wanted?view=alerts')
+  })
+
+  it('preserves a bookmarked cursor (the old page\'s only supported param) through the redirect', async () => {
+    ;(getBuyerSession as Mock).mockResolvedValueOnce({ profileId: 'p1' })
+    const { default: AlertsRedirectPage } = await import('@/app/(store)/account/alerts/page')
+    const { redirect } = await import('next/navigation')
+
+    await expect(AlertsRedirectPage({ searchParams: Promise.resolve({ cursor: 'abc123' }) })).rejects.toThrow()
+    expect(redirect).toHaveBeenCalledWith('/account/wanted?view=alerts&cursor=abc123')
   })
 })
 
