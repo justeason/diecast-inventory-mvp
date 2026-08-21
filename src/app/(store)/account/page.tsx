@@ -76,7 +76,7 @@ export default async function AccountOverviewPage() {
           {overview.collection.itemCount > 0 ? (
             <>
               <p className="text-sm text-gray-700">{overview.collection.itemCount} item{overview.collection.itemCount !== 1 ? 's' : ''}</p>
-              <p className="text-sm text-gray-700">{overview.collection.uniqueModelCount} model{overview.collection.uniqueModelCount !== 1 ? 's' : ''}</p>
+              <p className="text-sm text-gray-700">{overview.collection.entryCount} entr{overview.collection.entryCount !== 1 ? 'ies' : 'y'}</p>
             </>
           ) : (
             <p className="text-sm text-gray-400">Start your collection.</p>

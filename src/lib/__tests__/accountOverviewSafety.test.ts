@@ -244,6 +244,27 @@ describe('16B Final Lightweight-Overview Pass — seller-portfolio helper API st
   })
 })
 
+describe('16E Final Quantity Semantics Pass — physical item totals must be SUM(quantity), never row count', () => {
+  it('accountOverviewQuery.ts computes Collection itemCount via a quantity aggregate, not collectionItem.count()', () => {
+    const idx = querySrc.indexOf('async function getCollectionSummary')
+    const fnSrc = querySrc.slice(idx, querySrc.indexOf('\n}', idx))
+    expect(fnSrc).toContain('collectionItem.aggregate(')
+    expect(fnSrc).toContain('_sum: { quantity: true }')
+    expect(fnSrc).not.toMatch(/collectionItem\.count\(\{\s*where:\s*\{\s*profileId\s*\}\s*\}\)/)
+  })
+
+  it('/account/page.tsx renders the Collection card\'s "items" figure from overview.collection.itemCount (the SUM-based field), never a separate row count', () => {
+    expect(pageSrc).toContain('overview.collection.itemCount')
+    expect(pageSrc).not.toMatch(/overview\.collection\.(itemCount|entryCount)\s*[+\-]/) // no ad-hoc arithmetic recombining the two
+  })
+
+  it('/account/collection/page.tsx computes its own itemCount the same way (SUM(quantity)) — Account and Collection never diverge on what "items" means', () => {
+    const collectionSrc = readSrc('src/app/(store)/account/collection/page.tsx')
+    expect(collectionSrc).toContain('_sum: { quantity: true }')
+    expect(collectionSrc).toContain('const itemCount = qtyAgg._sum.quantity ?? 0')
+  })
+})
+
 describe('16C — visual consistency', () => {
   it('all four account sections are present as summary cards', () => {
     for (const title of ['Orders', 'Collection', 'Wanted & Alerts', 'Selling']) {

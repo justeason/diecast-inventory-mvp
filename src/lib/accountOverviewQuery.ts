@@ -46,14 +46,26 @@ async function getOrdersSummary(profileId: string): Promise<OrdersSummary> {
   }
 }
 
-export type CollectionSummary = { itemCount: number; uniqueModelCount: number }
+export type CollectionSummary = { itemCount: number; entryCount: number }
 
+// 16E Final: CollectionItem.quantity is the number of owned physical copies that
+// ROW represents (schema: `quantity Int @default(1)`, NOT NULL) — a row is a batch,
+// not a single copy. `itemCount` must therefore be SUM(quantity), a DB-side
+// aggregate, never collectionItem.count() (row count), which would undercount any
+// customer who ever records more than one copy on a single entry.
+//
+// `entryCount` = distinct owned catalog models + distinct freeform (no catalog
+// match) rows. Freeform rows have no catalogId to group by, and multiple freeform
+// rows are NOT deduplicated by the domain (only (profileId, catalogId) is unique —
+// see createCollectionItem's dedupe check) — so they must be counted individually,
+// never collapsed into one null group. Same definition as account/collection/page.tsx.
 async function getCollectionSummary(profileId: string): Promise<CollectionSummary> {
-  const [itemCount, distinctModels] = await Promise.all([
-    prisma.collectionItem.count({ where: { profileId } }),
+  const [qtyAgg, distinctModels, freeformCount] = await Promise.all([
+    prisma.collectionItem.aggregate({ where: { profileId }, _sum: { quantity: true } }),
     prisma.collectionItem.groupBy({ by: ['catalogId'], where: { profileId, catalogId: { not: null } } }),
+    prisma.collectionItem.count({ where: { profileId, catalogId: null } }),
   ])
-  return { itemCount, uniqueModelCount: distinctModels.length }
+  return { itemCount: qtyAgg._sum.quantity ?? 0, entryCount: distinctModels.length + freeformCount }
 }
 
 export type WantedSummary = { wantedCount: number; unreadAlertCount: number }

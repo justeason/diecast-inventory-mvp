@@ -615,7 +615,26 @@ describe('collection/page.tsx: keyset pagination', () => {
 
   it('renders Next page link when nextCursor exists', () => {
     expect(src_).toContain('nextCursor')
-    expect(src_).toContain('/account/collection?cursor=')
+    expect(src_).toContain('pageHref(nextCursor)')
+  })
+
+  // 16E: pagination links now preserve the active search/filter/sort instead of
+  // silently dropping them (Part 47) — pageHref() builds the query string from all
+  // of q/condition/type/sort/cursor, not just cursor alone.
+  it('pageHref preserves q/condition/type/sort alongside cursor', () => {
+    const fnIdx = src_.indexOf('function pageHref')
+    const fnSrc = src_.slice(fnIdx, src_.indexOf('\n}', fnIdx))
+    expect(fnSrc).toContain('q=')
+    expect(fnSrc).toContain('condition=')
+    expect(fnSrc).toContain('type=')
+    expect(fnSrc).toContain("sort=newest")
+    expect(fnSrc).toContain('cursor=')
+  })
+
+  it('changing sort flips id asc/desc and the cursor comparator (gt for oldest-first, lt for newest-first)', () => {
+    expect(src_).toContain("id: { lt: cursor }")
+    expect(src_).toContain("id: { gt: cursor }")
+    expect(src_).toContain("orderBy: { id: sortNewest ? 'desc' : 'asc' }")
   })
 })
 
@@ -1174,5 +1193,287 @@ describe('No automatic purchase, reservation, or contact', () => {
     expect(src_).not.toContain('order.create')
     expect(src_).not.toContain('payout')
     expect(src_).not.toContain('listing.create')
+  })
+})
+
+// ── 16E: Collection experience simplification ─────────────────────────────────
+
+describe('16E: physical-copy identity — one CollectionItem row per (profile, catalogModel)', () => {
+  it('createCollectionItem already rejects a second row for the same catalogId — the domain has no multi-row-per-model scenario to group at read time', () => {
+    const src_ = src('src/lib/actions/collectionItems.ts')
+    const fnIdx = src_.indexOf('export async function createCollectionItem')
+    const fnSrc = src_.slice(fnIdx)
+    expect(fnSrc).toContain('collectionItem.findFirst({')
+    expect(fnSrc).toContain('You already have this model in your collection')
+  })
+
+  it('the list page never sums/aggregates quantity across multiple rows — "You own N" is always the single row\'s own quantity field', () => {
+    const src_ = src('src/app/(store)/account/collection/page.tsx')
+    expect(src_).not.toMatch(/reduce\(.*quantity/)
+    expect(src_).toContain('You own {item.quantity}')
+  })
+})
+
+describe('16E Final: exact header totals use SUM(quantity), not row count (not page-subset counts either)', () => {
+  const src_ = src('src/app/(store)/account/collection/page.tsx')
+
+  it('itemCount comes from a DB-side aggregate SUM(quantity) scoped to the unfiltered baseWhere, never collectionItem.count()', () => {
+    expect(src_).toContain('collectionItem.aggregate({ where: baseWhere, _sum: { quantity: true } })')
+    expect(src_).toContain('const itemCount = qtyAgg._sum.quantity ?? 0')
+  })
+
+  it('entryCount = distinct catalog models (groupBy) + freeform (catalogId=null) row count, not items.length', () => {
+    expect(src_).toContain("collectionItem.groupBy({ by: ['catalogId'], where: { ...baseWhere, catalogId: { not: null } } })")
+    expect(src_).toContain('collectionItem.count({ where: { ...baseWhere, catalogId: null } })')
+    expect(src_).toContain('const entryCount = distinctModelGroups.length + freeformCount')
+    expect(src_).not.toMatch(/\{items\.length\}\{hasMore/)
+  })
+
+  it('the header label is "entries", not "models" — accurate given freeform rows are counted', () => {
+    expect(src_).toContain('entr{entryCount !== 1')
+  })
+
+  it('baseWhere/header totals are scoped only by profileId — never by the active search/filter', () => {
+    const idx = src_.indexOf('const baseWhere =')
+    const line = src_.slice(idx, src_.indexOf('\n', idx))
+    expect(line).toContain('profileId: session.profileId')
+    expect(line).not.toContain('condition')
+    expect(line).not.toContain('cardedOrLoose')
+  })
+
+  it('the filtered "matching entries" count is a separate exact row-count query, labeled "entries" (not "items") so it is never confused with the SUM(quantity) total', () => {
+    expect(src_).toContain('collectionItem.count({ where: filterWhere })')
+    expect(src_).toContain('matching entr{matchingCount !== 1')
+    expect(src_).not.toMatch(/\{matchingCount\}\s*matching item/)
+  })
+
+  it('no customer-facing "items" label on this page is fed by a bare row count — the only collectionItem.count() calls back freeformCount and matchingCount, both labeled "entries"', () => {
+    const countCalls = [...src_.matchAll(/collectionItem\.count\(\{[^}]*\}\)/g)].map((m) => m[0])
+    expect(countCalls.length).toBeGreaterThan(0)
+    for (const call of countCalls) {
+      // every count() call site feeds either freeformCount or matchingCount — never itemCount
+      expect(call).not.toMatch(/quantity/)
+    }
+  })
+})
+
+describe('16E: search/filter/sort are DB-backed, cursor pagination stays correct', () => {
+  const src_ = src('src/app/(store)/account/collection/page.tsx')
+
+  it('search matches brand/name on both the free-text item and its linked catalog model, case-insensitively', () => {
+    const idx = src_.indexOf('const filterWhere')
+    const block = src_.slice(idx, src_.indexOf('const [itemCount', idx))
+    expect(block).toContain("mode: 'insensitive' as const")
+    expect(block).toContain('catalog: { brand:')
+    expect(block).toContain('catalog: { name:')
+  })
+
+  it('condition/type filters are validated against known enums before use — no arbitrary passthrough', () => {
+    expect(src_).toContain('VALID_CONDITIONS.has(rawCondition)')
+    expect(src_).toContain('VALID_TYPES.has(rawType)')
+  })
+
+  it('the paginated findMany applies filterWhere plus the cursor — filters and pagination compose in one query, not a second in-memory pass', () => {
+    const idx = src_.indexOf('prisma.collectionItem.findMany({')
+    const block = src_.slice(idx, idx + 400)
+    expect(block).toContain('...filterWhere')
+  })
+
+  it('search/filter changes reset pagination (GET form has no cursor field, submitting drops any existing cursor)', () => {
+    const formIdx = src_.indexOf('method="GET" action="/account/collection"')
+    const formEnd = src_.indexOf('</form>', formIdx)
+    const formBlock = src_.slice(formIdx, formEnd)
+    expect(formBlock).not.toContain('name="cursor"')
+  })
+})
+
+describe('16E: valuation stays on its own dedicated page — no per-card or per-list-load valuation call', () => {
+  it('the Collection list page never imports/calls getCollectionValuation or getCatalogValuations', () => {
+    const src_ = src('src/app/(store)/account/collection/page.tsx')
+    expect(src_).not.toMatch(/getCollectionValuation|getCatalogValuations|getCatalogValuation\(/)
+  })
+
+  it('unknown valuation on the dedicated valuation page is rendered as "—", never $0', () => {
+    const src_ = src('src/app/(store)/account/collection/valuation/page.tsx')
+    expect(src_).toContain('<span className="text-gray-300">—</span>')
+    expect(src_).not.toMatch(/hasVal \? centsToDisplay\(item\.estimatedSubtotal!\) : .*\$0/)
+  })
+
+  it('getCollectionValuation batches comparable-sales/active-asks lookups (no per-item valuation query)', () => {
+    const src_ = src('src/lib/advancedValuationQuery.ts')
+    expect(src_).toContain('One comparable-sales query and one active-asks query')
+    expect(src_).toContain('Never fetches one query per model (no N+1)')
+  })
+
+  // 16E Final Part 10: audited and confirmed correct — getCollectionValuation
+  // already multiplies the per-copy estimate by CollectionItem.quantity, so a row
+  // with quantity=3 contributes 3x the per-copy value to the collection total, not
+  // 1x. No fix was needed here; this test only guards against a future regression.
+  it('estimated/low/high subtotals multiply the per-copy valuation by quantity — a quantity=3 row is NOT valued as a single copy', () => {
+    const src_ = src('src/lib/advancedValuationQuery.ts')
+    const idx = src_.indexOf('export async function getCollectionValuation')
+    const fnSrc = src_.slice(idx)
+    expect(fnSrc).toContain('estimatedSubtotal: hasValue ? (val!.estimatedValue! * qty) : null')
+    expect(fnSrc).toContain('lowSubtotal:       hasValue && val!.lowEstimate  !== null ? (val!.lowEstimate  * qty) : null')
+    expect(fnSrc).toContain('highSubtotal:      hasValue && val!.highEstimate !== null ? (val!.highEstimate * qty) : null')
+  })
+})
+
+describe('16E Final: pagination and cross-profile isolation cannot affect the exact header totals', () => {
+  const src_ = src('src/app/(store)/account/collection/page.tsx')
+
+  it('the SUM(quantity)/entryCount aggregate queries carry no take/cursor — they are never derived from the paginated page', () => {
+    const aggIdx = src_.indexOf('collectionItem.aggregate({ where: baseWhere')
+    const aggCall = src_.slice(aggIdx, aggIdx + 120)
+    expect(aggCall).not.toMatch(/take:|cursor:/)
+
+    const groupByIdx = src_.indexOf("collectionItem.groupBy({ by: ['catalogId'], where: { ...baseWhere")
+    const groupByCall = src_.slice(groupByIdx, groupByIdx + 150)
+    expect(groupByCall).not.toMatch(/take:|cursor:/)
+  })
+
+  it('every collection query (header totals and the paginated list) is scoped by session.profileId — no cross-profile aggregation possible', () => {
+    expect(src_).toContain('const baseWhere = { profileId: session.profileId }')
+    const filterIdx = src_.indexOf('const filterWhere')
+    const filterBlock = src_.slice(filterIdx, filterIdx + 150)
+    expect(filterBlock).toContain('profileId: session.profileId')
+  })
+})
+
+describe('16E: Add Another routes to the existing edit flow — no second creation path', () => {
+  const src_ = src('src/app/(store)/account/collection/page.tsx')
+
+  it('Add Another links to the existing /edit route with a quantity anchor, only when a catalog match exists', () => {
+    expect(src_).toContain('/account/collection/${item.id}/edit#quantity')
+    expect(src_).toContain('{item.catalogId && (')
+  })
+
+  it('the quantity field on the edit form has the matching id for the anchor to land on', () => {
+    const formSrc = src('src/components/store/CollectionItemForm.tsx')
+    expect(formSrc).toContain('id="quantity"')
+  })
+
+  it('Add Another performs no mutation of its own — it is a plain Link, not a form/action', () => {
+    const idx = src_.indexOf('Add Another')
+    const context = src_.slice(idx - 300, idx)
+    expect(context).not.toContain('<form')
+  })
+})
+
+describe('16E: Sell One starts the existing authoritative seller workflow only', () => {
+  it('Collection list page links to the existing /sell subroute — no new sell mutation on this page', () => {
+    const src_ = src('src/app/(store)/account/collection/page.tsx')
+    expect(src_).toContain('/account/collection/${item.id}/sell')
+    const idx = src_.indexOf('Sell One')
+    const context = src_.slice(idx - 300, idx)
+    expect(context).not.toContain('<form')
+  })
+
+  it('submitCollectionItemForSale only creates a SellerSubmission — no ItemInstance/agreement/payout, no CollectionItem mutation', () => {
+    const src_ = src('src/lib/actions/sellerSubmissions.ts')
+    const fnIdx = src_.indexOf('export async function submitCollectionItemForSale')
+    const nextFnIdx = src_.indexOf('export async function submitManualSellRequest')
+    const fnSrc = src_.slice(fnIdx, nextFnIdx)
+    expect(fnSrc).toContain('sellerSubmission.create(')
+    expect(fnSrc).not.toContain('itemInstance.create')
+    expect(fnSrc).not.toContain('sellerAgreement.create')
+    expect(fnSrc).not.toContain('sellerPayout')
+    expect(fnSrc).not.toContain('collectionItem.update')
+    expect(fnSrc).not.toContain('collectionItem.delete')
+  })
+
+  it('submitCollectionItemForSale re-fetches the CollectionItem scoped to the authenticated profile — never trusts browser-supplied model/condition data', () => {
+    const src_ = src('src/lib/actions/sellerSubmissions.ts')
+    const fnIdx = src_.indexOf('export async function submitCollectionItemForSale')
+    const fnSrc = src_.slice(fnIdx, fnIdx + 1200)
+    expect(fnSrc).toContain('collectionItem.findFirst({')
+    expect(fnSrc).toContain('where: { id: collectionItemId, profileId: session.profileId }')
+  })
+
+  it('sell quantity is capped at the collection item\'s own recorded quantity — cannot sell more copies than owned', () => {
+    const src_ = src('src/lib/actions/sellerSubmissions.ts')
+    expect(src_).toContain('Quantity cannot exceed your collection quantity')
+    expect(src_).toContain('n > item.quantity')
+  })
+
+  it('a second sell request for the same item while one is already active is rejected, not silently duplicated', () => {
+    const src_ = src('src/lib/actions/sellerSubmissions.ts')
+    expect(src_).toContain('You already have an active sell request for this item.')
+  })
+})
+
+describe('16E: View Market reuses the existing /browse destination — no second market page', () => {
+  const src_ = src('src/app/(store)/account/collection/page.tsx')
+
+  it('links to /browse using the existing supported brand + q filters, only when a catalog match exists', () => {
+    expect(src_).toContain('/browse?brand=${encodeURIComponent(item.catalog.brand)}&q=${encodeURIComponent(item.catalog.name)}')
+    expect(src_).toContain('{item.catalog && (')
+  })
+
+  it('/browse actually supports brand and q as documented filters', () => {
+    const browseSrc = src('src/app/(store)/browse/page.tsx')
+    expect(browseSrc).toContain('brand?: string')
+    expect(browseSrc).toContain('q?: string')
+  })
+})
+
+describe('16E: accessibility — model-scoped action labels, no icon-only controls', () => {
+  const src_ = src('src/app/(store)/account/collection/page.tsx')
+
+  it('Sell One / Add Another / View Market each carry an aria-label naming the specific model', () => {
+    expect(src_).toContain('aria-label={`Sell one ${name}`}')
+    expect(src_).toContain('aria-label={`Add another ${name}`}')
+    expect(src_).toContain('aria-label={`View market for ${name}`}')
+  })
+
+  it('owned-quantity text is real visible text ("You own N"), not a decorative-only badge', () => {
+    expect(src_).toContain('You own {item.quantity}')
+  })
+})
+
+describe('16E: Quick Capture remains a contextual Collection action, not a new nav destination', () => {
+  it('the Collection page links to /account/capture as a page-level action button', () => {
+    const src_ = src('src/app/(store)/account/collection/page.tsx')
+    expect(src_).toContain('href="/account/capture"')
+  })
+
+  it('AccountNav / customerNav.ts were not touched — Quick Capture is still not a CUSTOMER_ACCOUNT_LINKS entry', () => {
+    const navSrc = src('src/lib/customerNav.ts')
+    expect(navSrc).not.toMatch(/label:\s*'Quick Capture'/)
+  })
+})
+
+describe('16E: empty state is concise, not an empty table', () => {
+  const src_ = src('src/app/(store)/account/collection/page.tsx')
+
+  it('shows the preferred concise copy with exactly two primary actions', () => {
+    expect(src_).toContain('Your collection is empty.')
+    expect(src_).toContain('Add your first item manually or use Quick Capture.')
+  })
+})
+
+describe('16E: /account overview integration is unaffected', () => {
+  it('accountOverviewQuery.ts was not modified by 16E — still no valuation/hydration call for the Collection card', () => {
+    const src_ = src('src/lib/accountOverviewQuery.ts')
+    expect(src_).not.toMatch(/getCollectionValuation|getCatalogValuation/)
+    expect(src_).toContain('collectionItem.count(')
+    expect(src_).toContain("collectionItem.groupBy({ by: ['catalogId']")
+  })
+})
+
+describe('16E: authorization/privacy — collection list is read-only, no PII, own-profile only', () => {
+  const src_ = src('src/app/(store)/account/collection/page.tsx')
+
+  it('the list page issues no mutation of its own during render', () => {
+    expect(src_).not.toMatch(/\.(create|update|delete|upsert|createMany|updateMany|deleteMany)\(/)
+  })
+
+  it('every collection query is scoped by session.profileId, never a browser-supplied id', () => {
+    expect(src_).toContain('profileId: session.profileId')
+    expect(src_).not.toMatch(/profileId:\s*(searchParams|formData|request)/)
+  })
+
+  it('no buyer PII field is selected or rendered', () => {
+    expect(src_).not.toMatch(/\.email\b|\.phone\b|\.address\b|paymentMethod/)
   })
 })

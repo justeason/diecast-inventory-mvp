@@ -8,7 +8,7 @@ type Mock = ReturnType<typeof vi.fn>
 vi.mock('@/lib/prisma', () => ({
   prisma: {
     order: { count: vi.fn(), findMany: vi.fn() },
-    collectionItem: { count: vi.fn(), groupBy: vi.fn() },
+    collectionItem: { count: vi.fn(), groupBy: vi.fn(), aggregate: vi.fn() },
     wantedCatalogModel: { count: vi.fn() },
     sellerPayoutLine: { aggregate: vi.fn() },
   },
@@ -27,6 +27,7 @@ function baseMocks() {
   ;(prisma.order.findMany as Mock).mockResolvedValue([])
   ;(prisma.collectionItem.count as Mock).mockResolvedValue(0)
   ;(prisma.collectionItem.groupBy as Mock).mockResolvedValue([])
+  ;(prisma.collectionItem.aggregate as Mock).mockResolvedValue({ _sum: { quantity: null } })
   ;(prisma.wantedCatalogModel.count as Mock).mockResolvedValue(0)
   ;(getUnreadAlertCount as Mock).mockResolvedValue(0)
   ;(prisma.sellerPayoutLine.aggregate as Mock).mockResolvedValue({ _sum: { netAmount: null } })
@@ -81,29 +82,75 @@ describe('getAccountOverview — orders summary (Part E/10-11)', () => {
   })
 })
 
-describe('getAccountOverview — collection summary (Part F/12, Part Q/32)', () => {
-  it('itemCount is an exact count scoped to the profile', async () => {
+describe('getAccountOverview — collection summary (16E Final Quantity Semantics Pass)', () => {
+  it('itemCount is SUM(quantity) via a DB-side aggregate, scoped to the profile — never collectionItem.count() (row count)', async () => {
     baseMocks()
-    ;(prisma.collectionItem.count as Mock).mockResolvedValue(42)
+    ;(prisma.collectionItem.aggregate as Mock).mockResolvedValue({ _sum: { quantity: 47 } })
     const result = await getAccountOverview('profile1')
-    expect(result.collection.itemCount).toBe(42)
-    expect((prisma.collectionItem.count as Mock).mock.calls[0][0].where.profileId).toBe('profile1')
+    expect(result.collection.itemCount).toBe(47)
+    const call = (prisma.collectionItem.aggregate as Mock).mock.calls[0][0]
+    expect(call.where.profileId).toBe('profile1')
+    expect(call._sum).toEqual({ quantity: true })
   })
 
-  it('uniqueModelCount groups by catalogId, excluding items with no catalog match, never a full row load', async () => {
+  it('a single row with quantity=5 contributes 5 to itemCount, not 1 — proves row count is never substituted for the physical total', async () => {
+    baseMocks()
+    ;(prisma.collectionItem.aggregate as Mock).mockResolvedValue({ _sum: { quantity: 5 } })
+    ;(prisma.collectionItem.count as Mock).mockResolvedValue(0) // freeformCount — 1 catalog-linked row, 0 freeform
+    ;(prisma.collectionItem.groupBy as Mock).mockResolvedValue([{ catalogId: 'cat1' }])
+    const result = await getAccountOverview('profile1')
+    expect(result.collection.itemCount).toBe(5)
+    expect(result.collection.entryCount).toBe(1)
+  })
+
+  it('a null aggregate sum (empty collection) becomes exactly zero, not a crash', async () => {
+    baseMocks()
+    const result = await getAccountOverview('profile1')
+    expect(result.collection.itemCount).toBe(0)
+  })
+
+  it('entryCount = distinct non-null catalogIds + freeform (catalogId=null) row count — freeform rows are never collapsed into one group', async () => {
     baseMocks()
     ;(prisma.collectionItem.groupBy as Mock).mockResolvedValue([{ catalogId: 'cat1' }, { catalogId: 'cat2' }])
+    ;(prisma.collectionItem.count as Mock).mockResolvedValue(3) // 3 distinct freeform rows
     const result = await getAccountOverview('profile1')
-    expect(result.collection.uniqueModelCount).toBe(2)
-    const call = (prisma.collectionItem.groupBy as Mock).mock.calls[0][0]
-    expect(call.by).toEqual(['catalogId'])
-    expect(call.where.catalogId).toEqual({ not: null })
+    expect(result.collection.entryCount).toBe(5) // 2 catalog models + 3 freeform entries
+    const groupByCall = (prisma.collectionItem.groupBy as Mock).mock.calls[0][0]
+    expect(groupByCall.by).toEqual(['catalogId'])
+    expect(groupByCall.where.catalogId).toEqual({ not: null })
+    const countCall = (prisma.collectionItem.count as Mock).mock.calls[0][0]
+    expect(countCall.where.catalogId).toBeNull()
+    expect(countCall.where.profileId).toBe('profile1')
   })
 
   it('collection summary never issues a findMany (no full CollectionItem row hydration)', async () => {
     baseMocks()
     await getAccountOverview('profile1')
     expect(querySrc).not.toMatch(/collectionItem\.findMany/)
+  })
+
+  it('two rows (qty=3 Porsche, qty=2 Ferrari) yield 5 items · 2 entries — matches the milestone worked example exactly', async () => {
+    baseMocks()
+    ;(prisma.collectionItem.aggregate as Mock).mockResolvedValue({ _sum: { quantity: 5 } })
+    ;(prisma.collectionItem.groupBy as Mock).mockResolvedValue([{ catalogId: 'porsche' }, { catalogId: 'ferrari' }])
+    ;(prisma.collectionItem.count as Mock).mockResolvedValue(0)
+    const result = await getAccountOverview('profile1')
+    expect(result.collection.itemCount).toBe(5)
+    expect(result.collection.entryCount).toBe(2)
+  })
+
+  it('the SUM(quantity) aggregate is scoped by profileId only — cannot be inflated by another customer\'s rows', async () => {
+    baseMocks()
+    ;(prisma.collectionItem.aggregate as Mock).mockResolvedValue({ _sum: { quantity: 5 } })
+    await getAccountOverview('profile-a')
+    const callA = (prisma.collectionItem.aggregate as Mock).mock.calls[0][0]
+    vi.resetAllMocks()
+    baseMocks()
+    ;(prisma.collectionItem.aggregate as Mock).mockResolvedValue({ _sum: { quantity: 9 } })
+    await getAccountOverview('profile-b')
+    const callB = (prisma.collectionItem.aggregate as Mock).mock.calls[0][0]
+    expect(callA.where.profileId).toBe('profile-a')
+    expect(callB.where.profileId).toBe('profile-b')
   })
 })
 
@@ -206,8 +253,9 @@ describe('getAccountOverview — performance (Part M/26, Part Z/45)', () => {
     await getAccountOverview('profile1')
     expect(prisma.order.count).toHaveBeenCalledTimes(1)
     expect(prisma.order.findMany).toHaveBeenCalledTimes(1)
-    expect(prisma.collectionItem.count).toHaveBeenCalledTimes(1)
+    expect(prisma.collectionItem.aggregate).toHaveBeenCalledTimes(1)
     expect(prisma.collectionItem.groupBy).toHaveBeenCalledTimes(1)
+    expect(prisma.collectionItem.count).toHaveBeenCalledTimes(1)
     expect(prisma.wantedCatalogModel.count).toHaveBeenCalledTimes(1)
     expect(prisma.sellerPayoutLine.aggregate).toHaveBeenCalledTimes(1)
   })
