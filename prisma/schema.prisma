@@ -439,6 +439,13 @@ model CollectionItem {
   photos             CollectionItemPhoto[]
   catalogSuggestions CatalogSuggestion[]
   sellerSubmissions  SellerSubmission[]
+
+  // 16F Final: DB-enforced "one catalog-linked CollectionItem per customer" —
+  // closes the createCollectionItem check-then-create race (concurrent Add to
+  // Collection from /browse could otherwise create two rows for the same model).
+  // Postgres treats NULL as distinct from any other NULL in a unique index, so
+  // freeform (catalogId=null) rows remain unlimited per customer, unaffected.
+  @@unique([profileId, catalogId])
 }
 
 model CollectionItemPhoto {

@@ -40,7 +40,27 @@ function inputCls(hasError: boolean) {
   }`
 }
 
-export function ManualSellRequestForm() {
+// 16F Final: `initial` prefills brand/name/etc when arriving from a CatalogModel
+// context (Sell One on a not-yet-owned model) — the page passing `initial` is
+// responsible for re-fetching the CatalogModel server-side by id first. `catalogId`
+// is carried through as a hidden field so submitManualSellRequest can re-validate
+// it and persist the known CatalogModel relationship (SellerSubmission.catalogId
+// already exists in the schema) — submitManualSellRequest re-fetches by this id
+// itself, so this component is never the source of authoritative identity, only
+// the carrier of the id to look up.
+type Props = {
+  initial?: {
+    catalogId: string
+    brand: string | null
+    name: string | null
+    series: string | null
+    year: number | null
+    color: string | null
+    scale: string | null
+  }
+}
+
+export function ManualSellRequestForm({ initial }: Props = {}) {
   const [state, formAction] = useActionState<SellerSubmissionActionState, FormData>(
     submitManualSellRequest,
     null
@@ -49,6 +69,8 @@ export function ManualSellRequestForm() {
 
   return (
     <form action={formAction} className="space-y-6">
+      {initial?.catalogId && <input type="hidden" name="catalogId" value={initial.catalogId} />}
+
       <div className="rounded-md border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600">
         This creates a request for admin review. It does not list the item for sale automatically.
       </div>
@@ -63,102 +85,124 @@ export function ManualSellRequestForm() {
       <div className="space-y-4">
         <h2 className="text-sm font-semibold text-gray-900">Item details</h2>
 
-        <div className="flex flex-col gap-1">
-          <label htmlFor="manual-brand" className="text-sm font-medium text-gray-700">
-            Brand <span className="font-normal text-gray-400">(optional, max 100 characters)</span>
-          </label>
-          <input
-            id="manual-brand"
-            type="text"
-            name="brand"
-            maxLength={100}
-            placeholder="e.g. Hot Wheels"
-            className={inputCls(!!errors.brand?.[0])}
-          />
-          <FieldError message={errors.brand?.[0]} />
-        </div>
+        {initial?.catalogId ? (
+          // 16F Final: catalog-context mode — identity is authoritative from the
+          // server-refetched CatalogModel (see submitManualSellRequest), so these
+          // fields are shown read-only rather than as editable inputs whose values
+          // would silently be ignored on submit. No brand/name/series/year/color/
+          // scale form fields are rendered at all in this mode.
+          <div className="rounded-md border border-gray-200 bg-gray-50 px-4 py-3 text-sm">
+            <p className="font-medium text-gray-900">
+              {[initial.brand, initial.name].filter(Boolean).join(' ')}
+              {initial.year ? ` (${initial.year})` : ''}
+            </p>
+            {initial.series && <p className="text-gray-500 mt-0.5">{initial.series}</p>}
+            {initial.color && <p className="text-gray-500">{initial.color}</p>}
+            {initial.scale && <p className="text-gray-500">{initial.scale}</p>}
+            <p className="text-xs text-gray-400 mt-2">
+              This model is preselected from the catalog and can&apos;t be edited here.
+            </p>
+          </div>
+        ) : (
+          <>
+            <div className="flex flex-col gap-1">
+              <label htmlFor="manual-brand" className="text-sm font-medium text-gray-700">
+                Brand <span className="font-normal text-gray-400">(optional, max 100 characters)</span>
+              </label>
+              <input
+                id="manual-brand"
+                type="text"
+                name="brand"
+                maxLength={100}
+                placeholder="e.g. Hot Wheels"
+                className={inputCls(!!errors.brand?.[0])}
+              />
+              <FieldError message={errors.brand?.[0]} />
+            </div>
 
-        <div className="flex flex-col gap-1">
-          <label htmlFor="manual-name" className="text-sm font-medium text-gray-700">
-            Model name <span className="font-normal text-gray-400">(optional, max 150 characters)</span>
-          </label>
-          <input
-            id="manual-name"
-            type="text"
-            name="name"
-            maxLength={150}
-            placeholder="e.g. '69 Camaro"
-            className={inputCls(!!errors.name?.[0])}
-          />
-          <FieldError message={errors.name?.[0]} />
-        </div>
+            <div className="flex flex-col gap-1">
+              <label htmlFor="manual-name" className="text-sm font-medium text-gray-700">
+                Model name <span className="font-normal text-gray-400">(optional, max 150 characters)</span>
+              </label>
+              <input
+                id="manual-name"
+                type="text"
+                name="name"
+                maxLength={150}
+                placeholder="e.g. '69 Camaro"
+                className={inputCls(!!errors.name?.[0])}
+              />
+              <FieldError message={errors.name?.[0]} />
+            </div>
 
-        {errors.brandOrName?.[0] && (
-          <p className="text-xs text-red-600">{errors.brandOrName[0]}</p>
+            {errors.brandOrName?.[0] && (
+              <p className="text-xs text-red-600">{errors.brandOrName[0]}</p>
+            )}
+
+            <div className="flex flex-col gap-1">
+              <label htmlFor="manual-series" className="text-sm font-medium text-gray-700">
+                Series <span className="font-normal text-gray-400">(optional)</span>
+              </label>
+              <input
+                id="manual-series"
+                type="text"
+                name="series"
+                maxLength={150}
+                placeholder="e.g. Treasure Hunt"
+                className={inputCls(!!errors.series?.[0])}
+              />
+              <FieldError message={errors.series?.[0]} />
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="flex flex-col gap-1">
+                <label htmlFor="manual-year" className="text-sm font-medium text-gray-700">
+                  Year <span className="font-normal text-gray-400">(optional)</span>
+                </label>
+                <input
+                  id="manual-year"
+                  type="number"
+                  name="year"
+                  min={1900}
+                  max={2100}
+                  placeholder="e.g. 2023"
+                  className={inputCls(!!errors.year?.[0])}
+                />
+                <FieldError message={errors.year?.[0]} />
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label htmlFor="manual-scale" className="text-sm font-medium text-gray-700">
+                  Scale <span className="font-normal text-gray-400">(optional)</span>
+                </label>
+                <input
+                  id="manual-scale"
+                  type="text"
+                  name="scale"
+                  maxLength={50}
+                  placeholder="e.g. 1:64"
+                  className={inputCls(!!errors.scale?.[0])}
+                />
+                <FieldError message={errors.scale?.[0]} />
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <label htmlFor="manual-color" className="text-sm font-medium text-gray-700">
+                Color <span className="font-normal text-gray-400">(optional)</span>
+              </label>
+              <input
+                id="manual-color"
+                type="text"
+                name="color"
+                maxLength={100}
+                placeholder="e.g. Red"
+                className={inputCls(!!errors.color?.[0])}
+              />
+              <FieldError message={errors.color?.[0]} />
+            </div>
+          </>
         )}
-
-        <div className="flex flex-col gap-1">
-          <label htmlFor="manual-series" className="text-sm font-medium text-gray-700">
-            Series <span className="font-normal text-gray-400">(optional)</span>
-          </label>
-          <input
-            id="manual-series"
-            type="text"
-            name="series"
-            maxLength={150}
-            placeholder="e.g. Treasure Hunt"
-            className={inputCls(!!errors.series?.[0])}
-          />
-          <FieldError message={errors.series?.[0]} />
-        </div>
-
-        <div className="grid grid-cols-2 gap-4">
-          <div className="flex flex-col gap-1">
-            <label htmlFor="manual-year" className="text-sm font-medium text-gray-700">
-              Year <span className="font-normal text-gray-400">(optional)</span>
-            </label>
-            <input
-              id="manual-year"
-              type="number"
-              name="year"
-              min={1900}
-              max={2100}
-              placeholder="e.g. 2023"
-              className={inputCls(!!errors.year?.[0])}
-            />
-            <FieldError message={errors.year?.[0]} />
-          </div>
-
-          <div className="flex flex-col gap-1">
-            <label htmlFor="manual-scale" className="text-sm font-medium text-gray-700">
-              Scale <span className="font-normal text-gray-400">(optional)</span>
-            </label>
-            <input
-              id="manual-scale"
-              type="text"
-              name="scale"
-              maxLength={50}
-              placeholder="e.g. 1:64"
-              className={inputCls(!!errors.scale?.[0])}
-            />
-            <FieldError message={errors.scale?.[0]} />
-          </div>
-        </div>
-
-        <div className="flex flex-col gap-1">
-          <label htmlFor="manual-color" className="text-sm font-medium text-gray-700">
-            Color <span className="font-normal text-gray-400">(optional)</span>
-          </label>
-          <input
-            id="manual-color"
-            type="text"
-            name="color"
-            maxLength={100}
-            placeholder="e.g. Red"
-            className={inputCls(!!errors.color?.[0])}
-          />
-          <FieldError message={errors.color?.[0]} />
-        </div>
 
         <div className="flex flex-col gap-1">
           <label htmlFor="manual-carded" className="text-sm font-medium text-gray-700">

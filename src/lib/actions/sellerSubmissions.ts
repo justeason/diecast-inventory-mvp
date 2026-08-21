@@ -172,6 +172,41 @@ export async function submitManualSellRequest(
     return { errors: { form: [`Too many submissions. Please wait ${secs} seconds.`] } }
   }
 
+  // 16F Final Persistence Integrity Pass: two truthful, non-overlapping modes.
+  //
+  // MODE A (catalog-context): an explicit catalogId was supplied. It must
+  // reference a real CatalogModel — a forged/stale/nonexistent id is a hard error
+  // here (never silently downgraded to freeform, since supplying catalogId means
+  // the customer's flow explicitly established known-model context; silently
+  // discarding it would hide tampering or a stale link). When valid, the
+  // AUTHORITATIVE identity fields (brand/name/series/year/color/scale) are taken
+  // from the re-fetched CatalogModel itself, never from browser-submitted text —
+  // so catalogId and the identity fields on the resulting SellerSubmission can
+  // never contradict each other, no matter what the form happened to display or
+  // what a tampered request tried to submit for those fields.
+  //
+  // MODE B (freeform): no catalogId was supplied at all. Identity is exactly
+  // whatever brand/name/etc the customer typed, catalogId stays null — unchanged
+  // from this action's original behavior.
+  //
+  // In BOTH modes, physical/customer fields (condition, cardedOrLoose,
+  // conditionNotes, quantity, saleTypePreference, expectedPrice, userNotes) always
+  // come from the submitted form — CatalogModel has no opinion on a specific
+  // physical copy's condition or how the customer wants to sell it.
+  const rawCatalogId = trimOrNull(formData.get('catalogId')?.toString())
+
+  let catalogMode: { id: string; brand: string; name: string; series: string | null; year: number | null; color: string | null; scale: string | null } | null = null
+  if (rawCatalogId) {
+    const found = await prisma.catalogModel.findUnique({
+      where: { id: rawCatalogId },
+      select: { id: true, brand: true, name: true, series: true, year: true, color: true, scale: true },
+    })
+    if (!found) {
+      return { errors: { catalogId: ['This catalog reference is no longer valid. Please go back and try again.'] } }
+    }
+    catalogMode = found
+  }
+
   const rawBrand = trimOrNull(formData.get('brand')?.toString())
   const rawName = trimOrNull(formData.get('name')?.toString())
   const rawSeries = trimOrNull(formData.get('series')?.toString())
@@ -186,24 +221,41 @@ export async function submitManualSellRequest(
   const rawExpectedPrice = formData.get('expectedPrice')?.toString().trim() ?? ''
   const rawUserNotes = trimOrNull(formData.get('userNotes')?.toString())
 
-  if (!rawBrand && !rawName) {
-    return { errors: { brandOrName: ['Please provide at least a brand or model name.'] } }
+  // Identity-field validation only applies in MODE B (freeform) — in MODE A
+  // (catalogMode set) these fields are never read from the form at all (see the
+  // create call below), so validating browser text for them here would be
+  // pointless at best and misleading at worst.
+  let year: number | null = null
+  if (!catalogMode) {
+    if (!rawBrand && !rawName) {
+      return { errors: { brandOrName: ['Please provide at least a brand or model name.'] } }
+    }
+    if (rawBrand && rawBrand.length > 100) {
+      return { errors: { brand: ['Brand must be 100 characters or fewer.'] } }
+    }
+    if (rawName && rawName.length > 150) {
+      return { errors: { name: ['Model name must be 150 characters or fewer.'] } }
+    }
+    if (rawSeries && rawSeries.length > 150) {
+      return { errors: { series: ['Series must be 150 characters or fewer.'] } }
+    }
+    if (rawColor && rawColor.length > 100) {
+      return { errors: { color: ['Color must be 100 characters or fewer.'] } }
+    }
+    if (rawScale && rawScale.length > 50) {
+      return { errors: { scale: ['Scale must be 50 characters or fewer.'] } }
+    }
+    if (rawYear) {
+      const n = parseInt(rawYear, 10)
+      if (isNaN(n) || n < 1900 || n > 2100) {
+        return { errors: { year: ['Year must be between 1900 and 2100.'] } }
+      }
+      year = n
+    }
   }
-  if (rawBrand && rawBrand.length > 100) {
-    return { errors: { brand: ['Brand must be 100 characters or fewer.'] } }
-  }
-  if (rawName && rawName.length > 150) {
-    return { errors: { name: ['Model name must be 150 characters or fewer.'] } }
-  }
-  if (rawSeries && rawSeries.length > 150) {
-    return { errors: { series: ['Series must be 150 characters or fewer.'] } }
-  }
-  if (rawColor && rawColor.length > 100) {
-    return { errors: { color: ['Color must be 100 characters or fewer.'] } }
-  }
-  if (rawScale && rawScale.length > 50) {
-    return { errors: { scale: ['Scale must be 50 characters or fewer.'] } }
-  }
+
+  // Physical/customer fields are validated in both modes — CatalogModel has no
+  // opinion on a specific physical copy's condition/packaging state.
   if (rawCardedOrLoose && !(VALID_CARDED_LOOSE as readonly string[]).includes(rawCardedOrLoose)) {
     return { errors: { cardedOrLoose: ['Invalid value.'] } }
   }
@@ -212,15 +264,6 @@ export async function submitManualSellRequest(
   }
   if (rawConditionNotes && rawConditionNotes.length > 500) {
     return { errors: { conditionNotes: ['Condition notes must be 500 characters or fewer.'] } }
-  }
-
-  let year: number | null = null
-  if (rawYear) {
-    const n = parseInt(rawYear, 10)
-    if (isNaN(n) || n < 1900 || n > 2100) {
-      return { errors: { year: ['Year must be between 1900 and 2100.'] } }
-    }
-    year = n
   }
 
   const quantity = parseInt(rawQuantity, 10)
@@ -245,17 +288,21 @@ export async function submitManualSellRequest(
     return { errors: { userNotes: ['Notes must be 1000 characters or fewer.'] } }
   }
 
+  // MODE A: identity fields come from the re-fetched CatalogModel, never from the
+  // form — catalogId and identity can never contradict, even if a tampered
+  // request submitted different brand/name/etc alongside a valid catalogId.
+  // MODE B: identity is exactly whatever the customer typed, catalogId is null.
   await prisma.sellerSubmission.create({
     data: {
       profileId:          session.profileId,
       collectionItemId:   null,
-      catalogId:          null,
-      brand:              rawBrand,
-      name:               rawName,
-      series:             rawSeries,
-      year,
-      color:              rawColor,
-      scale:              rawScale,
+      catalogId:          catalogMode ? catalogMode.id : null,
+      brand:              catalogMode ? catalogMode.brand : rawBrand,
+      name:               catalogMode ? catalogMode.name : rawName,
+      series:             catalogMode ? catalogMode.series : rawSeries,
+      year:               catalogMode ? catalogMode.year : year,
+      color:              catalogMode ? catalogMode.color : rawColor,
+      scale:              catalogMode ? catalogMode.scale : rawScale,
       cardedOrLoose:      rawCardedOrLoose,
       condition:          rawCondition,
       conditionNotes:     rawConditionNotes,

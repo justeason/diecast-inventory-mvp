@@ -7,6 +7,8 @@ export const metadata: Metadata = {
   description: 'Browse available die-cast cars, collectibles, and trading cards.',
 }
 import { prisma } from '@/lib/prisma'
+import { getBuyerSession } from '@/lib/buyerSession'
+import { getCatalogRelationshipState, type CatalogRelationshipEntry } from '@/lib/catalogRelationshipQuery'
 import { SearchFilterBar } from '@/components/store/SearchFilterBar'
 import { ListingCard } from '@/components/store/ListingCard'
 import { Pagination } from '@/components/shared/Pagination'
@@ -155,7 +157,7 @@ export default async function BrowsePage({
           condition: true,
           catalog: {
             select: {
-              brand: true, name: true, year: true, series: true, color: true,
+              id: true, brand: true, name: true, year: true, series: true, color: true,
               photos: { take: 1, orderBy: { sortOrder: 'asc' }, select: { url: true, altText: true } },
             },
           },
@@ -164,6 +166,27 @@ export default async function BrowsePage({
       },
     },
   })
+
+  // 16F Final — architecture truth, recorded deliberately: /browse is Listing-
+  // centric (one card per active physical Listing), not CatalogModel-centric. If N
+  // Listings share one CatalogModel, that model gets N cards, each independently
+  // deduped into ONE relationship query (see catalogModelIds below) — all N cards
+  // render the SAME Want/Collection state, never inconsistent per-Listing state,
+  // because Want/Collection identity is profile+CatalogModel, never profile+Listing.
+  // Conversely, a CatalogModel with zero active Listings never appears on /browse
+  // at all and cannot receive these actions from this surface — 16F does not claim
+  // "every catalog model is now interactive," only "every rendered Listing card's
+  // underlying model is." A model-centric discovery/detail surface (16H) is a
+  // separate, later piece of work; 16F does not attempt to build one.
+  //
+  // Relationship state (Want/Collection) is scoped ONLY to the catalog models
+  // actually rendered on this page — never the customer's full Wanted/Collection
+  // data — and is never even queried for anonymous visitors (Part 9/42/56).
+  const session = await getBuyerSession()
+  const catalogModelIds = [...new Set(listings.map((l) => l.item.catalog.id))]
+  const relationshipMap: Map<string, CatalogRelationshipEntry> | null = session
+    ? await getCatalogRelationshipState(session.profileId, catalogModelIds)
+    : null
 
   const paginationParams: Record<string, string> = {}
   if (q) paginationParams.q = q
@@ -235,6 +258,8 @@ export default async function BrowsePage({
                 listing={listing}
                 photoUrl={photoUrl}
                 imageSource={imageSource}
+                catalogModelId={listing.item.catalog.id}
+                relationship={relationshipMap?.get(listing.item.catalog.id) ?? null}
               />
             )
           })}

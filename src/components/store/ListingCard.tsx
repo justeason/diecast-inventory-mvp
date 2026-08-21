@@ -1,7 +1,9 @@
 import Link from 'next/link'
 import { AddToCartButton } from './AddToCartButton'
+import { CatalogActions } from './CatalogActions'
 import { PhotoThumbnail } from '@/components/shared/PhotoThumbnail'
 import type { CartItem } from '@/lib/cart'
+import type { CatalogRelationshipEntry } from '@/lib/catalogRelationshipQuery'
 
 const CONDITION_LABELS: Record<string, string> = {
   mint: 'Mint',
@@ -32,9 +34,18 @@ type Props = {
   }
   photoUrl?: string | null
   imageSource?: 'item' | 'catalog' | 'none'
+  // 16F: undefined (the /market call sites) renders exactly as before — no actions
+  // tray, no data-layer change there. Only callers that pass catalogModelId (i.e.
+  // /browse, which already fetches item.catalog.id) get the interaction tray, so
+  // this stays one shared card component without forcing every caller to adopt the
+  // new relationship-state query.
+  catalogModelId?: string
+  // null = anonymous visitor (no private query was issued); a real entry = the
+  // authenticated customer's actual Want/Collection relationship for this model.
+  relationship?: CatalogRelationshipEntry | null
 }
 
-export function ListingCard({ listing, photoUrl, imageSource }: Props) {
+export function ListingCard({ listing, photoUrl, imageSource, catalogModelId, relationship }: Props) {
   const { item } = listing
   const { catalog } = item
 
@@ -86,6 +97,13 @@ export function ListingCard({ listing, photoUrl, imageSource }: Props) {
 
       <div className="px-4 pb-4">
         <AddToCartButton item={cartItem} />
+        {catalogModelId && (
+          <CatalogActions
+            catalogModelId={catalogModelId}
+            modelName={`${catalog.brand} ${catalog.name}`}
+            relationship={relationship ?? null}
+          />
+        )}
       </div>
     </div>
   )

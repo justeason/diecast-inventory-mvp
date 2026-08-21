@@ -1,6 +1,7 @@
 'use server'
 
 import { z } from 'zod'
+import { Prisma } from '@prisma/client'
 import { del } from '@vercel/blob'
 import { prisma } from '@/lib/prisma'
 import { getBuyerSession } from '@/lib/buyerSession'
@@ -168,14 +169,30 @@ export async function createCollectionItem(
     }
   }
 
-  const item = await prisma.collectionItem.create({
-    data: {
-      profileId: session.profileId,
-      catalogId: resolvedCatalogId ?? undefined,
-      isPublic,
-      ...toDbFields(result.data),
-    },
-  })
+  // 16F Final: the findFirst check above is a fast-path for a friendly error in
+  // the common case — it is NOT what makes this race-safe. Under true concurrency
+  // two requests can both pass that check before either commits. The DB-side
+  // @@unique([profileId, catalogId]) constraint (see schema.prisma) is the actual
+  // authoritative guarantee; this catch handles the losing request of that race
+  // the same way, rather than letting it crash with a raw Prisma error.
+  let item: { id: string }
+  try {
+    item = await prisma.collectionItem.create({
+      data: {
+        profileId: session.profileId,
+        catalogId: resolvedCatalogId ?? undefined,
+        isPublic,
+        ...toDbFields(result.data),
+      },
+    })
+  } catch (e) {
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+      return {
+        errors: { catalogId: ['You already have this model in your collection. Edit the existing item to adjust the quantity.'] },
+      }
+    }
+    throw e
+  }
 
   if (isPublic) updateTag('community-leaderboards')
   redirect(`/account/collection/${item.id}`)
