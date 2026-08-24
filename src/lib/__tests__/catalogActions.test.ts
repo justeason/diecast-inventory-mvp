@@ -157,8 +157,8 @@ describe('CatalogActions.tsx: reuses authoritative mutations only, no new engine
   })
 
   it('ownership is never a destructive toggle — the owned state renders a Link to manage the item, never a remove/delete form', () => {
-    const ownedIdx = src.indexOf('✓ In Collection')
-    const blockStart = src.lastIndexOf('collectionItemId ? (', ownedIdx)
+    const ownedIdx = src.indexOf('✓ Own')
+    const blockStart = src.lastIndexOf('collectionItemId && (', ownedIdx)
     const block = src.slice(blockStart, ownedIdx + 40)
     expect(block).toContain('<Link')
     expect(block).not.toContain('<form')
@@ -166,7 +166,7 @@ describe('CatalogActions.tsx: reuses authoritative mutations only, no new engine
   })
 
   it('owned quantity comes from relationship.ownedQuantity (CollectionItem.quantity), never a derived/row count', () => {
-    expect(src).toContain('ownedQuantity !== null ? ` · ${ownedQuantity}` : \'\'')
+    expect(src).toContain('ownedQuantity !== null ? ` ${ownedQuantity}` : \'\'')
     expect(src).not.toMatch(/\.length\}\s*`\s*\)/)
   })
 
@@ -184,15 +184,15 @@ describe('CatalogActions.tsx: reuses authoritative mutations only, no new engine
   })
 
   it('anonymous (relationship === null) shows all three private actions as sign-in links to /account, never a fabricated wanted/owned state', () => {
-    const anonLinks = [...src.matchAll(/href="\/account" aria-label=\{`Sign in to [^`]+`\}/g)]
+    const anonLinks = [...src.matchAll(/href="\/account"[^>]*aria-label=\{`Sign in to [^`]+`\}/g)]
     expect(anonLinks.length).toBe(3)
     expect(src).not.toMatch(/relationship\s*\?\?\s*\{\s*wanted:\s*false/)
   })
 
-  it('every action carries a model-scoped accessible label, not an icon-only control', () => {
-    expect(src).toContain('aria-label={`Want ${modelName}`}')
-    expect(src).toContain('aria-label={`Remove ${modelName} from Wanted`}')
-    expect(src).toContain('aria-label={`Add ${modelName} to Collection`}')
+  it('every action carries a model-scoped accessible label, not an icon-only control (Want/Unwant/Add-to-Collection via PendingActionButton\'s ariaLabel prop, the rest as plain aria-label)', () => {
+    expect(src).toContain('ariaLabel={`Want ${modelName}`}')
+    expect(src).toContain('ariaLabel={`Remove ${modelName} from Wanted`}')
+    expect(src).toContain('ariaLabel={`Add ${modelName} to Collection`}')
     expect(src).toContain('aria-label={`View owned ${modelName}`}')
     expect(src).toContain('aria-label={`Sell one ${modelName}`}')
   })

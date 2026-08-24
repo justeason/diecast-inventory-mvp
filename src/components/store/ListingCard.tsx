@@ -60,9 +60,16 @@ export function ListingCard({ listing, photoUrl, imageSource, catalogModelId, re
   }
 
   return (
-    <div className="rounded-lg border border-gray-200 overflow-hidden bg-white hover:border-gray-400 transition-colors">
-      <Link href={`/browse/${listing.id}`} className="group block">
-        <div className="aspect-square overflow-hidden relative">
+    // 16G: `group` here (not `overflow-hidden` — see below) lets
+    // CatalogActionsMenu's secondary tray reveal on hover/focus-within anywhere
+    // over the card, not just its own small trigger button.
+    <div className="group rounded-lg border border-gray-200 bg-white hover:border-gray-400 transition-colors">
+      <Link href={`/browse/${listing.id}`} className="group/title block">
+        {/* overflow-hidden lives only on the image wrapper (rounded-t-lg matches
+            the card's own corners) — the outer card no longer clips overflow, so
+            CatalogActionsMenu's absolutely-positioned panel can extend past the
+            card's footer without being cut off. */}
+        <div className="aspect-square overflow-hidden rounded-t-lg relative">
           <PhotoThumbnail photoUrl={photoUrl} alt={listing.title} size="fill" />
           {imageSource === 'catalog' && (
             <div className="absolute bottom-0 left-0 right-0 bg-gray-900/60 px-2 py-1">
@@ -72,7 +79,7 @@ export function ListingCard({ listing, photoUrl, imageSource, catalogModelId, re
         </div>
 
         <div className="p-4 pb-3">
-          <h3 className="font-medium text-gray-900 group-hover:text-black leading-snug line-clamp-2">
+          <h3 className="font-medium text-gray-900 group-hover/title:text-black leading-snug line-clamp-2">
             {listing.title}
           </h3>
           <p className="text-xl font-bold mt-1">${listing.price.toFixed(2)}</p>
