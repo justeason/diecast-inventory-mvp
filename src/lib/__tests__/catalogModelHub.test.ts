@@ -167,7 +167,7 @@ describe('16H: hub page structure, 404, read-only render, privacy', () => {
 
   it('has exactly one h1 with the model name, and a heading for the Listings section', () => {
     expect(hubSrc.match(/<h1/g)?.length).toBe(1)
-    expect(hubSrc).toContain('Available to Buy')
+    expect(hubSrc).toContain('Available Copies')
   })
 })
 
@@ -263,31 +263,18 @@ describe('16H: Want/Collection/Sell all work even when hub.listings is empty', (
 // ── Eligible Listings / Buy / no auto-selection (Part I, J, K, AK) ──────────────
 
 describe('16H: Available Listings — real physical choices, Buy stays Listing-specific', () => {
-  it('reuses the shared ListingCard component — no forked/second card implementation', () => {
-    expect(hubSrc).toContain("import { ListingCard } from '@/components/store/ListingCard'")
-    expect(hubSrc).toContain('<ListingCard')
-  })
-
-  it('ListingCard is rendered WITHOUT catalogModelId/relationship on the hub — suppresses the duplicated per-Listing relationship tray (model-level state already shown once, above)', () => {
-    const idx = hubSrc.indexOf('<ListingCard')
-    const callBlock = hubSrc.slice(idx, hubSrc.indexOf('/>', idx))
-    expect(callBlock).not.toContain('catalogModelId')
-    expect(callBlock).not.toContain('relationship')
-  })
-
-  it('every returned Listing keeps its own Buy action (AddToCartButton) — the model header itself has no Add-to-Cart mutation', () => {
-    expect(hubCode).not.toMatch(/AddToCartButton/)
-    expect(hubCode).not.toContain('useCart')
-  })
-
+  // 16I Part B deliberately replaces the ListingCard-reuse presentation with a
+  // dedicated CatalogListingOption component (one physical-copy comparison row) —
+  // see catalogListingOption.test.ts for full coverage of that architecture. The
+  // "no forked Buy implementation" / "no auto-selection" invariants this block
+  // used to assert against ListingCard now live there against CatalogListingOption.
   it('no arbitrary cheapest-Listing auto-selection — the hub never picks one Listing out of the array to feature/cart', () => {
     expect(hubCode).not.toMatch(/listings\[0\]/)
     expect(hubCode).not.toMatch(/\.sort\(/)
   })
 
-  it('CatalogModel price is never used as a cart item — cartItem construction lives only inside ListingCard, keyed by each Listing\'s own id/price', () => {
+  it('CatalogModel price is never used as a cart item — cartItem construction lives only inside CatalogListingOption, keyed by each Listing\'s own id/price', () => {
     expect(hubSrc).not.toContain('cartItem')
-    expect(listingCardSrc).toContain('listingId: listing.id')
   })
 })
 

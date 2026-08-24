@@ -8,7 +8,7 @@ import { getCatalogModelHub, LISTING_PAGE_SIZE } from '@/lib/catalogModelHubQuer
 import { getCatalogValuation } from '@/lib/advancedValuationQuery'
 import type { AdvancedConfidence } from '@/lib/advancedValuation'
 import { CatalogModelActions } from '@/components/store/CatalogModelActions'
-import { ListingCard } from '@/components/store/ListingCard'
+import { CatalogListingOption } from '@/components/store/CatalogListingOption'
 import { PhotoThumbnail } from '@/components/shared/PhotoThumbnail'
 
 export const dynamic = 'force-dynamic'
@@ -125,28 +125,24 @@ export default async function CatalogModelHubPage({
         </section>
       )}
 
-      <section id="available-listings">
-        <h2 className="text-sm font-semibold text-gray-900 mb-3">Available to Buy</h2>
+      <section id="available-listings" aria-labelledby="available-copies-heading">
+        <h2 id="available-copies-heading" className="text-sm font-semibold text-gray-900 mb-1">
+          Available Copies
+        </h2>
 
         {hasListings ? (
           <>
             <p className="text-sm text-gray-500 mb-4">
-              {hub.listingCount} available
-              {hub.lowestPrice !== null && ` from $${hub.lowestPrice.toFixed(2)}`}
+              {hub.listingCount} {hub.listingCount === 1 ? 'copy' : 'copies'} available
+              {hub.lowestPrice !== null && <> <span aria-hidden="true">·</span> Lowest price ${hub.lowestPrice.toFixed(2)}</>}
             </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-              {hub.listings.map((listing) => {
-                const photo = listing.item.photos[0]
-                return (
-                  <ListingCard
-                    key={listing.id}
-                    listing={listing}
-                    photoUrl={photo?.url ?? null}
-                    imageSource={photo ? 'item' : 'none'}
-                  />
-                )
-              })}
-            </div>
+            <ul className="divide-y divide-gray-200 border border-gray-200 rounded-md">
+              {hub.listings.map((listing, index) => (
+                <li key={listing.id}>
+                  <CatalogListingOption listing={listing} modelName={modelName} index={index} />
+                </li>
+              ))}
+            </ul>
             {hub.nextCursor && (
               <div className="mt-6">
                 <Link
