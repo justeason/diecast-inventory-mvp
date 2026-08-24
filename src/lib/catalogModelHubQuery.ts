@@ -6,6 +6,7 @@
 // model has more Listings than one page. No N+1, no relationship/valuation query
 // lives here (those are the caller's job — see /catalog/[id]/page.tsx).
 import { prisma } from '@/lib/prisma'
+import { eligibleListingWhere } from './listingEligibility'
 
 export const LISTING_PAGE_SIZE = 24
 
@@ -63,10 +64,9 @@ export async function getCatalogModelHub(
   if (!model) return null
 
   // Same purchasable-Listing predicate /browse's own query uses, scoped to this model.
-  const listingWhere = {
-    status: 'active' as const,
-    item: { status: 'available' as const, catalogId: catalogModelId },
-  }
+  // 16J: extracted to a shared helper (listingEligibility.ts) — reused unchanged by
+  // catalogDiscoveryQuery.ts's availability aggregation.
+  const listingWhere = eligibleListingWhere(catalogModelId)
 
   const [listingCount, priceAgg, rows] = await Promise.all([
     prisma.listing.count({ where: listingWhere }),

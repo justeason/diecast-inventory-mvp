@@ -153,9 +153,9 @@ describe('16I: preserves the exact 16H eligibility predicate; no client-derived 
     expect(optionSrc).not.toMatch(/where:/)
   })
 
-  it('the eligible-Listing query predicate in catalogModelHubQuery.ts is unchanged from 16H', () => {
-    expect(queryModuleSrc).toContain("status: 'active' as const")
-    expect(queryModuleSrc).toContain("item: { status: 'available' as const, catalogId: catalogModelId }")
+  it('the eligible-Listing query predicate is semantically unchanged from 16H (16J extracted it to a shared helper, reused verbatim)', () => {
+    expect(queryModuleSrc).toContain("import { eligibleListingWhere } from './listingEligibility'")
+    expect(queryModuleSrc).toContain('eligibleListingWhere(catalogModelId)')
   })
 
   it('AddToCartButton (unmodified) remains the sole cart-mutation authority — no client reservation/availability truth added', () => {

@@ -203,6 +203,15 @@ export default async function BrowsePage({
     <>
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Browse Listings</h1>
+        {/* 16J: contextual discovery link — not a new primary nav item. /browse is
+            purchasable inventory only; a customer looking for a model that has zero
+            active Listings needs a way to find it anyway. */}
+        <p className="mt-1 text-sm text-gray-500">
+          Looking for a model that isn&apos;t currently for sale?{' '}
+          <Link href="/catalog" className="text-gray-700 underline underline-offset-2">
+            Explore all models
+          </Link>
+        </p>
       </div>
 
       <SearchFilterBar

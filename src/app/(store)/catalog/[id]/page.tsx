@@ -72,9 +72,12 @@ export default async function CatalogModelHubPage({
 
   return (
     <div className="max-w-4xl">
-      <div className="mb-6">
+      <div className="mb-6 flex flex-wrap gap-x-4 gap-y-1">
+        <Link href="/catalog" className="text-sm text-gray-500 hover:text-gray-900">
+          ← Back to Catalog
+        </Link>
         <Link href="/browse" className="text-sm text-gray-500 hover:text-gray-900">
-          ← Browse
+          ← Browse Listings
         </Link>
       </div>
 
