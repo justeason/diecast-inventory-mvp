@@ -104,6 +104,17 @@ export function ListingCard({ listing, photoUrl, imageSource, catalogModelId, re
 
       <div className="px-4 pb-4">
         <AddToCartButton item={cartItem} />
+        {/* 16H: link to the canonical CatalogModel hub — this Buy action stays
+            targeted at this exact Listing; "View Model" only navigates to the
+            model's own page, it never changes what Buy purchases. */}
+        {catalogModelId && (
+          <Link
+            href={`/catalog/${catalogModelId}`}
+            className="mt-2 inline-block text-xs text-gray-500 hover:text-gray-900 transition-colors"
+          >
+            View Model →
+          </Link>
+        )}
         {catalogModelId && (
           <CatalogActions
             catalogModelId={catalogModelId}

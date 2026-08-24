@@ -370,9 +370,9 @@ export default async function CollectionListPage({
                           >
                             Sell One
                           </Link>
-                          {item.catalog && (
+                          {item.catalogId && (
                             <Link
-                              href={`/browse?brand=${encodeURIComponent(item.catalog.brand)}&q=${encodeURIComponent(item.catalog.name)}`}
+                              href={`/catalog/${item.catalogId}`}
                               aria-label={`View market for ${name}`}
                               className="text-gray-500 hover:text-gray-900 transition-colors"
                             >

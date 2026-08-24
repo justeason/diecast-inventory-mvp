@@ -11,27 +11,32 @@ import type { CatalogRelationshipEntry } from '@/lib/catalogRelationshipQuery'
 // return an ActionState (used elsewhere with useActionState for error display). No
 // new mutation logic lives here; these only adapt the return type and inject the
 // catalogModelId the card already knows, exactly as a hidden form field would.
+// Exported so the 16H CatalogModel hub (CatalogModelActions.tsx) can reuse them
+// verbatim instead of duplicating the Want/Collection mutation wiring.
 //
-// Want/Unwant stay on /browse (no redirect), so — rather than assume framework-
-// implicit refresh behavior — these two wrappers explicitly revalidate '/browse'
-// themselves, narrowly, without touching addToWantedList/removeFromWantedList
-// (which stay unchanged and keep their own existing '/account/wanted' revalidation
-// for every OTHER caller). createCollectionItem redirects away from /browse on
-// success, so addToCollectionAction needs no revalidation of its own.
-async function wantAction(catalogModelId: string, formData: FormData): Promise<void> {
+// Want/Unwant stay on their calling page (no redirect), so — rather than assume
+// framework-implicit refresh behavior — these two wrappers explicitly revalidate
+// both '/browse' (grid) and this specific model's hub path themselves, narrowly,
+// without touching addToWantedList/removeFromWantedList (which stay unchanged and
+// keep their own existing '/account/wanted' revalidation for every OTHER caller).
+// createCollectionItem redirects away on success, so addToCollectionAction needs
+// no revalidation of its own.
+export async function wantAction(catalogModelId: string, formData: FormData): Promise<void> {
   'use server'
   formData.set('catalogModelId', catalogModelId)
   await addToWantedList(null, formData)
   revalidatePath('/browse')
+  revalidatePath(`/catalog/${catalogModelId}`)
 }
 
-async function unwantAction(wantedId: string): Promise<void> {
+export async function unwantAction(catalogModelId: string, wantedId: string): Promise<void> {
   'use server'
   await removeFromWantedList(wantedId)
   revalidatePath('/browse')
+  revalidatePath(`/catalog/${catalogModelId}`)
 }
 
-async function addToCollectionAction(catalogModelId: string, formData: FormData): Promise<void> {
+export async function addToCollectionAction(catalogModelId: string, formData: FormData): Promise<void> {
   'use server'
   formData.set('catalogId', catalogModelId)
   await createCollectionItem(null, formData)
@@ -144,7 +149,7 @@ export function CatalogActions({
             ♡ Want
           </Link>
         ) : wanted ? (
-          <form action={unwantAction.bind(null, wantedId!)}>
+          <form action={unwantAction.bind(null, catalogModelId, wantedId!)}>
             <PendingActionButton
               label="♥ Wanted"
               pendingLabel="Removing…"

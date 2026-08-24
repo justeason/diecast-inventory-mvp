@@ -414,10 +414,9 @@ describe('16F Final: does not claim whole-catalog coverage — documented interi
     expect(block).toContain("distinct: ['brand']")
   })
 
-  it('no new model-centric catalog/detail route was created in this pass', () => {
-    const catalogRouteExists = fs.existsSync(path.join(root, 'src/app/(store)/catalog'))
-    expect(catalogRouteExists).toBe(false)
-  })
+  // 16H deliberately adds exactly this route (the canonical CatalogModel hub —
+  // see catalogModelHub.test.ts) — this 16F-era assertion is intentionally
+  // superseded, not violated. Left as a historical marker, not a live guard.
 
   it('/market remains completely unchanged by this pass — no relationship wiring added there', () => {
     const marketSrc = readSrc('src/app/(store)/market/page.tsx')

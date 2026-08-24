@@ -1402,18 +1402,16 @@ describe('16E: Sell One starts the existing authoritative seller workflow only',
   })
 })
 
-describe('16E: View Market reuses the existing /browse destination — no second market page', () => {
+describe('16H: View Market links to the canonical CatalogModel hub — no second market page', () => {
   const src_ = src('src/app/(store)/account/collection/page.tsx')
 
-  it('links to /browse using the existing supported brand + q filters, only when a catalog match exists', () => {
-    expect(src_).toContain('/browse?brand=${encodeURIComponent(item.catalog.brand)}&q=${encodeURIComponent(item.catalog.name)}')
-    expect(src_).toContain('{item.catalog && (')
+  it('links to /catalog/[id] using the item\'s own catalogId, only when a catalog match exists', () => {
+    expect(src_).toContain('href={`/catalog/${item.catalogId}`}')
+    expect(src_).toContain('{item.catalogId && (')
   })
 
-  it('/browse actually supports brand and q as documented filters', () => {
-    const browseSrc = src('src/app/(store)/browse/page.tsx')
-    expect(browseSrc).toContain('brand?: string')
-    expect(browseSrc).toContain('q?: string')
+  it('the /catalog/[id] route actually exists', () => {
+    expect(fs.existsSync(path.join(root, 'src/app/(store)/catalog/[id]/page.tsx'))).toBe(true)
   })
 })
 

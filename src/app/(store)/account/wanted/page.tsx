@@ -238,7 +238,12 @@ export default async function WantedListPage({
                   )}
 
                   <div className="flex-1 min-w-0">
-                    <p className="font-medium text-gray-900 truncate">{name}</p>
+                    <Link
+                      href={`/catalog/${entry.catalog.id}`}
+                      className="font-medium text-gray-900 hover:underline underline-offset-2 truncate block"
+                    >
+                      {name}
+                    </Link>
                     {entry.catalog.series && (
                       <p className="text-xs text-gray-400 mt-0.5 truncate">{entry.catalog.series}</p>
                     )}
