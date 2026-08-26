@@ -211,6 +211,11 @@ export default async function BrowsePage({
           <Link href="/catalog" className="text-gray-700 underline underline-offset-2">
             Explore all models
           </Link>
+          {' '}or{' '}
+          <Link href="/capture" className="text-gray-700 underline underline-offset-2">
+            identify a model from a photo
+          </Link>
+          .
         </p>
       </div>
 

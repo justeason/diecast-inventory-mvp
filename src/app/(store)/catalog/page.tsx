@@ -40,7 +40,10 @@ export default async function CatalogDiscoveryPage({
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Model Catalog</h1>
         <p className="mt-1 text-sm text-gray-500">
-          Every model we track — including ones not currently for sale.
+          Every model we track — including ones not currently for sale.{' '}
+          <Link href="/capture" className="text-gray-700 underline underline-offset-2">
+            Identify from photo
+          </Link>
         </p>
       </div>
 
@@ -58,6 +61,13 @@ export default async function CatalogDiscoveryPage({
               .
             </p>
           )}
+          <p className="text-sm text-gray-400">
+            Or{' '}
+            <Link href="/capture" className="text-gray-700 underline underline-offset-2">
+              try a photo
+            </Link>
+            .
+          </p>
         </div>
       ) : (
         <section aria-labelledby="catalog-results-heading">
