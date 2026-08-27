@@ -1,6 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
+import { redirect } from 'next/navigation'
 import { addToWantedList, removeFromWantedList } from '@/lib/actions/wantedList'
 import { createCollectionItem } from '@/lib/actions/collectionItems'
 
@@ -44,4 +45,13 @@ export async function unwantAction(catalogModelId: string, wantedId: string): Pr
 export async function addToCollectionAction(catalogModelId: string, formData: FormData): Promise<void> {
   formData.set('catalogId', catalogModelId)
   await createCollectionItem(null, formData)
+}
+
+// 16M: used only by the /account/continue Want continuation — reuses wantAction
+// verbatim (same mutation, same /browse + /catalog/[id] revalidation), then
+// leaves the continuation page (Part Y) so the customer lands somewhere showing
+// authoritative post-mutation state, rather than a stale query-param screen.
+export async function continueWantAction(catalogModelId: string, formData: FormData): Promise<void> {
+  await wantAction(catalogModelId, formData)
+  redirect(`/catalog/${catalogModelId}`)
 }

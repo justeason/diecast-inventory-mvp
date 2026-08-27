@@ -8,6 +8,7 @@ import { normalizeEmail } from '@/lib/normalizeEmail'
 import { hashToken } from '@/lib/hashToken'
 import { createBuyerSession, clearBuyerSession } from '@/lib/buyerSession'
 import { buildMagicLinkEmail } from '@/lib/email/magicLinkEmail'
+import { isSafeAccountReturnTo } from '@/lib/customerModelIntent'
 
 const TOKEN_TTL_MS        = 15 * 60 * 1000  // 15 minutes
 const RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000  // 10 minutes
@@ -41,12 +42,17 @@ export async function requestBuyerOrderLink(
   // Always return the same generic state — do not reveal whether the profile exists.
   const SENT: RequestLinkState = { status: 'sent' }
 
+  // 16M Final: a CustomerProfile is NOT required to request a link — first-time
+  // customers (no profile yet) can request one too; CustomerLoginToken.email is
+  // an independent field, not an FK, so nothing here depends on a profile
+  // existing. The profile itself is created later, only inside
+  // verifyBuyerLoginToken, after email ownership is actually proven. This lookup
+  // is read-only and used solely to personalize the email greeting for existing
+  // customers — it never gates whether a token is created or an email is sent.
   const profile = await prisma.customerProfile.findUnique({
     where: { email },
-    select: { id: true, name: true },
+    select: { name: true },
   })
-
-  if (!profile) return SENT
 
   // Rate limit: max RATE_LIMIT_MAX requests per RATE_LIMIT_WINDOW_MS
   const windowStart = new Date(Date.now() - RATE_LIMIT_WINDOW_MS)
@@ -69,16 +75,24 @@ export async function requestBuyerOrderLink(
     data: { email, tokenHash, expiresAt },
   })
 
+  // 16M: optional local continuation destination, re-validated here (never trust
+  // the client-submitted hidden field as-is) before it is allowed anywhere near
+  // the outgoing email URL. Invalid/absent → simply omitted; existing behavior.
+  const rawReturnTo = (formData.get('returnTo') as string | null) ?? null
+  const safeReturnTo = isSafeAccountReturnTo(rawReturnTo)
+
   // Build verify URL using APP_URL — never trust a request Host header
   const appUrl = (process.env.APP_URL ?? 'https://www.collectntrades.com').replace(/\/$/, '')
-  const verifyUrl = `${appUrl}/account/orders/verify?token=${rawToken}`
+  const verifyUrl = safeReturnTo
+    ? `${appUrl}/account/orders/verify?token=${rawToken}&returnTo=${encodeURIComponent(safeReturnTo)}`
+    : `${appUrl}/account/orders/verify?token=${rawToken}`
 
   // Send email (fire-tolerant: return SENT regardless of send outcome)
   if (process.env.RESEND_API_KEY && process.env.ORDER_DIGEST_FROM_EMAIL) {
     try {
       const resend = new Resend(process.env.RESEND_API_KEY)
       const { subject, html, text } = buildMagicLinkEmail({
-        name: profile.name,
+        name: profile?.name,
         verifyUrl,
         appUrl,
       })
@@ -149,20 +163,31 @@ export async function verifyBuyerLoginToken(
     return { status: 'error', message: 'Verification failed. Please request a new link.' }
   }
 
-  // Look up CustomerProfile by normalized email
-  const profile = await prisma.customerProfile.findUnique({
+  // 16M Final: token consumption above is already atomic/single-use, so by this
+  // point email ownership is proven — safe to create a CustomerProfile now, exactly
+  // once, if one doesn't already exist. Race-safe via the DB-level @unique
+  // constraint on CustomerProfile.email (upsert, not findUnique-then-create) —
+  // the exact same pattern already used by checkout (createOrder in orders.ts).
+  // Never touches name/phone/notes on an existing profile — a login attempt
+  // carries no such data to update, unlike checkout.
+  const profile = await prisma.customerProfile.upsert({
     where: { email: tokenRecord.email },
+    update: {},
+    create: { email: tokenRecord.email },
     select: { id: true },
   })
-
-  if (!profile) {
-    return { status: 'error', message: 'No account found for this email. Please contact us if you believe this is an error.' }
-  }
 
   // Create the authenticated buyer session and set the cookie
   await createBuyerSession(profile.id)
 
-  redirect('/account/orders')
+  // 16M: re-validate the client-submitted returnTo one final time, right before
+  // the redirect — the earlier hops (form render, email URL) already validated
+  // it, but a hidden field is still user-editable, so this is the hop that
+  // actually matters for open-redirect defense (Part M/N).
+  const rawReturnTo = (formData.get('returnTo') as string | null) ?? null
+  const safeReturnTo = isSafeAccountReturnTo(rawReturnTo)
+
+  redirect(safeReturnTo ?? '/account/orders')
 }
 
 // ─── signOutBuyer ─────────────────────────────────────────────────────────────

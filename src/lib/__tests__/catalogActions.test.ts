@@ -194,8 +194,10 @@ describe('CatalogActions.tsx: reuses authoritative mutations only, no new engine
     expect(block).not.toContain('sellerSubmission.create')
   })
 
-  it('anonymous (relationship === null) shows all three private actions as sign-in links to /account, never a fabricated wanted/owned state', () => {
-    const anonLinks = [...src.matchAll(/href="\/account"[^>]*aria-label=\{`Sign in to [^`]+`\}/g)]
+  it('anonymous (relationship === null) shows all three private actions as sign-in links carrying model intent (16M), never a fabricated wanted/owned state', () => {
+    // 16M: anonymous links now preserve intent via buildAccountIntentHref rather
+    // than dead-ending at plain /account — see customerModelIntent.test.ts.
+    const anonLinks = [...src.matchAll(/href=\{buildAccountIntentHref\(\{ action: '(want|own|sell)', catalogModelId \}\)\}[^>]*aria-label=\{`Sign in to [^`]+`\}/g)]
     expect(anonLinks.length).toBe(3)
     expect(src).not.toMatch(/relationship\s*\?\?\s*\{\s*wanted:\s*false/)
   })

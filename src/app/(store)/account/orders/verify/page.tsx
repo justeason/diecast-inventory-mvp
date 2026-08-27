@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import { VerifyBuyerLoginForm } from '@/components/store/VerifyBuyerLoginForm'
+import { isSafeAccountReturnTo } from '@/lib/customerModelIntent'
 
 export const dynamic = 'force-dynamic'
 
@@ -16,14 +17,19 @@ const VALID_TOKEN_RE = /^[0-9a-f]{64}$/
 export default async function VerifyOrderAccessPage({
   searchParams,
 }: {
-  searchParams: Promise<{ token?: string }>
+  searchParams: Promise<{ token?: string; returnTo?: string }>
 }) {
-  const { token } = await searchParams
+  const { token, returnTo } = await searchParams
 
   // Format check only — do not query or consume the token on GET.
   // Email scanners fetch links but do not submit forms, so the token stays valid
   // until the buyer explicitly clicks the confirmation button below.
   const tokenIsValid = typeof token === 'string' && VALID_TOKEN_RE.test(token)
+
+  // 16M: re-validated here too (defense in depth) — this only decides whether to
+  // forward the value into the form's hidden field; the actual redirect decision
+  // is made server-side again in verifyBuyerLoginToken, right before redirect().
+  const safeReturnTo = isSafeAccountReturnTo(returnTo)
 
   if (!tokenIsValid) {
     return (
@@ -54,7 +60,7 @@ export default async function VerifyOrderAccessPage({
       {/* Token is passed to the client form as a prop.
           It is placed in a hidden input and submitted via POST (Server Action).
           It is never rendered as visible text. */}
-      <VerifyBuyerLoginForm token={token} />
+      <VerifyBuyerLoginForm token={token} returnTo={safeReturnTo ?? undefined} />
 
       <p className="mt-6 text-xs text-gray-400">
         Didn&rsquo;t request this?{' '}

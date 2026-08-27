@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { CatalogActionsPopup } from './CatalogActionsPopup'
 import { PendingActionButton } from './PendingActionButton'
 import type { CatalogRelationshipEntry } from '@/lib/catalogRelationshipQuery'
+import { buildAccountIntentHref } from '@/lib/customerModelIntent'
 // 16L: wantAction/unwantAction/addToCollectionAction now live in
 // catalogModelDomainActions.ts (a dedicated top-level "use server" file) — moved
 // there, unchanged, because CaptureCandidateActions.tsx (16L, a Client Component)
@@ -42,10 +43,18 @@ function SecondaryActions({
   if (!isAuthenticated) {
     return (
       <>
-        <Link href="/account" aria-label={`Sign in to add ${modelName} to your collection`} className={itemCls}>
+        <Link
+          href={buildAccountIntentHref({ action: 'own', catalogModelId })}
+          aria-label={`Sign in to add ${modelName} to your collection`}
+          className={itemCls}
+        >
           + Add to Collection
         </Link>
-        <Link href="/account" aria-label={`Sign in to sell ${modelName}`} className={itemCls}>
+        <Link
+          href={buildAccountIntentHref({ action: 'sell', catalogModelId })}
+          aria-label={`Sign in to sell ${modelName}`}
+          className={itemCls}
+        >
           Sell One
         </Link>
       </>
@@ -116,7 +125,11 @@ export function CatalogActions({
       {/* Persistent: Want (reversible, common) + owned status (useful, non-destructive) */}
       <div className="flex items-center gap-3">
         {!isAuthenticated ? (
-          <Link href="/account" aria-label={`Sign in to want ${modelName}`} className={persistentCls}>
+          <Link
+            href={buildAccountIntentHref({ action: 'want', catalogModelId })}
+            aria-label={`Sign in to want ${modelName}`}
+            className={persistentCls}
+          >
             ♡ Want
           </Link>
         ) : wanted ? (

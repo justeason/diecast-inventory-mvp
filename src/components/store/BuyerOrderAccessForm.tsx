@@ -17,7 +17,13 @@ function SubmitButton() {
   )
 }
 
-export function BuyerOrderAccessForm() {
+// 16M: `returnTo` is optional and additive — every existing caller (Orders,
+// Collection, Community, Sell, /account itself) omits it and behaves byte-
+// identically. When provided, it must already be the exact output of
+// buildAccountIntentHref (see customerModelIntent.ts) — this form does not
+// validate it itself; requestBuyerOrderLink re-validates server-side before ever
+// embedding it in the magic-link email (Part M — never trust a hop's own claim).
+export function BuyerOrderAccessForm({ returnTo }: { returnTo?: string } = {}) {
   const [state, action] = useActionState(requestBuyerOrderLink, { status: 'idle' })
 
   if (state.status === 'sent') {
@@ -31,6 +37,8 @@ export function BuyerOrderAccessForm() {
 
   return (
     <form action={action} className="space-y-4">
+      {returnTo && <input type="hidden" name="returnTo" value={returnTo} />}
+
       {state.status === 'error' && (
         <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
           {state.message}

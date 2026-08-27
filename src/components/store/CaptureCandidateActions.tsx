@@ -6,6 +6,7 @@ import { addToCollectionAction } from '@/lib/actions/catalogModelDomainActions'
 import { wantFromCapture, unwantFromCapture } from '@/lib/actions/captureRelationship'
 import { PendingActionButton } from './PendingActionButton'
 import type { CatalogRelationshipEntry } from '@/lib/catalogRelationshipQuery'
+import { buildAccountIntentHref } from '@/lib/customerModelIntent'
 
 type Props = {
   catalogModelId: string
@@ -45,11 +46,17 @@ export function CaptureCandidateActions({ catalogModelId, modelName, initialRela
     ? `/account/collection/${collectionItemId}/sell`
     : `/account/sell/new?catalogId=${encodeURIComponent(catalogModelId)}`
 
+  // 16M: anonymous capture-result actions now preserve intent through sign-in
+  // instead of dead-ending at plain /account.
+  const wantHref = buildAccountIntentHref({ action: 'want', catalogModelId })
+  const ownHref = buildAccountIntentHref({ action: 'own', catalogModelId })
+  const sellIntentHref = buildAccountIntentHref({ action: 'sell', catalogModelId })
+
   return (
     <div className="flex flex-wrap items-center gap-2">
       {/* Want */}
       {!isAuthenticated ? (
-        <Link href="/account" aria-label={`Sign in to want ${modelName}`} className={btnCls}>
+        <Link href={wantHref} aria-label={`Sign in to want ${modelName}`} className={btnCls}>
           ♡ Want This
         </Link>
       ) : wanted ? (
@@ -64,7 +71,7 @@ export function CaptureCandidateActions({ catalogModelId, modelName, initialRela
 
       {/* Collection */}
       {!isAuthenticated ? (
-        <Link href="/account" aria-label={`Sign in to add ${modelName} to your collection`} className={btnCls}>
+        <Link href={ownHref} aria-label={`Sign in to add ${modelName} to your collection`} className={btnCls}>
           ＋ I Own This
         </Link>
       ) : collectionItemId ? (
@@ -79,7 +86,7 @@ export function CaptureCandidateActions({ catalogModelId, modelName, initialRela
 
       {/* Sell One */}
       {!isAuthenticated ? (
-        <Link href="/account" aria-label={`Sign in to sell ${modelName}`} className={btnCls}>
+        <Link href={sellIntentHref} aria-label={`Sign in to sell ${modelName}`} className={btnCls}>
           Sell One
         </Link>
       ) : (
