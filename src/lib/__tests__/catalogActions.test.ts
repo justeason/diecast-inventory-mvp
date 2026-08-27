@@ -145,15 +145,26 @@ describe('browse/page.tsx: 16F relationship-state wiring', () => {
 
 describe('CatalogActions.tsx: reuses authoritative mutations only, no new engine', () => {
   const src = readSrc('src/components/store/CatalogActions.tsx')
+  // 16L: wantAction/unwantAction/addToCollectionAction relocated verbatim to a
+  // dedicated module-level "use server" file (catalogModelDomainActions.ts) so a
+  // Client Component (CaptureCandidateActions.tsx) can invoke them directly —
+  // Next.js forbids inline "use server" bodies in a file reachable from a Client
+  // Component. CatalogActions.tsx now imports + re-exports them unchanged.
+  const domainActionsSrc = readSrc('src/lib/actions/catalogModelDomainActions.ts')
 
   it('Want/Unwant call the existing addToWantedList/removeFromWantedList — no duplicated Wanted logic', () => {
-    expect(src).toContain("import { addToWantedList, removeFromWantedList } from '@/lib/actions/wantedList'")
-    expect(src).not.toMatch(/wantedCatalogModel\.(create|update|delete)/)
+    expect(domainActionsSrc).toContain("import { addToWantedList, removeFromWantedList } from '@/lib/actions/wantedList'")
+    expect(domainActionsSrc).not.toMatch(/wantedCatalogModel\.(create|update|delete)/)
   })
 
   it('Add to Collection calls the existing createCollectionItem — no duplicated Collection logic', () => {
-    expect(src).toContain("import { createCollectionItem } from '@/lib/actions/collectionItems'")
-    expect(src).not.toMatch(/collectionItem\.(create|update|delete)/)
+    expect(domainActionsSrc).toContain("import { createCollectionItem } from '@/lib/actions/collectionItems'")
+    expect(domainActionsSrc).not.toMatch(/collectionItem\.(create|update|delete)/)
+  })
+
+  it('CatalogActions.tsx imports and re-exports the three actions unchanged, rather than duplicating them', () => {
+    expect(src).toContain("import { wantAction, unwantAction, addToCollectionAction } from '@/lib/actions/catalogModelDomainActions'")
+    expect(src).toContain('export { wantAction, unwantAction, addToCollectionAction }')
   })
 
   it('ownership is never a destructive toggle — the owned state renders a Link to manage the item, never a remove/delete form', () => {
@@ -202,13 +213,13 @@ describe('CatalogActions.tsx: reuses authoritative mutations only, no new engine
   })
 
   it('wantAction/addToCollectionAction only adapt the return type and inject catalogModelId — no new validation/business logic', () => {
-    const wantFnIdx = src.indexOf('async function wantAction')
-    const wantFnSrc = src.slice(wantFnIdx, src.indexOf('\n}', wantFnIdx))
+    const wantFnIdx = domainActionsSrc.indexOf('async function wantAction')
+    const wantFnSrc = domainActionsSrc.slice(wantFnIdx, domainActionsSrc.indexOf('\n}', wantFnIdx))
     expect(wantFnSrc).toContain("formData.set('catalogModelId', catalogModelId)")
     expect(wantFnSrc).toContain('await addToWantedList(null, formData)')
 
-    const addFnIdx = src.indexOf('async function addToCollectionAction')
-    const addFnSrc = src.slice(addFnIdx, src.indexOf('\n}', addFnIdx))
+    const addFnIdx = domainActionsSrc.indexOf('async function addToCollectionAction')
+    const addFnSrc = domainActionsSrc.slice(addFnIdx, domainActionsSrc.indexOf('\n}', addFnIdx))
     expect(addFnSrc).toContain("formData.set('catalogId', catalogModelId)")
     expect(addFnSrc).toContain('await createCollectionItem(null, formData)')
   })
@@ -363,7 +374,9 @@ describe('16F Final: several Listings sharing one CatalogModel get consistent re
 // ── 16F Final: Want/Unwant revalidate /browse narrowly ──────────────────────────
 
 describe('16F Final: /browse revalidation after Want/Unwant (does not rely on unproven implicit refresh)', () => {
-  const src = readSrc('src/components/store/CatalogActions.tsx')
+  // 16L: these bodies live in catalogModelDomainActions.ts now (see above) — the
+  // revalidation behavior itself is unchanged, only the file moved.
+  const src = readSrc('src/lib/actions/catalogModelDomainActions.ts')
 
   it('wantAction and unwantAction explicitly revalidate /browse — added narrowly in the wrapper, not in the shared domain actions', () => {
     const wantFnIdx = src.indexOf('async function wantAction')

@@ -22,6 +22,12 @@ function stripComments(src: string): string {
 
 const cardSrc = readSrc('src/components/store/ListingCard.tsx')
 const actionsSrc = readSrc('src/components/store/CatalogActions.tsx')
+// 16L: wantAction/unwantAction/addToCollectionAction bodies relocated verbatim to
+// this dedicated module-level "use server" file (required so the Client Component
+// CaptureCandidateActions.tsx can invoke them directly) — re-exported unchanged
+// from CatalogActions.tsx. Tests that inspect the actual function bodies read from
+// here; tests that inspect the JSX component still read actionsSrc.
+const domainActionsSrc = readSrc('src/lib/actions/catalogModelDomainActions.ts')
 const popupSrc = readSrc('src/components/store/CatalogActionsPopup.tsx')
 const pendingSrc = readSrc('src/components/store/PendingActionButton.tsx')
 const browseSrc = readSrc('src/app/(store)/browse/page.tsx')
@@ -203,10 +209,10 @@ describe('16G Final: zero new server queries / domain changes', () => {
 
 describe('16G Final: regression — Want/Collection/Sell/Buy mutation semantics unchanged', () => {
   it('Want/Unwant/Add-to-Collection still call the same authoritative actions with the same field injection', () => {
-    expect(actionsSrc).toContain("import { addToWantedList, removeFromWantedList } from '@/lib/actions/wantedList'")
-    expect(actionsSrc).toContain("import { createCollectionItem } from '@/lib/actions/collectionItems'")
-    const wantFnIdx = actionsSrc.indexOf('async function wantAction')
-    const wantFnSrc = actionsSrc.slice(wantFnIdx, actionsSrc.indexOf('\n}', wantFnIdx))
+    expect(domainActionsSrc).toContain("import { addToWantedList, removeFromWantedList } from '@/lib/actions/wantedList'")
+    expect(domainActionsSrc).toContain("import { createCollectionItem } from '@/lib/actions/collectionItems'")
+    const wantFnIdx = domainActionsSrc.indexOf('async function wantAction')
+    const wantFnSrc = domainActionsSrc.slice(wantFnIdx, domainActionsSrc.indexOf('\n}', wantFnIdx))
     expect(wantFnSrc).toContain("formData.set('catalogModelId', catalogModelId)")
     expect(wantFnSrc).toContain('await addToWantedList(null, formData)')
   })
@@ -311,8 +317,8 @@ describe('16G Final Reconciliation: accessible-name plumbing and PendingActionBu
 
 describe('16G Final Reconciliation: domain-regression facts specific to addToCollectionAction and scope guard', () => {
   it('addToCollectionAction still sets catalogId and calls the unchanged createCollectionItem(null, formData) — quantity/redirect behavior stays inside that untouched action', () => {
-    const fnIdx = actionsSrc.indexOf('async function addToCollectionAction')
-    const fnSrc = actionsSrc.slice(fnIdx, actionsSrc.indexOf('\n}', fnIdx))
+    const fnIdx = domainActionsSrc.indexOf('async function addToCollectionAction')
+    const fnSrc = domainActionsSrc.slice(fnIdx, domainActionsSrc.indexOf('\n}', fnIdx))
     expect(fnSrc).toContain("formData.set('catalogId', catalogModelId)")
     expect(fnSrc).toContain('await createCollectionItem(null, formData)')
   })

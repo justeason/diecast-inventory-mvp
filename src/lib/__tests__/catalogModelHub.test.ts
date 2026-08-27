@@ -202,10 +202,12 @@ describe('16H: CatalogModelActions reuses the exact 16F/16G authoritative action
     expect(actionsRowSrc).toContain("import { wantAction, unwantAction, addToCollectionAction } from './CatalogActions'")
   })
 
-  it('those three actions are exported from CatalogActions.tsx (not duplicated in a new file)', () => {
-    expect(catalogActionsSrc).toContain('export async function wantAction')
-    expect(catalogActionsSrc).toContain('export async function unwantAction')
-    expect(catalogActionsSrc).toContain('export async function addToCollectionAction')
+  it('those three actions are exported from CatalogActions.tsx — bodies live in a dedicated module-level "use server" file (catalogModelDomainActions.ts, 16L, required so a Client Component can invoke them directly), re-exported unchanged, never duplicated', () => {
+    expect(catalogActionsSrc).toContain("export { wantAction, unwantAction, addToCollectionAction }")
+    const domainActionsSrc = readSrc('src/lib/actions/catalogModelDomainActions.ts')
+    expect(domainActionsSrc).toContain('export async function wantAction')
+    expect(domainActionsSrc).toContain('export async function unwantAction')
+    expect(domainActionsSrc).toContain('export async function addToCollectionAction')
   })
 
   it('CatalogModelActions has no Prisma import and no matchWantedList — it is presentation only', () => {
@@ -376,20 +378,23 @@ describe('16H: anonymous is public with no private query; authenticated relation
 // ── Revalidation (Part AI) ───────────────────────────────────────────────────────
 
 describe('16H: Want/Unwant revalidate the hub path narrowly, without broadening shared domain actions', () => {
+  // 16L: bodies live in catalogModelDomainActions.ts now — same behavior, moved file.
+  const domainActionsSrc = readSrc('src/lib/actions/catalogModelDomainActions.ts')
+
   it('wantAction/unwantAction now revalidate both /browse and this specific model\'s hub path', () => {
-    const wantFnIdx = catalogActionsSrc.indexOf('export async function wantAction')
-    const wantFnSrc = catalogActionsSrc.slice(wantFnIdx, catalogActionsSrc.indexOf('\n}', wantFnIdx))
+    const wantFnIdx = domainActionsSrc.indexOf('export async function wantAction')
+    const wantFnSrc = domainActionsSrc.slice(wantFnIdx, domainActionsSrc.indexOf('\n}', wantFnIdx))
     expect(wantFnSrc).toContain("revalidatePath('/browse')")
     expect(wantFnSrc).toContain('revalidatePath(`/catalog/${catalogModelId}`)')
 
-    const unwantFnIdx = catalogActionsSrc.indexOf('export async function unwantAction')
-    const unwantFnSrc = catalogActionsSrc.slice(unwantFnIdx, catalogActionsSrc.indexOf('\n}', unwantFnIdx))
+    const unwantFnIdx = domainActionsSrc.indexOf('export async function unwantAction')
+    const unwantFnSrc = domainActionsSrc.slice(unwantFnIdx, domainActionsSrc.indexOf('\n}', unwantFnIdx))
     expect(unwantFnSrc).toContain("revalidatePath('/browse')")
     expect(unwantFnSrc).toContain('revalidatePath(`/catalog/${catalogModelId}`)')
   })
 
   it('unwantAction now takes catalogModelId as an explicit param (needed to build the hub path) — the shared removeFromWantedList itself is unchanged', () => {
-    expect(catalogActionsSrc).toContain('export async function unwantAction(catalogModelId: string, wantedId: string): Promise<void>')
+    expect(domainActionsSrc).toContain('export async function unwantAction(catalogModelId: string, wantedId: string): Promise<void>')
     const wantedListSrc = readSrc('src/lib/actions/wantedList.ts')
     expect(wantedListSrc).toContain('export async function removeFromWantedList(id: string): Promise<void>')
   })

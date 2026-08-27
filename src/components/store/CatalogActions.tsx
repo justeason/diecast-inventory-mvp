@@ -1,46 +1,17 @@
 import Link from 'next/link'
-import { revalidatePath } from 'next/cache'
-import { addToWantedList, removeFromWantedList } from '@/lib/actions/wantedList'
-import { createCollectionItem } from '@/lib/actions/collectionItems'
 import { CatalogActionsPopup } from './CatalogActionsPopup'
 import { PendingActionButton } from './PendingActionButton'
 import type { CatalogRelationshipEntry } from '@/lib/catalogRelationshipQuery'
+// 16L: wantAction/unwantAction/addToCollectionAction now live in
+// catalogModelDomainActions.ts (a dedicated top-level "use server" file) — moved
+// there, unchanged, because CaptureCandidateActions.tsx (16L, a Client Component)
+// needs to invoke them directly, and Next.js forbids inline "use server" function
+// bodies in a file that is also reachable from a Client Component's module graph.
+// Re-exported below so every existing consumer of this module (CatalogModelActions.tsx)
+// needs no changes at all.
+import { wantAction, unwantAction, addToCollectionAction } from '@/lib/actions/catalogModelDomainActions'
 
-// Thin void-returning wrappers around the existing authoritative mutations —
-// <form action> requires void/Promise<void>, but addToWantedList/createCollectionItem
-// return an ActionState (used elsewhere with useActionState for error display). No
-// new mutation logic lives here; these only adapt the return type and inject the
-// catalogModelId the card already knows, exactly as a hidden form field would.
-// Exported so the 16H CatalogModel hub (CatalogModelActions.tsx) can reuse them
-// verbatim instead of duplicating the Want/Collection mutation wiring.
-//
-// Want/Unwant stay on their calling page (no redirect), so — rather than assume
-// framework-implicit refresh behavior — these two wrappers explicitly revalidate
-// both '/browse' (grid) and this specific model's hub path themselves, narrowly,
-// without touching addToWantedList/removeFromWantedList (which stay unchanged and
-// keep their own existing '/account/wanted' revalidation for every OTHER caller).
-// createCollectionItem redirects away on success, so addToCollectionAction needs
-// no revalidation of its own.
-export async function wantAction(catalogModelId: string, formData: FormData): Promise<void> {
-  'use server'
-  formData.set('catalogModelId', catalogModelId)
-  await addToWantedList(null, formData)
-  revalidatePath('/browse')
-  revalidatePath(`/catalog/${catalogModelId}`)
-}
-
-export async function unwantAction(catalogModelId: string, wantedId: string): Promise<void> {
-  'use server'
-  await removeFromWantedList(wantedId)
-  revalidatePath('/browse')
-  revalidatePath(`/catalog/${catalogModelId}`)
-}
-
-export async function addToCollectionAction(catalogModelId: string, formData: FormData): Promise<void> {
-  'use server'
-  formData.set('catalogId', catalogModelId)
-  await createCollectionItem(null, formData)
-}
+export { wantAction, unwantAction, addToCollectionAction }
 
 // 16G Final: two presentations of the SAME underlying actions, chosen by
 // responsive CSS only (no JS viewport detection) — never two different mutation

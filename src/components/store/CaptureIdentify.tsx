@@ -4,6 +4,7 @@ import { useActionState, useState, useRef, useEffect } from 'react'
 import Link from 'next/link'
 import { identifyModelFromPhoto, type IdentifyResultState, type IdentifyCandidate } from '@/lib/actions/captureIdentify'
 import { PhotoThumbnail } from '@/components/shared/PhotoThumbnail'
+import { CaptureCandidateActions } from '@/components/store/CaptureCandidateActions'
 
 const CONFIDENCE_LABELS: Record<IdentifyCandidate['confidence'], string> = {
   exact: 'Likely match',
@@ -19,11 +20,15 @@ function availabilityLabel(c: IdentifyCandidate): string {
 // 16K: public, anonymous-friendly Quick Capture identification. Distinct from
 // CatalogImageSearch.tsx (the compact authenticated picker embedded in
 // CaptureWizard/CollectionItemForm/WantedListAddForm, left untouched) — this is a
-// full-page identify-first result view with "View Model" links to /catalog/[id]
-// only. No Want/Own/Sell here: those stay on the model hub (CatalogModelActions),
-// per the explicit "keep result CTA to View Model" decision — adding relationship
-// actions here would require a private per-candidate relationship query on a
-// route that must otherwise stay fully public/anonymous-fast.
+// full-page identify-first result view with "View Model" links to /catalog/[id].
+//
+// 16L: each candidate also renders CaptureCandidateActions (Want This / I Own
+// This / Sell One), reusing the exact 16D/16E/16F/16H domain actions. Every
+// candidate row is independently keyed by its own catalogModelId, so — whether
+// there is one "Likely Match" or several "Possible Matches" — actions can never
+// cross-wire to another candidate; showing full actions on every row (rather than
+// a "choose this model first" reveal step) was deliberately chosen because that
+// isolation already makes each row safe.
 export function CaptureIdentify() {
   const [state, formAction, isPending] = useActionState<IdentifyResultState, FormData>(identifyModelFromPhoto, null)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
@@ -121,28 +126,36 @@ export function CaptureIdentify() {
           </h2>
           <ul className="space-y-3">
             {candidates.map((c) => (
-              <li key={c.catalogModelId} className="rounded-lg border border-gray-200 bg-white p-4 flex items-center gap-4">
-                <div className="w-16 h-16 shrink-0 rounded overflow-hidden border border-gray-100 bg-gray-50 relative">
-                  <PhotoThumbnail photoUrl={c.photoUrl} alt={`${c.brand} ${c.name}`} size="fill" />
+              <li key={c.catalogModelId} className="rounded-lg border border-gray-200 bg-white p-4 space-y-3">
+                <div className="flex items-center gap-4">
+                  <div className="w-16 h-16 shrink-0 rounded overflow-hidden border border-gray-100 bg-gray-50 relative">
+                    <PhotoThumbnail photoUrl={c.photoUrl} alt={`${c.brand} ${c.name}`} size="fill" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="font-medium text-gray-900 truncate">
+                      {c.brand} {c.name}
+                      {c.year && <span className="text-gray-500 font-normal"> ({c.year})</span>}
+                    </p>
+                    {(c.series || c.color || c.scale) && (
+                      <p className="text-xs text-gray-500 truncate">{[c.series, c.color, c.scale].filter(Boolean).join(' · ')}</p>
+                    )}
+                    <p className="text-xs text-gray-500 mt-1">
+                      {CONFIDENCE_LABELS[c.confidence]} <span aria-hidden="true">·</span> {availabilityLabel(c)}
+                    </p>
+                  </div>
+                  <Link
+                    href={`/catalog/${c.catalogModelId}`}
+                    className="shrink-0 rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+                  >
+                    View Model
+                  </Link>
                 </div>
-                <div className="min-w-0 flex-1">
-                  <p className="font-medium text-gray-900 truncate">
-                    {c.brand} {c.name}
-                    {c.year && <span className="text-gray-500 font-normal"> ({c.year})</span>}
-                  </p>
-                  {(c.series || c.color || c.scale) && (
-                    <p className="text-xs text-gray-500 truncate">{[c.series, c.color, c.scale].filter(Boolean).join(' · ')}</p>
-                  )}
-                  <p className="text-xs text-gray-500 mt-1">
-                    {CONFIDENCE_LABELS[c.confidence]} <span aria-hidden="true">·</span> {availabilityLabel(c)}
-                  </p>
-                </div>
-                <Link
-                  href={`/catalog/${c.catalogModelId}`}
-                  className="shrink-0 rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
-                >
-                  View Model
-                </Link>
+
+                <CaptureCandidateActions
+                  catalogModelId={c.catalogModelId}
+                  modelName={`${c.brand} ${c.name}`}
+                  initialRelationship={c.relationship}
+                />
               </li>
             ))}
           </ul>

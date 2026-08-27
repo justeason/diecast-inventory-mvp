@@ -8,6 +8,8 @@ import { eligibleListingWhere } from '@/lib/listingEligibility'
 import { checkRateLimit, rateLimitKeyFromHeaders } from '@/lib/rateLimit'
 import { normalizeError } from '@/lib/errors'
 import { getRequestId } from '@/lib/requestId'
+import { getBuyerSession } from '@/lib/buyerSession'
+import { getCatalogRelationshipState, type CatalogRelationshipEntry } from '@/lib/catalogRelationshipQuery'
 
 // Public/anonymous — 5 attempts per 10 minutes per IP. Stricter than the existing
 // authenticated 12G-C image search (10/10min, keyed by profileId) since there is
@@ -39,6 +41,11 @@ export type IdentifyCandidate = {
   confidence: 'exact' | 'strong' | 'possible'
   availableCount: number
   lowestPrice: number | null
+  // null = anonymous visitor (no private query was ever issued for them). A real
+  // (possibly all-empty) entry = the authenticated customer's actual Want/Collection
+  // relationship for this model — exact same 16F batched lookup /browse and
+  // /catalog/[id] already use, never a second relationship engine.
+  relationship: CatalogRelationshipEntry | null
 }
 
 export type IdentifyResultState = {
@@ -63,6 +70,12 @@ function validateUpload(file: File): string | null {
 // only. Recognition is read-only — no Collection/Wanted/SellerSubmission/
 // CustomerProfile record is created here, and the uploaded photo is processed
 // in memory only (never persisted to Blob or the DB).
+//
+// 16L: also enriches each candidate with the requesting customer's existing
+// Want/Collection relationship — a bounded READ only, added to this same action
+// per the explicit 16L architecture decision (recognition stays write-free; this
+// is not a second recognition pass, session absence is not an error). Anonymous
+// visitors (getBuyerSession() === null) never trigger this query at all.
 export async function identifyModelFromPhoto(
   _prev: IdentifyResultState,
   formData: FormData,
@@ -142,6 +155,13 @@ export async function identifyModelFromPhoto(
       entry.lowestPrice = entry.lowestPrice === null ? listing.price : Math.min(entry.lowestPrice, listing.price)
     }
 
+    // 16L: one batched, bounded relationship read (≤5 live candidate ids) — never
+    // per-candidate, never issued for anonymous visitors. Session absence is not a
+    // recognition failure; relationship simply stays null for every candidate.
+    const session = await getBuyerSession()
+    const liveIds = liveTop.map((c) => c.catalogModelId)
+    const relationshipMap = session ? await getCatalogRelationshipState(session.profileId, liveIds) : null
+
     const candidates: IdentifyCandidate[] = liveTop.map((c) => {
       const detail = detailById.get(c.catalogModelId)!
       const availability = availabilityById.get(c.catalogModelId) ?? { count: 0, lowestPrice: null }
@@ -157,6 +177,7 @@ export async function identifyModelFromPhoto(
         confidence: c.confidence,
         availableCount: availability.count,
         lowestPrice: availability.lowestPrice,
+        relationship: relationshipMap?.get(c.catalogModelId) ?? null,
       }
     })
 

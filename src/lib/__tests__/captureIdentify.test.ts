@@ -53,11 +53,15 @@ vi.mock('@/lib/requestId', () => ({
 vi.mock('@/lib/errors', () => ({
   normalizeError: vi.fn(() => ({ userMessage: "Couldn't analyze this photo right now." })),
 }))
+vi.mock('@/lib/buyerSession', () => ({ getBuyerSession: vi.fn() }))
+vi.mock('@/lib/catalogRelationshipQuery', () => ({ getCatalogRelationshipState: vi.fn() }))
 
 import { prisma } from '@/lib/prisma'
 import { computeImageFingerprint, FingerprintError } from '@/lib/catalogImageFingerprint'
 import { findCatalogImageMatches } from '@/lib/catalogImageMatchingQuery'
 import { checkRateLimit, rateLimitKeyFromHeaders } from '@/lib/rateLimit'
+import { getBuyerSession } from '@/lib/buyerSession'
+import { getCatalogRelationshipState } from '@/lib/catalogRelationshipQuery'
 import { identifyModelFromPhoto } from '@/lib/actions/captureIdentify'
 
 const fakeFp = {
@@ -83,6 +87,8 @@ beforeEach(() => {
   vi.resetAllMocks()
   ;(rateLimitKeyFromHeaders as Mock).mockReturnValue('rl-key')
   ;(checkRateLimit as Mock).mockReturnValue({ allowed: true, remaining: 4, resetMs: 60_000 })
+  // Anonymous by default — individual tests override for authenticated scenarios.
+  ;(getBuyerSession as Mock).mockResolvedValue(null)
 })
 
 const actionSrc = readSrc('src/lib/actions/captureIdentify.ts')
@@ -170,16 +176,21 @@ describe('16K: restrained contextual entry points', () => {
 
 // ── Part F/AU: anonymous access, no auth gate ────────────────────────────────────
 
-describe('16K: public/anonymous access — no session check anywhere in the recognition path', () => {
+describe('16K/16L: public/anonymous access — recognition never requires or gates on a session', () => {
   it('/capture page.tsx never imports getBuyerSession — no auth redirect on GET', () => {
     expect(pageSrc).not.toContain('getBuyerSession')
   })
-  it('identifyModelFromPhoto never imports or calls getBuyerSession', () => {
-    expect(actionCode).not.toMatch(/getBuyerSession/)
-  })
-  it('rate limiting is IP/header-derived, not session/profileId-derived', () => {
+  it('rate limiting stays IP/header-derived — checkRateLimit is never keyed by profileId', () => {
     expect(actionSrc).toContain('rateLimitKeyFromHeaders')
-    expect(actionCode).not.toMatch(/profileId/)
+    const rlCallIdx = actionSrc.indexOf('checkRateLimit(rateLimitKey')
+    expect(rlCallIdx).toBeGreaterThan(-1)
+    expect(actionSrc.slice(rlCallIdx, rlCallIdx + 40)).not.toMatch(/profileId/)
+  })
+  it('16L: identifyModelFromPhoto reads getBuyerSession() only AFTER rate-limit/validation/fingerprint/matching succeed, and only for optional read-only relationship enrichment — never used to gate/require recognition itself', () => {
+    const sessionIdx = actionSrc.indexOf('await getBuyerSession()')
+    const matchIdx = actionSrc.indexOf('findCatalogImageMatches(fp)')
+    expect(sessionIdx).toBeGreaterThan(matchIdx)
+    expect(actionSrc).not.toMatch(/if \(!session\)\s*return \{\s*error/)
   })
 })
 
@@ -277,26 +288,25 @@ describe('16K: recognition output — bounded candidates, authoritative model li
     expect(result?.candidates?.[0]).toEqual({
       catalogModelId: 'cat1', brand: 'Hot Wheels', name: "'16 Mazda MX-5 Miata", year: 2022,
       series: 'HW Modified', color: 'Black', scale: '1:64', photoUrl: 'https://x/model.jpg',
-      confidence: 'exact', availableCount: 0, lowestPrice: null,
+      confidence: 'exact', availableCount: 0, lowestPrice: null, relationship: null,
     })
   })
 })
 
-// ── Part M/N/O/P: relationship actions decision ─────────────────────────────────
+// ── 16L: capture results are now actionable (supersedes the 16K "View Model only"
+// decision — see captureCandidateActions.test.ts for full coverage) ────────────
 
-describe('16K: relationship actions omitted from results — View Model only (Part P decision)', () => {
-  it('CaptureIdentify.tsx never imports CatalogModelActions/wantAction/unwantAction/addToCollectionAction', () => {
-    expect(componentCode).not.toMatch(/CatalogModelActions|wantAction|unwantAction|addToCollectionAction/)
+describe('16L: capture results render Want/Own/Sell actions via CaptureCandidateActions', () => {
+  it('CaptureIdentify.tsx renders CaptureCandidateActions per candidate, passing catalogModelId/modelName/initialRelationship', () => {
+    expect(componentSrc).toContain('<CaptureCandidateActions')
+    expect(componentSrc).toContain('catalogModelId={c.catalogModelId}')
+    expect(componentSrc).toContain('initialRelationship={c.relationship}')
   })
-  it('the only action rendered per candidate is "View Model"', () => {
-    const liBlocks = [...componentSrc.matchAll(/<li key=\{c\.catalogModelId\}[\s\S]*?<\/li>/g)]
-    expect(liBlocks.length).toBe(1)
-    expect(liBlocks[0][0]).toContain('View Model')
-    expect(liBlocks[0][0]).not.toMatch(/Own This|Want This|Sell One/)
+  it('CaptureIdentify.tsx itself still contains no wantAction/unwantAction/addToCollectionAction — those live in CaptureCandidateActions, reused not duplicated', () => {
+    expect(componentCode).not.toMatch(/wantAction|unwantAction|addToCollectionAction/)
   })
-  it('no getCatalogRelationshipState call exists in the public capture action or component', () => {
-    expect(actionCode).not.toMatch(/getCatalogRelationshipState/)
-    expect(componentCode).not.toMatch(/getCatalogRelationshipState/)
+  it('identifyModelFromPhoto now performs one batched relationship read via getCatalogRelationshipState (16F), bounded to the live candidate ids', () => {
+    expect(actionSrc).toContain('getCatalogRelationshipState(session.profileId, liveIds)')
   })
 })
 
@@ -793,8 +803,8 @@ describe('16K: zero schema/migration changes, no guest-session persistence model
 
 // ── Part BG: query/provider/storage cost shape ───────────────────────────────────
 
-describe('16K: exact recognition cost shape — bounded, no hidden per-candidate loop', () => {
-  it('exactly 2 new enrichment queries when candidates exist, in parallel (Promise.all)', () => {
+describe('16K/16L: exact recognition cost shape — bounded, no hidden per-candidate loop', () => {
+  it('exactly 2 enrichment queries when candidates exist, in parallel (Promise.all)', () => {
     expect(actionSrc).toContain('await Promise.all([')
     const idx = actionSrc.indexOf('await Promise.all([')
     const block = actionSrc.slice(idx, actionSrc.indexOf('])', idx))
@@ -806,11 +816,50 @@ describe('16K: exact recognition cost shape — bounded, no hidden per-candidate
     ;(findCatalogImageMatches as Mock).mockResolvedValue({ results: [], lowCoverage: false, coverageReason: null })
     await identifyModelFromPhoto(null, fakeFormData(fakeFile()))
     expect(prisma.catalogModel.findMany).not.toHaveBeenCalled()
+    expect(getCatalogRelationshipState).not.toHaveBeenCalled()
   })
-  it('no per-candidate loop issues its own DB or provider call (no await inside a .map over candidates)', () => {
-    const enrichIdx = actionSrc.indexOf('const candidates: IdentifyCandidate[] = top.map(')
+  it('no per-candidate loop issues its own DB or provider call (no await inside the final .map over liveTop)', () => {
+    const enrichIdx = actionSrc.indexOf('const candidates: IdentifyCandidate[] = liveTop.map(')
+    expect(enrichIdx).toBeGreaterThan(-1)
     const mapBlock = actionSrc.slice(enrichIdx, actionSrc.indexOf('})\n\n    return { candidates', enrichIdx))
     expect(mapBlock).not.toMatch(/await /)
+  })
+  it('16L: exactly one getCatalogRelationshipState call per request (authenticated), never per-candidate', async () => {
+    ;(getBuyerSession as Mock).mockResolvedValue({ profileId: 'p1' })
+    ;(computeImageFingerprint as Mock).mockResolvedValue(fakeFp)
+    ;(findCatalogImageMatches as Mock).mockResolvedValue({
+      results: [
+        { catalogModelId: 'A', brand: 'B', name: 'N', year: null, photo: null, bestDistance: 0, matchingBandCount: 4, confidence: 'exact', matchedPhotoCount: 1 },
+        { catalogModelId: 'B', brand: 'B', name: 'N', year: null, photo: null, bestDistance: 1, matchingBandCount: 3, confidence: 'strong', matchedPhotoCount: 1 },
+      ],
+      lowCoverage: false, coverageReason: null,
+    })
+    ;(prisma.catalogModel.findMany as Mock).mockResolvedValue([
+      { id: 'A', series: null, color: null, scale: null, photos: [] },
+      { id: 'B', series: null, color: null, scale: null, photos: [] },
+    ])
+    ;(prisma.listing.findMany as Mock).mockResolvedValue([])
+    ;(getCatalogRelationshipState as Mock).mockResolvedValue(new Map())
+
+    await identifyModelFromPhoto(null, fakeFormData(fakeFile()))
+
+    expect(getCatalogRelationshipState).toHaveBeenCalledTimes(1)
+    expect(getCatalogRelationshipState).toHaveBeenCalledWith('p1', ['A', 'B'])
+  })
+  it('16L: anonymous requests never call getCatalogRelationshipState even when candidates exist', async () => {
+    ;(getBuyerSession as Mock).mockResolvedValue(null)
+    ;(computeImageFingerprint as Mock).mockResolvedValue(fakeFp)
+    ;(findCatalogImageMatches as Mock).mockResolvedValue({
+      results: [{ catalogModelId: 'A', brand: 'B', name: 'N', year: null, photo: null, bestDistance: 0, matchingBandCount: 4, confidence: 'exact', matchedPhotoCount: 1 }],
+      lowCoverage: false, coverageReason: null,
+    })
+    ;(prisma.catalogModel.findMany as Mock).mockResolvedValue([{ id: 'A', series: null, color: null, scale: null, photos: [] }])
+    ;(prisma.listing.findMany as Mock).mockResolvedValue([])
+
+    const result = await identifyModelFromPhoto(null, fakeFormData(fakeFile()))
+
+    expect(getCatalogRelationshipState).not.toHaveBeenCalled()
+    expect(result?.candidates?.[0].relationship).toBeNull()
   })
 })
 
