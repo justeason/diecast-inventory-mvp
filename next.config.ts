@@ -18,6 +18,22 @@ const CSP_REPORT_ONLY = [
 
 const nextConfig: NextConfig = {
   serverExternalPackages: ['sharp'],
+  // 16K fix: serverExternalPackages keeps sharp out of the JS bundle (correct),
+  // but Next's output file tracer can still miss sharp's platform-specific native
+  // binary (@img/sharp-*) when it's only reachable through a dynamic/optional
+  // require at runtime — observed on Vercel as "Failed to load external module
+  // sharp" / ERR_DLOPEN_FAILED for libvips-cpp.so. This explicitly forces the
+  // Linux x64 sharp + libvips native files into the /capture function's traced
+  // output (the only public, unauthenticated route that calls
+  // computeImageFingerprint → sharp). No existing outputFileTracingIncludes
+  // entry existed to merge with.
+  outputFileTracingIncludes: {
+    '/capture': [
+      './node_modules/sharp/**/*',
+      './node_modules/@img/sharp-linux-x64/**/*',
+      './node_modules/@img/sharp-libvips-linux-x64/**/*',
+    ],
+  },
   experimental: {
     serverActions: {
       bodySizeLimit: '10mb',
