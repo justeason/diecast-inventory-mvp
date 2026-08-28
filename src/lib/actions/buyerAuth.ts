@@ -192,7 +192,13 @@ export async function verifyBuyerLoginToken(
 
 // ─── signOutBuyer ─────────────────────────────────────────────────────────────
 
+// 16O: destination changed to /account (Part J) — shows login state immediately
+// and implies no particular product context, unlike /account/orders. No
+// user-controlled returnTo; clearBuyerSession() already safely no-ops when
+// called anonymously (Part M), and only ever deletes the ONE CustomerSession
+// row matching the current cookie's hash — never all sessions for the profile
+// (Part AK) — so another device's session is untouched.
 export async function signOutBuyer(): Promise<void> {
   await clearBuyerSession()
-  redirect('/account/orders')
+  redirect('/account')
 }
