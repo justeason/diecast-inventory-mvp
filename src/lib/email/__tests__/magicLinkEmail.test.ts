@@ -7,9 +7,24 @@ const BASE_INPUT = {
 }
 
 describe('buildMagicLinkEmail', () => {
-  it('returns the correct subject', () => {
+  it('returns the correct subject — generic account sign-in, not order-specific (the same email now also serves first-time signup and Want/Own/Sell continuation)', () => {
     const { subject } = buildMagicLinkEmail(BASE_INPUT)
-    expect(subject).toBe('Sign in to view your CollectNTrades orders')
+    expect(subject).toBe('Sign in to your CollectNTrades account')
+  })
+
+  it('body copy is generic sign-in language, never claims "view your order history" as the universal purpose', () => {
+    const { html, text } = buildMagicLinkEmail(BASE_INPUT)
+    expect(html).toContain('Use this secure link to sign in to your CollectNTrades account.')
+    expect(text).toContain('Use this secure link to sign in to your CollectNTrades account.')
+    expect(html).not.toMatch(/view your order|order history/i)
+    expect(text).not.toMatch(/view your order|order history/i)
+  })
+
+  it('CTA button text reads "Sign In", not "View My Orders"', () => {
+    const { html, text } = buildMagicLinkEmail(BASE_INPUT)
+    expect(html).toContain('Sign In &rarr;')
+    expect(html).not.toContain('View My Orders')
+    expect(text).not.toContain('View My Orders')
   })
 
   it('html contains the verifyUrl', () => {

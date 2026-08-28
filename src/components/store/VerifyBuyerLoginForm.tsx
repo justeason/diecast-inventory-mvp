@@ -13,7 +13,7 @@ function SubmitButton({ hasReturnTo }: { hasReturnTo: boolean }) {
       disabled={pending}
       className="rounded-md bg-gray-900 px-6 py-2.5 text-sm font-medium text-white hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
     >
-      {pending ? 'Verifying…' : hasReturnTo ? 'Continue →' : 'View My Orders →'}
+      {pending ? 'Verifying…' : hasReturnTo ? 'Continue →' : 'Sign In →'}
     </button>
   )
 }

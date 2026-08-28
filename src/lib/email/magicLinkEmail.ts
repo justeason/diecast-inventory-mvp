@@ -14,7 +14,7 @@ export function buildMagicLinkEmail(
   const { name, verifyUrl, appUrl } = input
   const greeting = name ? `Hi ${esc(name)},` : 'Hi there,'
 
-  const subject = 'Sign in to view your CollectNTrades orders'
+  const subject = 'Sign in to your CollectNTrades account'
 
   // ── HTML ──────────────────────────────────────────────────────────────────
 
@@ -28,7 +28,7 @@ export function buildMagicLinkEmail(
 
   <p style="font-size:15px;margin:0 0 8px;">${greeting}</p>
   <p style="font-size:14px;color:#374151;margin:0 0 24px;line-height:1.6;">
-    Click the button below to view your order history.<br />
+    Use this secure link to sign in to your CollectNTrades account.<br />
     This link is valid for <strong>15 minutes</strong> and can only be used once.
   </p>
 
@@ -38,7 +38,7 @@ export function buildMagicLinkEmail(
        style="display:inline-block;background:#111827;color:#fff;text-decoration:none;
               padding:14px 32px;border-radius:6px;font-size:15px;font-weight:600;
               letter-spacing:0.01em;">
-      View My Orders &rarr;
+      Sign In &rarr;
     </a>
   </div>
 
@@ -62,7 +62,7 @@ export function buildMagicLinkEmail(
     ``,
     greeting.replace(/,$/, ','),
     ``,
-    `Click the link below to view your order history.`,
+    `Use this secure link to sign in to your CollectNTrades account.`,
     `This link is valid for 15 minutes and can only be used once.`,
     ``,
     verifyUrl,

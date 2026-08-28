@@ -29,8 +29,8 @@ export function BuyerOrderAccessForm({ returnTo }: { returnTo?: string } = {}) {
   if (state.status === 'sent') {
     return (
       <div className="rounded-md border border-gray-200 bg-gray-50 px-4 py-4 text-sm text-gray-700">
-        If this email is associated with an order, we&rsquo;ll send a link.
-        Check your inbox — the link expires in 15 minutes.
+        If this email is valid, we&rsquo;ll send a secure sign-in link.
+        Check your inbox — it expires in 15 minutes.
       </div>
     )
   }
@@ -55,7 +55,7 @@ export function BuyerOrderAccessForm({ returnTo }: { returnTo?: string } = {}) {
           type="email"
           required
           autoComplete="email"
-          placeholder="The email you used when ordering"
+          placeholder="Your email address"
           className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
         />
       </div>
