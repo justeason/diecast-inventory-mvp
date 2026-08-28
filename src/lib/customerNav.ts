@@ -44,11 +44,12 @@ export const CUSTOMER_PRIMARY_NAV: CustomerNavItem[] = [
 // "manage/track selling I already have in progress" — SellerPortfolio already
 // aggregates agreement/shipment/payout/lifecycle status for exactly that.
 //
-// settings/"Profile" -> /account/community: the only existing settings-shaped page
-// is community-profile configuration (handle/displayName/bio/visibility) — no
-// general account-settings (email/notifications) page exists, so this is labeled
-// "Profile", never "Settings" (Part I/19), matching what it actually lets a
-// customer manage.
+// settings/"Profile" -> /account/profile (16N): the canonical PRIVATE account/
+// contact identity page (email read-only, name/phone editable — CustomerProfile).
+// Deliberately NOT /account/community — that route is the separate PUBLIC
+// collector persona (handle/displayName/bio/visibility — CustomerCommunityProfile).
+// The two identities never write into each other; /account/community links to
+// /account/profile contextually but is not itself the "Profile" nav destination.
 export type CustomerAccountLink = { key: string; label: string; href: string; badge?: 'unreadAlerts' }
 
 export const CUSTOMER_ACCOUNT_LINKS: CustomerAccountLink[] = [
@@ -57,7 +58,7 @@ export const CUSTOMER_ACCOUNT_LINKS: CustomerAccountLink[] = [
   { key: 'collection', label: 'Collection', href: '/account/collection' },
   { key: 'wanted', label: 'Wanted & Alerts', href: '/account/wanted', badge: 'unreadAlerts' },
   { key: 'selling', label: 'Selling', href: '/account/portfolios' },
-  { key: 'settings', label: 'Profile', href: '/account/community' },
+  { key: 'settings', label: 'Profile', href: '/account/profile' },
 ]
 
 // Part B/2 (16B): /account now exists as the customer home — anonymous "Account"

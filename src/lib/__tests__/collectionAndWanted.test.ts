@@ -553,8 +553,13 @@ describe('customerNav.ts: Account-menu links (moved from layout.tsx in 16A)', ()
     expect(src_).toContain("href: '/account/wanted'")
   })
 
-  it('has Community Profile link', () => {
-    expect(src_).toContain("href: '/account/community'")
+  // 16N: the "Profile" account-menu entry now points to /account/profile (the
+  // private account/contact identity page), not /account/community (the public
+  // Community persona) — this 16A-era assertion is intentionally superseded, not
+  // violated. /account/community remains reachable via a contextual link from
+  // /account/profile, just no longer as a primary account-menu item itself.
+  it('Profile account-menu link now points to /account/profile', () => {
+    expect(src_).toContain("href: '/account/profile'")
   })
 })
 

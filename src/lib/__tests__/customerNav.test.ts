@@ -45,10 +45,10 @@ describe('CUSTOMER_ACCOUNT_LINKS — personal destinations collapsed under Accou
     expect(CUSTOMER_ACCOUNT_LINKS[0]).toEqual(expect.objectContaining({ label: 'Overview', href: '/account' }))
   })
 
-  it('settings is labeled "Profile", not "Settings" — the destination is community-profile config, not general account settings (Part I/19)', () => {
+  it('settings is labeled "Profile" and points to the canonical private account/contact identity page (16N: /account/profile, not /account/community — that route is the separate public Community persona)', () => {
     const settings = CUSTOMER_ACCOUNT_LINKS.find((l) => l.key === 'settings')
     expect(settings?.label).toBe('Profile')
-    expect(settings?.href).toBe('/account/community')
+    expect(settings?.href).toBe('/account/profile')
   })
 
   it('Wanted and Alerts are consolidated into ONE menu concept — no separate "Wanted" and "Alerts" entries', () => {
