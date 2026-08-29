@@ -14,6 +14,14 @@ import { prisma } from '@/lib/prisma'
 import type { DateRange, BucketGranularity } from '@/lib/businessAnalyticsDates'
 import { chooseBucketGranularity, bucketStart, advanceBucket } from '@/lib/businessAnalyticsDates'
 import { decimalFromFloatDollars, sumDecimal, subtractDecimal, daysBetween, DECIMAL_ZERO } from '@/lib/businessAnalyticsMath'
+// 17C: reuse 15N's authoritative ownership classification instead of the analytics
+// layer's own inverse-of-consignment proxy (`sourceType !== 'consignment'`), which
+// silently treated null/unknown sourceType (e.g. items created via the manual admin
+// item form, which has no sourceType field at all) as owned. isOwnedSourceType is an
+// exact allowlist (buyout/company_owned); isConsignmentSourceType is unchanged
+// (=== 'consignment'). Anything that is neither is excluded from BOTH gross spread
+// and gross margin — it still counts in GMV/units sold, computed independently above.
+import { isOwnedSourceType, isConsignmentSourceType } from '@/lib/financialPosition'
 
 function rangeWhere(field: string, range: DateRange) {
   return range.start ? { [field]: { gte: range.start, lt: range.end } } : { [field]: { lt: range.end } }
@@ -111,8 +119,8 @@ export async function getOverviewMetrics(range: DateRange): Promise<OverviewMetr
 async function computeGrossSpreadAndMargin(
   items: Array<{ id: string; price: number; sourceType: string | null; purchasePrice: number | null }>,
 ): Promise<{ grossSpread: Prisma.Decimal; undeterminedConsignment: number; grossMargin: Prisma.Decimal; undeterminedOther: number }> {
-  const consignmentItems = items.filter(i => i.sourceType === 'consignment')
-  const otherItems = items.filter(i => i.sourceType !== 'consignment')
+  const consignmentItems = items.filter(i => isConsignmentSourceType(i.sourceType))
+  const otherItems = items.filter(i => isOwnedSourceType(i.sourceType))
 
   const payoutLines = consignmentItems.length > 0
     ? await prisma.sellerPayoutLine.findMany({
@@ -421,8 +429,8 @@ export async function getRevenueBreakdown(range: DateRange): Promise<RevenueBrea
     select: { id: true, price: true, orderId: true, item: { select: { sourceType: true, purchasePrice: true } } },
   })
 
-  const consignmentItems = items.filter(i => i.item.sourceType === 'consignment')
-  const costBasedItems = items.filter(i => i.item.sourceType !== 'consignment')
+  const consignmentItems = items.filter(i => isConsignmentSourceType(i.item.sourceType))
+  const costBasedItems = items.filter(i => isOwnedSourceType(i.item.sourceType))
 
   const payoutLines = consignmentItems.length > 0
     ? await prisma.sellerPayoutLine.findMany({
@@ -880,7 +888,7 @@ export async function getTimeSeries(range: DateRange): Promise<TimeSeriesBucket[
   ])
 
   // Consignment items' spread needs their linked payout line — bounded to this range's items.
-  const consignmentOrderItemIds = orderItemRows.filter(r => r.item.sourceType === 'consignment').map(r => r.id)
+  const consignmentOrderItemIds = orderItemRows.filter(r => isConsignmentSourceType(r.item.sourceType)).map(r => r.id)
   const payoutLines = consignmentOrderItemIds.length > 0
     ? await prisma.sellerPayoutLine.findMany({ where: { lineType: 'consignment', orderItemId: { in: consignmentOrderItemIds } }, select: { orderItemId: true, grossSalePrice: true, netAmount: true } })
     : []
@@ -914,10 +922,10 @@ export async function getTimeSeries(range: DateRange): Promise<TimeSeriesBucket[
     b.inventorySold++
     b.gmv = b.gmv.plus(decimalFromFloatDollars(row.price))
 
-    if (row.item.sourceType === 'consignment') {
+    if (isConsignmentSourceType(row.item.sourceType)) {
       const line = lineByOrderItem.get(row.id)
       if (line) b.consignmentGrossSpread = b.consignmentGrossSpread.plus(subtractDecimal(line.grossSalePrice ?? decimalFromFloatDollars(row.price), line.netAmount))
-    } else if (row.item.purchasePrice !== null) {
+    } else if (isOwnedSourceType(row.item.sourceType) && row.item.purchasePrice !== null) {
       b.buyoutGrossMargin = b.buyoutGrossMargin.plus(subtractDecimal(decimalFromFloatDollars(row.price), decimalFromFloatDollars(row.item.purchasePrice)))
     }
   }

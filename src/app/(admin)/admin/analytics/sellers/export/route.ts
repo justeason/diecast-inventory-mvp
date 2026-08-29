@@ -31,10 +31,14 @@ export async function GET(req: Request) {
     end: url.searchParams.get('end') ?? undefined,
   })
 
+  // 17C (P1-2): header names disclose time basis — lifetime (not scoped to the
+  // selected period), period (scoped to `period`/`start`/`end` above), or current
+  // (as-of-now snapshot) — matching the seller UI table's column tags exactly.
+  // Underlying values/query are unchanged; only the header labels changed.
   const headers = [
-    'seller', 'submissions', 'unitsReceived', 'unitsListed', 'unitsSold', 'sellThroughPct',
-    'grossSalesUsd', 'sellerProceedsUsd', 'payoutPaidUsd', 'payoutOutstandingUsd',
-    'medianIntakeToListingDays', 'medianListingToSaleDays', 'rejectionRatePct',
+    'seller', 'submissionsLifetime', 'unitsReceivedLifetime', 'unitsListedLifetime', 'unitsSoldLifetime', 'sellThroughPctLifetime',
+    'grossSalesUsdPeriod', 'sellerProceedsUsdPeriod', 'payoutPaidUsdLifetime', 'payoutOutstandingUsdCurrent',
+    'medianIntakeToListingDaysLifetime', 'medianListingToSaleDaysLifetime', 'rejectionRatePctLifetime',
   ]
   const rows: unknown[][] = []
   let cursor: { value: number; profileId: string } | null = null

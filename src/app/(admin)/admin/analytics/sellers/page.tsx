@@ -44,11 +44,19 @@ export default async function AdminSellerAnalyticsPage({
     <div className="max-w-6xl space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Seller Performance</h1>
-        <p className="text-xs text-gray-400 mt-1">As of {fmtDateTimeUtc(ctx.asOf)} · {ctx.range.label}</p>
+        <p className="text-xs text-gray-400 mt-1">Selected period: {ctx.range.label} · Snapshot as of {fmtDateTimeUtc(ctx.asOf)}</p>
       </div>
 
       <AnalyticsNav currentPath="/admin/analytics/sellers" queryString={ctx.queryString} />
       <AnalyticsFilterBar path="/admin/analytics/sellers" range={ctx.range} error={ctx.error} />
+
+      {/* 17C (P1-2): the table below mixes three time bases under one date filter —
+          this line + the per-column "(lifetime)"/"(current)" header tags disclose
+          that explicitly, so a selected period is never misread as scoping every
+          column. Formulas/predicates are unchanged — see businessAnalyticsQuery.ts. */}
+      <p className="text-xs text-gray-400">
+        Gross sales and Proceeds use the selected period above. Outstanding is a current snapshot. All other columns are lifetime totals per seller.
+      </p>
 
       <div className="flex items-center justify-between">
         <div className="flex gap-2 text-xs">
@@ -80,18 +88,18 @@ export default async function AdminSellerAnalyticsPage({
           <thead className="bg-gray-50 border-b border-gray-200">
             <tr className="text-left text-gray-500">
               <th className="px-3 py-2 font-medium">Seller</th>
-              <th className="px-3 py-2 font-medium">Submissions</th>
-              <th className="px-3 py-2 font-medium">Received</th>
-              <th className="px-3 py-2 font-medium">Listed</th>
-              <th className="px-3 py-2 font-medium">Sold</th>
-              <th className="px-3 py-2 font-medium">Sell-through</th>
+              <th className="px-3 py-2 font-medium">Submissions (lifetime)</th>
+              <th className="px-3 py-2 font-medium">Received (lifetime)</th>
+              <th className="px-3 py-2 font-medium">Listed (lifetime)</th>
+              <th className="px-3 py-2 font-medium">Sold (lifetime)</th>
+              <th className="px-3 py-2 font-medium">Sell-through (lifetime)</th>
               <th className="px-3 py-2 font-medium">Gross sales</th>
               <th className="px-3 py-2 font-medium">Proceeds</th>
-              <th className="px-3 py-2 font-medium">Paid</th>
-              <th className="px-3 py-2 font-medium">Outstanding</th>
-              <th className="px-3 py-2 font-medium">Med. intake→list</th>
-              <th className="px-3 py-2 font-medium">Med. list→sale</th>
-              <th className="px-3 py-2 font-medium">Rejection rate</th>
+              <th className="px-3 py-2 font-medium">Paid (lifetime)</th>
+              <th className="px-3 py-2 font-medium">Outstanding (current)</th>
+              <th className="px-3 py-2 font-medium">Med. intake→list (lifetime)</th>
+              <th className="px-3 py-2 font-medium">Med. list→sale (lifetime)</th>
+              <th className="px-3 py-2 font-medium">Rejection rate (lifetime)</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">

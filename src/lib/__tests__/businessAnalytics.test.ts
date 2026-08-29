@@ -1194,3 +1194,241 @@ describe('businessAnalytics: previous-period trend comparison scope', () => {
     expect(fmtPeriodChange(change)).toBe('New')
   })
 })
+
+// ── 17C (P1-1): authoritative owned classification — null/unknown sourceType is
+// neither owned nor consignment, and must never enter gross margin or gross spread.
+// GMV/units-sold are independent of classification and must stay complete regardless.
+
+describe('businessAnalyticsQuery: owned classification hardening (17C, P1-1)', () => {
+  beforeEach(() => vi.resetAllMocks())
+
+  it('a completed sale with sourceType=null still contributes to GMV and units sold, but to NEITHER gross margin NOR gross spread', async () => {
+    ;(prisma.orderItem.findMany as Mock)
+      .mockResolvedValueOnce([
+        { id: 'oi1', itemId: 'i1', price: 20.00, item: { sourceType: 'consignment', purchasePrice: null, createdAt: new Date('2026-01-01T00:00:00.000Z') }, order: { completedAt: new Date('2026-01-10T00:00:00.000Z') } },
+        { id: 'oi2', itemId: 'i2', price: 30.00, item: { sourceType: 'buyout', purchasePrice: 18.00, createdAt: new Date('2026-01-01T00:00:00.000Z') }, order: { completedAt: new Date('2026-01-10T00:00:00.000Z') } },
+        { id: 'oi3', itemId: 'i3', price: 100.00, item: { sourceType: null, purchasePrice: 40.00, createdAt: new Date('2026-01-01T00:00:00.000Z') }, order: { completedAt: new Date('2026-01-10T00:00:00.000Z') } },
+      ])
+      .mockResolvedValueOnce([]) // getSellersWithCompletedSalesCount's own orderItem.findMany
+    ;(prisma.order.count as Mock).mockResolvedValueOnce(3)
+    ;(prisma.itemInstance.count as Mock).mockResolvedValue(0)
+    ;(prisma.listing.count as Mock).mockResolvedValue(0)
+    ;(prisma.sellerPayoutLine.findMany as Mock).mockResolvedValueOnce([{ orderItemId: 'oi1', grossSalePrice: D('20.00'), netAmount: D('14.00') }])
+    ;(prisma.sellerPayoutLine.aggregate as Mock).mockResolvedValueOnce({ _sum: { netAmount: D('0') } })
+    ;(prisma.sellerAgreement.findMany as Mock).mockResolvedValueOnce([])
+
+    const now = new Date()
+    const metrics = await getOverviewMetrics({ preset: '30d', start: new Date(now.getTime() - 1000), end: now, label: '' })
+
+    expect(metrics.unitsSold).toBe(3)
+    expect(metrics.gmv.toFixed(2)).toBe('150.00') // 20 + 30 + 100 — the null-sourceType sale is NOT dropped from GMV
+    expect(metrics.grossSpreadDetermined.toFixed(2)).toBe('6.00') // consignment only — unaffected by the null item
+    expect(metrics.grossMarginDetermined.toFixed(2)).toBe('12.00') // buyout only — the null item's $100-$40=$60 margin is NEVER added
+    // The null item has a real purchasePrice, so it must not be miscounted as an
+    // "owned item missing cost data" either — it was never owned to begin with.
+    expect(metrics.grossMarginUndeterminedItems).toBe(0)
+  })
+
+  it('company_owned and buyout are each independently included in owned gross margin; consignment and null are each independently excluded from it', async () => {
+    ;(prisma.orderItem.findMany as Mock)
+      .mockResolvedValueOnce([
+        { id: 'oi1', itemId: 'i1', price: 50.00, item: { sourceType: 'company_owned', purchasePrice: 30.00, createdAt: new Date('2026-01-01') }, order: { completedAt: new Date('2026-01-10') } },
+        { id: 'oi2', itemId: 'i2', price: 40.00, item: { sourceType: 'buyout', purchasePrice: 25.00, createdAt: new Date('2026-01-01') }, order: { completedAt: new Date('2026-01-10') } },
+        { id: 'oi3', itemId: 'i3', price: 20.00, item: { sourceType: 'consignment', purchasePrice: null, createdAt: new Date('2026-01-01') }, order: { completedAt: new Date('2026-01-10') } },
+        { id: 'oi4', itemId: 'i4', price: 10.00, item: { sourceType: null, purchasePrice: 5.00, createdAt: new Date('2026-01-01') }, order: { completedAt: new Date('2026-01-10') } },
+      ])
+      .mockResolvedValueOnce([])
+    ;(prisma.order.count as Mock).mockResolvedValueOnce(4)
+    ;(prisma.itemInstance.count as Mock).mockResolvedValue(0)
+    ;(prisma.listing.count as Mock).mockResolvedValue(0)
+    ;(prisma.sellerPayoutLine.findMany as Mock).mockResolvedValueOnce([]) // consignment item's own payout line missing -> undetermined
+    ;(prisma.sellerPayoutLine.aggregate as Mock).mockResolvedValueOnce({ _sum: { netAmount: D('0') } })
+    ;(prisma.sellerAgreement.findMany as Mock).mockResolvedValueOnce([])
+
+    const now = new Date()
+    const metrics = await getOverviewMetrics({ preset: '30d', start: new Date(now.getTime() - 1000), end: now, label: '' })
+
+    // company_owned (50-30=20) + buyout (40-25=15) = 35.00 — consignment and null excluded.
+    expect(metrics.grossMarginDetermined.toFixed(2)).toBe('35.00')
+    expect(metrics.grossSpreadDetermined.toFixed(2)).toBe('0.00') // consignment item's payout line not found -> undetermined, not zero-filled-as-spread
+    expect(metrics.grossSpreadUndeterminedItems).toBe(1)
+  })
+
+  it('owned item (company_owned/buyout) with no recorded purchasePrice is undetermined — never zero-filled, never allocated from a multi-item agreement total', async () => {
+    ;(prisma.orderItem.findMany as Mock)
+      .mockResolvedValueOnce([
+        { id: 'oi1', itemId: 'i1', price: 50.00, item: { sourceType: 'company_owned', purchasePrice: null, createdAt: new Date('2026-01-01') }, order: { completedAt: new Date('2026-01-10') } },
+      ])
+      .mockResolvedValueOnce([])
+    ;(prisma.order.count as Mock).mockResolvedValueOnce(1)
+    ;(prisma.itemInstance.count as Mock).mockResolvedValue(0)
+    ;(prisma.listing.count as Mock).mockResolvedValue(0)
+    ;(prisma.sellerPayoutLine.findMany as Mock).mockResolvedValueOnce([])
+    ;(prisma.sellerPayoutLine.aggregate as Mock).mockResolvedValueOnce({ _sum: { netAmount: D('0') } })
+    ;(prisma.sellerAgreement.findMany as Mock).mockResolvedValueOnce([])
+
+    const now = new Date()
+    const metrics = await getOverviewMetrics({ preset: '30d', start: new Date(now.getTime() - 1000), end: now, label: '' })
+
+    expect(metrics.grossMarginDetermined.toFixed(2)).toBe('0.00')
+    expect(metrics.grossMarginUndeterminedItems).toBe(1) // correctly flagged as undetermined-owned, not silently zero
+  })
+
+  it('getRevenueBreakdown: company_owned item with known purchasePrice is included in the owned gross-margin bucket', async () => {
+    ;(prisma.orderItem.findMany as Mock).mockResolvedValueOnce([
+      { id: 'oi1', price: 50.00, orderId: 'o1', item: { sourceType: 'company_owned', purchasePrice: 30.00 } },
+    ])
+    ;(prisma.sellerPayoutLine.findMany as Mock).mockResolvedValueOnce([])
+    ;(prisma.sellerPayoutLine.aggregate as Mock).mockResolvedValueOnce({ _sum: { netAmount: D('0') } })
+
+    const now = new Date()
+    const rev = await getRevenueBreakdown({ preset: '30d', start: new Date(now.getTime() - 1000), end: now, label: '' })
+
+    expect(rev.costBased.grossMargin.toFixed(2)).toBe('20.00')
+    expect(rev.costBased.items).toBe(1)
+  })
+
+  it('getRevenueBreakdown: a null-sourceType completed sale is counted in total GMV but excluded entirely from the owned (buyout/company-owned) bucket — not even as "undetermined"', async () => {
+    ;(prisma.orderItem.findMany as Mock).mockResolvedValueOnce([
+      { id: 'oi1', price: 100.00, orderId: 'o1', item: { sourceType: null, purchasePrice: 40.00 } },
+    ])
+    ;(prisma.sellerPayoutLine.findMany as Mock).mockResolvedValueOnce([])
+    ;(prisma.sellerPayoutLine.aggregate as Mock).mockResolvedValueOnce({ _sum: { netAmount: D('0') } })
+
+    const now = new Date()
+    const rev = await getRevenueBreakdown({ preset: '30d', start: new Date(now.getTime() - 1000), end: now, label: '' })
+
+    expect(rev.gmv.toFixed(2)).toBe('100.00') // total GMV includes it
+    expect(rev.costBased.gmv.toFixed(2)).toBe('0.00') // owned-bucket GMV does not
+    expect(rev.costBased.items).toBe(0)
+    expect(rev.costBased.undeterminedItems).toBe(0) // never owned, so never "undetermined owned" either
+    expect(rev.costBased.grossMargin.toFixed(2)).toBe('0.00')
+    expect(rev.consignment.gmv.toFixed(2)).toBe('0.00') // and not consignment either
+  })
+
+  it('getTimeSeries: a null-sourceType sale appears in the GMV/units-sold series but not in the owned gross-margin or consignment gross-spread series', async () => {
+    const completedAt = new Date('2026-01-10T12:00:00.000Z')
+    ;(prisma.order.findMany as Mock).mockResolvedValueOnce([])
+    ;(prisma.orderItem.findMany as Mock).mockResolvedValueOnce([
+      { id: 'oi1', price: 20.00, order: { completedAt }, item: { sourceType: 'consignment', purchasePrice: null } },
+      { id: 'oi2', price: 30.00, order: { completedAt }, item: { sourceType: 'buyout', purchasePrice: 18.00 } },
+      { id: 'oi3', price: 25.00, order: { completedAt }, item: { sourceType: null, purchasePrice: 40.00 } },
+    ])
+    ;(prisma.itemInstance.findMany as Mock).mockResolvedValueOnce([])
+    ;(prisma.sellerPayoutLine.findMany as Mock)
+      .mockResolvedValueOnce([]) // paidLineRows
+      .mockResolvedValueOnce([{ orderItemId: 'oi1', grossSalePrice: D('20.00'), netAmount: D('14.00') }]) // consignment lookup
+
+    const now = new Date('2026-01-15T00:00:00.000Z')
+    const series = await getTimeSeries({ preset: '7d', start: new Date(now.getTime() - 7 * 86_400_000), end: now, label: '' })
+    const bucket = series.find(b => b.bucketStart.toISOString() === '2026-01-10T00:00:00.000Z')!
+
+    expect(bucket.unitsSold).toBe(3)
+    expect(bucket.gmv.toFixed(2)).toBe('75.00') // 20 + 30 + 25 — the null item's sale is still in GMV
+    expect(bucket.consignmentGrossSpread.toFixed(2)).toBe('6.00') // unaffected by the null item
+    expect(bucket.buyoutGrossMargin.toFixed(2)).toBe('12.00') // unaffected — the null item's own margin ($25-$40) is never added
+  })
+
+  it('the query layer reuses the 15N authoritative helper (isOwnedSourceType/isConsignmentSourceType) rather than a local inverse-of-consignment proxy', () => {
+    const src = readSrc('src/lib/businessAnalyticsQuery.ts')
+    const codeOnly = src.split('\n').filter(line => !line.trim().startsWith('//')).join('\n')
+    expect(src).toContain("import { isOwnedSourceType, isConsignmentSourceType } from '@/lib/financialPosition'")
+    expect(codeOnly).not.toMatch(/sourceType\s*!==\s*'consignment'/)
+    expect(codeOnly).not.toMatch(/sourceType\s*===\s*'consignment'/)
+  })
+
+  it('the registry gross_margin definition documents the owned allowlist and excludes unknown sourceType', () => {
+    const def = getMetricDefinition('gross_margin')!
+    expect(def.description).toContain('buyout')
+    expect(def.description).toContain('company_owned')
+    expect(def.description.toLowerCase()).toContain('excluded')
+  })
+})
+
+// ── 17C (P1-2): seller table time-basis disclosure — no re-scoping of formulas ────
+
+describe('sellers page/export: time-basis disclosure (17C, P1-2)', () => {
+  const pageSrc = readSrc('src/app/(admin)/admin/analytics/sellers/page.tsx')
+  const exportSrc = readSrc('src/app/(admin)/admin/analytics/sellers/export/route.ts')
+  const queryFile = readSrc('src/lib/businessAnalyticsQuery.ts')
+
+  it('lifetime columns are explicitly tagged "(lifetime)" in the table header', () => {
+    for (const label of ['Submissions', 'Received', 'Listed', 'Sold', 'Sell-through', 'Paid', 'Med. intake→list', 'Med. list→sale', 'Rejection rate']) {
+      expect(pageSrc).toContain(`${label} (lifetime)`)
+    }
+  })
+
+  it('the one current-snapshot column is tagged "(current)"', () => {
+    expect(pageSrc).toContain('Outstanding (current)')
+  })
+
+  it('the two period-scoped columns are NOT tagged lifetime/current', () => {
+    expect(pageSrc).toContain('>Gross sales<')
+    expect(pageSrc).toContain('>Proceeds<')
+    expect(pageSrc).not.toContain('Gross sales (lifetime)')
+    expect(pageSrc).not.toContain('Proceeds (lifetime)')
+  })
+
+  it('a short legend explains the three time bases without a legalistic paragraph', () => {
+    expect(pageSrc.toLowerCase()).toContain('selected period above')
+    expect(pageSrc.toLowerCase()).toContain('current snapshot')
+    expect(pageSrc.toLowerCase()).toContain('lifetime totals')
+  })
+
+  it('the header context line no longer implies every column is date-filtered ("As of ... <range>" phrasing removed)', () => {
+    expect(pageSrc).not.toMatch(/As of \{fmtDateTimeUtc\(ctx\.asOf\)\} · \{ctx\.range\.label\}/)
+    expect(pageSrc).toContain('Selected period:')
+    expect(pageSrc).toContain('Snapshot as of')
+  })
+
+  it('CSV headers disclose the same lifetime/period/current semantics as the UI table', () => {
+    expect(exportSrc).toContain("'submissionsLifetime'")
+    expect(exportSrc).toContain("'unitsReceivedLifetime'")
+    expect(exportSrc).toContain("'unitsListedLifetime'")
+    expect(exportSrc).toContain("'unitsSoldLifetime'")
+    expect(exportSrc).toContain("'sellThroughPctLifetime'")
+    expect(exportSrc).toContain("'payoutPaidUsdLifetime'")
+    expect(exportSrc).toContain("'medianIntakeToListingDaysLifetime'")
+    expect(exportSrc).toContain("'medianListingToSaleDaysLifetime'")
+    expect(exportSrc).toContain("'rejectionRatePctLifetime'")
+    expect(exportSrc).toContain("'grossSalesUsdPeriod'")
+    expect(exportSrc).toContain("'sellerProceedsUsdPeriod'")
+    expect(exportSrc).toContain("'payoutOutstandingUsdCurrent'")
+  })
+
+  it('CSV export still calls the exact same getSellerPerformancePage function as the UI page — disclosure is header-only, values/parity unchanged', () => {
+    expect(exportSrc).toContain('getSellerPerformancePage')
+    expect(pageSrc).toContain('getSellerPerformancePage')
+  })
+
+  it('sort keys / SellerSortKey values are unchanged by the disclosure fix — bookmarked URLs keep working', () => {
+    expect(pageSrc).toContain("value: 'grossSales'")
+    expect(pageSrc).toContain("value: 'unitsSold'")
+    expect(pageSrc).toContain("value: 'sellThrough'")
+    expect(pageSrc).toContain("value: 'payoutOutstanding'")
+    expect(pageSrc).toContain("value: 'medianDaysToSell'")
+    expect(exportSrc).toContain("new Set<SellerSortKey>(['grossSales', 'unitsSold', 'sellThrough', 'payoutOutstanding', 'medianDaysToSell'])")
+  })
+
+  // Critical: verify from the QUERY layer, not just the label, that the lifetime CTEs
+  // genuinely carry no date predicate — proves the disclosure fix didn't accidentally
+  // change (or get papered over a change to) the underlying formulas (Part N/W).
+  it('lifetime seller CTEs (units sold, sell-through, payout outstanding, median days-to-sell) take no DateRange argument and reference no range/rangeSql', () => {
+    for (const fn of ['unitsSoldCte', 'sellThroughCte', 'payoutOutstandingCte', 'medianDaysToSellCte']) {
+      const idx = queryFile.indexOf(`function ${fn}(`)
+      expect(idx).toBeGreaterThan(-1)
+      expect(queryFile.slice(idx, idx + 60)).toContain(`function ${fn}(): Prisma.Sql`) // no (range: DateRange) parameter
+    }
+  })
+
+  it('only grossSalesCte is date-scoped — the one lifetime/period split point in the seller sort layer', () => {
+    const idx = queryFile.indexOf('function grossSalesCte(')
+    expect(queryFile.slice(idx, idx + 40)).toContain('function grossSalesCte(range: DateRange)')
+  })
+
+  it('outstanding liability (snapshot) predicate is unchanged — no date filter, still keyed on status/payout state only', () => {
+    const idx = queryFile.indexOf('function payoutOutstandingCte()')
+    const body = queryFile.slice(idx, queryFile.indexOf('`', queryFile.indexOf('`', idx) + 1))
+    expect(body).not.toMatch(/rangeSql|BETWEEN|>=\s*\$/)
+  })
+})

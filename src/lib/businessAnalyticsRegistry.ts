@@ -40,7 +40,7 @@ export const METRIC_REGISTRY: MetricDefinition[] = [
   {
     key: 'gross_margin',
     name: 'Gross margin (buyout/company-owned)',
-    description: 'OrderItem.price − ItemInstance.purchasePrice for buyout/company-owned sales. This is gross margin (sale price minus cost of goods), not audited net revenue. Items with no purchasePrice recorded are excluded, not treated as zero cost.',
+    description: 'OrderItem.price − ItemInstance.purchasePrice for buyout/company-owned sales (ItemInstance.sourceType in [buyout, company_owned] — the same allowlist as 15N Financial Position). This is gross margin (sale price minus cost of goods), not audited net revenue. Items with no purchasePrice recorded are excluded, not treated as zero cost. Items with an unrecognized/missing sourceType are excluded entirely — never counted as owned.',
     metricType: 'flow',
     timestampBasis: 'Order.completedAt',
     numerator: 'sum(price − purchasePrice) over buyout/company-owned order items with a recorded purchasePrice',
