@@ -3,12 +3,76 @@
 import { z } from 'zod'
 
 import { prisma } from '@/lib/prisma'
+import { Prisma } from '@prisma/client'
 import { redirect } from 'next/navigation'
 import { searchCatalogModels } from '@/lib/catalogSearch'
 import { DUPLICATE_SCORE_THRESHOLD } from '@/lib/catalogMatching'
 import { computeImpactCounts, type MergeImpactSummary } from '@/lib/catalogDataQualityQuery'
 import { checkRiskGate, consumeApprovedRiskGate, markApprovalConsumed } from '@/lib/actions/riskApprovals'
 import type { CatalogModelMergeContext } from '@/lib/riskPolicy'
+
+// 18A: WantedCatalogModel.catalogModel uses onDelete: Cascade — without this
+// reconciliation, a customer's Want on the duplicate model would be silently
+// destroyed the moment the duplicate CatalogModel row is deleted at the end of the
+// merge transaction below. No other table references WantedCatalogModel.id (verified
+// against the full schema), so rows can be freely reassigned/collapsed here without
+// orphaning any history.
+//
+// Row-survivor rule (overlap only — customer already wants both models): the row
+// with the EARLIER createdAt physically survives — that timestamp is the honest
+// answer to "since when has this customer wanted this product," regardless of which
+// duplicate DB row happened to record it first; we never rewrite createdAt on any
+// row. Field values (maxDesiredPrice/notes/availabilityAlertEnabled/priceAlertEnabled)
+// are taken from whichever row was more recently updated — the customer's freshest
+// expressed preference — never a blind OR of two rows (a boolean OR could silently
+// override an explicit customer opt-out with a stale default; an OR has no coherent
+// meaning at all for a price cap). These are independent axes: which row survives
+// (history) vs. which values it carries (current preference).
+async function reconcileWantedCatalogModelMerge(
+  tx: Prisma.TransactionClient,
+  dupeId: string,
+  canonicalId: string,
+): Promise<{ migrated: number; reconciledOverlap: number }> {
+  const [dupeWants, canonicalWants] = await Promise.all([
+    tx.wantedCatalogModel.findMany({ where: { catalogModelId: dupeId } }),
+    tx.wantedCatalogModel.findMany({ where: { catalogModelId: canonicalId } }),
+  ])
+  const canonicalByProfile = new Map(canonicalWants.map(w => [w.customerProfileId, w]))
+
+  const overlappingProfileIds: string[] = []
+  let reconciledOverlap = 0
+  for (const dupeWant of dupeWants) {
+    const canonicalWant = canonicalByProfile.get(dupeWant.customerProfileId)
+    if (!canonicalWant) continue // no conflict — handled by the bulk updateMany below
+    overlappingProfileIds.push(dupeWant.customerProfileId)
+
+    const survivor = dupeWant.createdAt <= canonicalWant.createdAt ? dupeWant : canonicalWant
+    const loser = survivor.id === dupeWant.id ? canonicalWant : dupeWant
+    const freshest = dupeWant.updatedAt >= canonicalWant.updatedAt ? dupeWant : canonicalWant
+
+    await tx.wantedCatalogModel.update({
+      where: { id: survivor.id },
+      data: {
+        catalogModelId: canonicalId,
+        maxDesiredPrice: freshest.maxDesiredPrice,
+        notes: freshest.notes,
+        availabilityAlertEnabled: freshest.availabilityAlertEnabled,
+        priceAlertEnabled: freshest.priceAlertEnabled,
+      },
+    })
+    await tx.wantedCatalogModel.delete({ where: { id: loser.id } })
+    reconciledOverlap++
+  }
+
+  // Non-conflicting duplicate-only Wants: retarget in place (never delete+recreate),
+  // preserving row identity, createdAt/updatedAt, and every preference field exactly.
+  const migrated = await tx.wantedCatalogModel.updateMany({
+    where: { catalogModelId: dupeId, customerProfileId: { notIn: overlappingProfileIds } },
+    data: { catalogModelId: canonicalId },
+  })
+
+  return { migrated: migrated.count, reconciledOverlap }
+}
 
 // 15F-review (catalog-merge pass): approvalRequestId is set only when a risk gate
 // routed this action to the approval queue instead of performing the mutation.
@@ -212,13 +276,21 @@ export async function mergeCatalogModels(
           if (!consumed.ok) { mergeError = { errors: { form: [consumed.error] } }; throw new Error('TX_VALIDATION') }
         }
 
-        const [items, collItems, suggestions, submissions, photos] = await Promise.all([
+        const [items, collItems, suggestions, submissions, photos, wanted] = await Promise.all([
           tx.itemInstance.updateMany({ where: { catalogId: dupeId }, data: { catalogId: canonicalId } }),
           tx.collectionItem.updateMany({ where: { catalogId: dupeId }, data: { catalogId: canonicalId } }),
           tx.catalogSuggestion.updateMany({ where: { approvedCatalogId: dupeId }, data: { approvedCatalogId: canonicalId } }),
           tx.sellerSubmission.updateMany({ where: { catalogId: dupeId }, data: { catalogId: canonicalId } }),
           tx.catalogModelPhoto.updateMany({ where: { catalogId: dupeId }, data: { catalogId: canonicalId } }),
+          reconcileWantedCatalogModelMerge(tx, dupeId, canonicalId),
         ])
+
+        // No CatalogModelMergeAudit column exists for Wanted counts (no schema change
+        // in 18A) — recorded in adminNote instead, the field this table already
+        // provides for free-text merge context.
+        const wantedNote = wanted.migrated > 0 || wanted.reconciledOverlap > 0
+          ? `Wanted: ${wanted.migrated} migrated, ${wanted.reconciledOverlap} reconciled (customer wanted both models)`
+          : null
 
         await tx.catalogModelMergeAudit.create({
           data: {
@@ -231,6 +303,7 @@ export async function mergeCatalogModels(
             movedCatalogSuggestions: suggestions.count,
             movedSellerSubmissions:  submissions.count,
             movedPhotos:             photos.count,
+            adminNote:               wantedNote,
           },
         })
 
@@ -238,14 +311,17 @@ export async function mergeCatalogModels(
         // The FOR UPDATE lock on this CatalogModel row blocks concurrent FK inserts/updates
         // (Postgres acquires FOR KEY SHARE on the referenced row for any FK write, which
         // conflicts with FOR UPDATE). So remaining should always be 0. If non-zero, roll back.
-        const [ri, rc, rs, rsub, rp] = await Promise.all([
+        // Includes wantedCatalogModel — 18A: never rely on onDelete:Cascade to decide
+        // customer intent; verify zero Wants still point at the duplicate before it's deleted.
+        const [ri, rc, rs, rsub, rp, rw] = await Promise.all([
           tx.itemInstance.count({ where: { catalogId: dupeId } }),
           tx.collectionItem.count({ where: { catalogId: dupeId } }),
           tx.catalogSuggestion.count({ where: { approvedCatalogId: dupeId } }),
           tx.sellerSubmission.count({ where: { catalogId: dupeId } }),
           tx.catalogModelPhoto.count({ where: { catalogId: dupeId } }),
+          tx.wantedCatalogModel.count({ where: { catalogModelId: dupeId } }),
         ])
-        const remaining = ri + rc + rs + rsub + rp
+        const remaining = ri + rc + rs + rsub + rp + rw
         if (remaining > 0) {
           mergeError = {
             errors: {
