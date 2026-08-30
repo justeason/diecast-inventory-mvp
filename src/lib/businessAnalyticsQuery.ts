@@ -13,7 +13,10 @@ import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import type { DateRange, BucketGranularity } from '@/lib/businessAnalyticsDates'
 import { chooseBucketGranularity, bucketStart, advanceBucket } from '@/lib/businessAnalyticsDates'
-import { decimalFromFloatDollars, sumDecimal, subtractDecimal, daysBetween, DECIMAL_ZERO } from '@/lib/businessAnalyticsMath'
+import {
+  decimalFromFloatDollars, sumDecimal, subtractDecimal, daysBetween, DECIMAL_ZERO,
+  computeCommercialPeriodSummary, type CommercialPeriodSummary,
+} from '@/lib/businessAnalyticsMath'
 // 17C: reuse 15N's authoritative ownership classification instead of the analytics
 // layer's own inverse-of-consignment proxy (`sourceType !== 'consignment'`), which
 // silently treated null/unknown sourceType (e.g. items created via the manual admin
@@ -25,6 +28,14 @@ import { isOwnedSourceType, isConsignmentSourceType } from '@/lib/financialPosit
 
 function rangeWhere(field: string, range: DateRange) {
   return range.start ? { [field]: { gte: range.start, lt: range.end } } : { [field]: { lt: range.end } }
+}
+
+// 17E final source-of-truth cleanup: the ONE definition of "a completed sale's
+// Order" — status='complete' within the selected period. Shared by
+// getCommercialPeriodSummary and getOverviewMetrics's wide fetch/count so the two
+// can never independently drift on what counts as a completed order.
+function completedOrderWhere(range: DateRange): Prisma.OrderWhereInput {
+  return { status: 'complete', ...rangeWhere('completedAt', range) }
 }
 
 // ── Overview ─────────────────────────────────────────────────────────────────────
@@ -52,13 +63,43 @@ export type OverviewMetrics = {
   sellersWithCompletedSales: number
 }
 
+// 17E final query-efficiency reconciliation: a narrow, standalone authoritative
+// helper for callers that need ONLY completed-order count / units sold / GMV — not
+// the full OverviewMetrics (which also computes gross spread/margin, active
+// inventory, sell-through/listing cohorts, seller liability, and sellers-with-
+// completed-sales — 8+ additional DB calls a caller like the management summary
+// never renders). Same predicate (status='complete', rangeWhere on completedAt) and
+// same Decimal-safe math helpers as getOverviewMetrics below — not a second formula.
+//
+// Deliberately NOT called by getOverviewMetrics itself: that function already needs
+// the wider per-item select (sourceType/purchasePrice/createdAt) for margin/spread/
+// median-days, so routing it through this narrower `{price: true}` fetch would add a
+// SECOND orderItem.findMany over the same rows rather than removing one — a
+// regression for the already-shipped overview page. One-source-of-truth is
+// preserved at the predicate/math-primitive level (both reuse rangeWhere,
+// decimalFromFloatDollars, sumDecimal) and proven by a cross-validation test
+// asserting the two always agree, not by forcing a shared DB call shape that would
+// only benefit one of the two callers at the other's expense.
+export type { CommercialPeriodSummary }
+
+export async function getCommercialPeriodSummary(range: DateRange): Promise<CommercialPeriodSummary> {
+  const [orderItems, completedOrders] = await Promise.all([
+    prisma.orderItem.findMany({
+      where: { order: completedOrderWhere(range) },
+      select: { price: true },
+    }),
+    prisma.order.count({ where: completedOrderWhere(range) }),
+  ])
+  return computeCommercialPeriodSummary({ orderItems, completedOrders })
+}
+
 export async function getOverviewMetrics(range: DateRange): Promise<OverviewMetrics> {
   const [
     unitsSoldRows, completedOrderCount, activeInventory,
     sellThroughCohort, listingCohort, liability, sellerCount,
   ] = await Promise.all([
     prisma.orderItem.findMany({
-      where: { order: { status: 'complete', ...rangeWhere('completedAt', range) } },
+      where: { order: completedOrderWhere(range) },
       select: {
         id: true,
         itemId: true,
@@ -67,7 +108,7 @@ export async function getOverviewMetrics(range: DateRange): Promise<OverviewMetr
         order: { select: { completedAt: true } },
       },
     }),
-    prisma.order.count({ where: { status: 'complete', ...rangeWhere('completedAt', range) } }),
+    prisma.order.count({ where: completedOrderWhere(range) }),
     prisma.itemInstance.count({ where: { status: { in: ['available', 'reserved'] } } }),
     getSellThroughCohortCounts(range),
     getListingConversionCohortCounts(range),
@@ -75,7 +116,11 @@ export async function getOverviewMetrics(range: DateRange): Promise<OverviewMetr
     getSellersWithCompletedSalesCount(range),
   ])
 
-  const gmv = sumDecimal(unitsSoldRows.map(r => decimalFromFloatDollars(r.price)))
+  // Same shared pure calculation getCommercialPeriodSummary uses — unitsSoldRows
+  // already contains `price` alongside the extra fields margin/median need below, so
+  // this is zero extra DB work, just the one shared formula applied to the rows this
+  // function already fetched for its own (unrelated) purposes.
+  const { unitsSold, completedOrders, gmv } = computeCommercialPeriodSummary({ orderItems: unitsSoldRows, completedOrders: completedOrderCount })
   const spreadAndMargin = await computeGrossSpreadAndMargin(unitsSoldRows.map(r => ({ id: r.id, price: r.price, sourceType: r.item.sourceType, purchasePrice: r.item.purchasePrice })))
 
   const seenItemIds = new Set<string>()
@@ -92,8 +137,8 @@ export async function getOverviewMetrics(range: DateRange): Promise<OverviewMetr
   const medianDaysToSell = durations.length > 0 ? [...durations].sort((a, b) => a - b)[Math.floor((durations.length - 1) / 2)] : null
 
   return {
-    unitsSold: unitsSoldRows.length,
-    completedOrders: completedOrderCount,
+    unitsSold,
+    completedOrders,
     gmv,
     grossSpreadDetermined: spreadAndMargin.grossSpread,
     grossSpreadUndeterminedItems: spreadAndMargin.undeterminedConsignment,

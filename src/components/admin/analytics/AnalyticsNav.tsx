@@ -8,6 +8,7 @@ const TABS = [
   { href: '/admin/analytics/sellers', label: 'Sellers' },
   { href: '/admin/analytics/revenue', label: 'Revenue' },
   { href: '/admin/analytics/catalog', label: 'Catalog' },
+  { href: '/admin/analytics/management', label: 'Management' },
 ]
 
 // Preserves the current filter query string across sub-nav links.

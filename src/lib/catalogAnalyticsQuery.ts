@@ -283,7 +283,11 @@ export type WantedNoSupplyRow = {
 
 const NO_SUPPLY_LIMIT = 50
 
-export async function getWantedWithNoSupply(): Promise<{ items: WantedNoSupplyRow[]; truncated: boolean }> {
+// 17E: `limit` is optional (defaults to the existing NO_SUPPLY_LIMIT, so every
+// pre-existing call site is byte-equivalent) purely so the management summary can
+// request a small shortlist (e.g. 5) without a second query/implementation —
+// same ordering, same NOT EXISTS predicate, same truncation semantics either way.
+export async function getWantedWithNoSupply(limit: number = NO_SUPPLY_LIMIT): Promise<{ items: WantedNoSupplyRow[]; truncated: boolean }> {
   const rows = await prisma.$queryRaw<Array<{ catalog_model_id: string; wanted_count: number }>>`
     SELECT w."catalogModelId" AS catalog_model_id, COUNT(*)::float8 AS wanted_count
     FROM "WantedCatalogModel" w
@@ -294,12 +298,12 @@ export async function getWantedWithNoSupply(): Promise<{ items: WantedNoSupplyRo
     )
     GROUP BY w."catalogModelId"
     ORDER BY wanted_count DESC, w."catalogModelId" ASC
-    LIMIT ${NO_SUPPLY_LIMIT + 1}
+    LIMIT ${limit + 1}
   `
   if (rows.length === 0) return { items: [], truncated: false }
 
-  const truncated = rows.length > NO_SUPPLY_LIMIT
-  const pageRows = truncated ? rows.slice(0, NO_SUPPLY_LIMIT) : rows
+  const truncated = rows.length > limit
+  const pageRows = truncated ? rows.slice(0, limit) : rows
 
   const ids = pageRows.map(r => r.catalog_model_id)
   const models = await prisma.catalogModel.findMany({ where: { id: { in: ids } }, select: { id: true, brand: true, name: true, year: true, series: true, scale: true } })

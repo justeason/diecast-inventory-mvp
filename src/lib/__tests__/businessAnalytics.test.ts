@@ -35,7 +35,7 @@ vi.mock('@/lib/prisma', () => ({
 import { prisma } from '@/lib/prisma'
 import {
   decimalFromFloatDollars, sumDecimal, subtractDecimal, decimalToCents, centsToDecimal,
-  ratio, periodChange, computeDurationStats, daysBetween,
+  ratio, periodChange, computeDurationStats, daysBetween, computeCommercialPeriodSummary,
 } from '@/lib/businessAnalyticsMath'
 import { parseDateRangeParams, previousPeriod, chooseBucketGranularity, bucketStart, advanceBucket, dateRangeQueryParams, todayRange } from '@/lib/businessAnalyticsDates'
 import { fmtPeriodChange } from '@/lib/businessAnalyticsFormat'
@@ -43,7 +43,7 @@ import { METRIC_REGISTRY, getMetricDefinition } from '@/lib/businessAnalyticsReg
 import {
   getInventorySnapshot, getInventoryAging, getPayoutLiabilitySnapshot, getOutstandingLiability,
   getSellerPerformancePage, getRevenueBreakdown, getConversionFunnel, getDaysToSellDurations, getTimeSeries,
-  getOverviewMetrics,
+  getOverviewMetrics, getCommercialPeriodSummary,
 } from '@/lib/businessAnalyticsQuery'
 
 type Mock = ReturnType<typeof vi.fn>
@@ -75,6 +75,37 @@ describe('businessAnalyticsMath: money precision (Decimal, no JS Float accumulat
     const src = readSrc('src/lib/businessAnalyticsQuery.ts')
     expect(src).not.toMatch(/sum\s*\+=\s*Number\(/)
     expect(src).not.toContain('parseFloat(')
+  })
+})
+
+// ── Commercial period summary (17E final source-of-truth cleanup) ───────────────
+
+describe('businessAnalyticsMath: computeCommercialPeriodSummary (pure)', () => {
+  it('unitsSold = row count, gmv = Decimal-safe sum, completedOrders passed through unchanged', () => {
+    const result = computeCommercialPeriodSummary({
+      orderItems: [{ price: 20.00 }, { price: 30.00 }, { price: 0.10 }],
+      completedOrders: 2,
+    })
+    expect(result.unitsSold).toBe(3)
+    expect(result.gmv.toFixed(2)).toBe('50.10')
+    expect(result.completedOrders).toBe(2)
+  })
+
+  it('a wide row (extra fields beyond price) works identically — structural compatibility, not a narrower type requirement', () => {
+    const result = computeCommercialPeriodSummary({
+      orderItems: [
+        { price: 10.00, sourceType: 'consignment', purchasePrice: null } as { price: number },
+      ],
+      completedOrders: 1,
+    })
+    expect(result.unitsSold).toBe(1)
+    expect(result.gmv.toFixed(2)).toBe('10.00')
+  })
+
+  it('empty period: 0 orders, 0 units, $0.00 GMV — never NaN/Infinity', () => {
+    const result = computeCommercialPeriodSummary({ orderItems: [], completedOrders: 0 })
+    expect(result).toEqual({ unitsSold: 0, completedOrders: 0, gmv: expect.objectContaining({}) })
+    expect(result.gmv.toFixed(2)).toBe('0.00')
   })
 })
 
@@ -1430,5 +1461,115 @@ describe('sellers page/export: time-basis disclosure (17C, P1-2)', () => {
     const idx = queryFile.indexOf('function payoutOutstandingCte()')
     const body = queryFile.slice(idx, queryFile.indexOf('`', queryFile.indexOf('`', idx) + 1))
     expect(body).not.toMatch(/rangeSql|BETWEEN|>=\s*\$/)
+  })
+})
+
+// ── 17E final query-efficiency reconciliation: getCommercialPeriodSummary ─────────
+// Narrow helper extracted so callers needing ONLY completedOrders/unitsSold/gmv
+// (17E's management summary) don't pay for OverviewMetrics's full 8+-query fetch.
+// Not called internally by getOverviewMetrics (would duplicate its own wider
+// orderItem fetch) — cross-validated here instead: same predicate, same math
+// helpers, so the two must always agree for the same underlying data.
+
+describe('businessAnalyticsQuery: getCommercialPeriodSummary (17E final reconciliation)', () => {
+  beforeEach(() => vi.resetAllMocks())
+
+  it('returns completedOrders/unitsSold/gmv computed the same way as getOverviewMetrics — Decimal-safe sum, row count', async () => {
+    ;(prisma.orderItem.findMany as Mock).mockResolvedValueOnce([{ price: 20.00 }, { price: 30.00 }, { price: 0.10 }])
+    ;(prisma.order.count as Mock).mockResolvedValueOnce(2)
+
+    const now = new Date()
+    const summary = await getCommercialPeriodSummary({ preset: '30d', start: new Date(now.getTime() - 1000), end: now, label: '' })
+
+    expect(summary.completedOrders).toBe(2)
+    expect(summary.unitsSold).toBe(3)
+    expect(summary.gmv.toFixed(2)).toBe('50.10')
+  })
+
+  it('selects ONLY price — not the wider sourceType/purchasePrice/createdAt shape getOverviewMetrics needs for margin/spread/median', () => {
+    const src = readSrc('src/lib/businessAnalyticsQuery.ts')
+    const fnSrc = src.slice(src.indexOf('export async function getCommercialPeriodSummary'), src.indexOf('export async function getOverviewMetrics'))
+    expect(fnSrc).toContain('select: { price: true }')
+    expect(fnSrc).not.toContain('sourceType')
+    expect(fnSrc).not.toContain('purchasePrice')
+  })
+
+  it('uses the exact same predicate as getOverviewMetrics — both call the single shared completedOrderWhere(range), never a re-derived condition', () => {
+    const src = readSrc('src/lib/businessAnalyticsQuery.ts')
+    const fnSrc = src.slice(src.indexOf('export async function getCommercialPeriodSummary'), src.indexOf('export async function getOverviewMetrics'))
+    expect(fnSrc).toContain('completedOrderWhere(range)')
+    expect(fnSrc).not.toContain("status: 'complete'") // not re-derived inline — sourced from the one shared predicate helper
+
+    // completedOrderWhere itself is defined exactly once, with the one authoritative
+    // definition of "a completed sale's Order" — status='complete' + rangeWhere.
+    const predIdx = src.indexOf('function completedOrderWhere')
+    const predSrc = src.slice(predIdx, src.indexOf('\n}', predIdx))
+    expect(predSrc).toContain("status: 'complete'")
+    expect(predSrc).toContain("rangeWhere('completedAt', range)")
+    expect((src.match(/function completedOrderWhere/g) ?? []).length).toBe(1) // exactly one definition
+
+    // getOverviewMetrics's wide fetch + order.count also route through it.
+    const overviewFnSrc = src.slice(src.indexOf('export async function getOverviewMetrics'), src.indexOf('async function computeGrossSpreadAndMargin'))
+    expect((overviewFnSrc.match(/completedOrderWhere\(range\)/g) ?? []).length).toBe(2) // findMany + count
+  })
+
+  it('both helpers compute completedOrders/unitsSold/gmv via the SAME shared pure function (computeCommercialPeriodSummary), not two independent formulas', () => {
+    const querySrc = readSrc('src/lib/businessAnalyticsQuery.ts')
+    expect(querySrc).toContain("computeCommercialPeriodSummary, type CommercialPeriodSummary,")
+    const overviewFnSrc = querySrc.slice(querySrc.indexOf('export async function getOverviewMetrics'), querySrc.indexOf('async function computeGrossSpreadAndMargin'))
+    expect(overviewFnSrc).toContain('computeCommercialPeriodSummary({ orderItems: unitsSoldRows, completedOrders: completedOrderCount })')
+    const narrowFnSrc = querySrc.slice(querySrc.indexOf('export async function getCommercialPeriodSummary'), querySrc.indexOf('export async function getOverviewMetrics'))
+    expect(narrowFnSrc).toContain('computeCommercialPeriodSummary({ orderItems, completedOrders })')
+
+    // The pure calculation itself lives in exactly one place (businessAnalyticsMath.ts).
+    const mathSrc = readSrc('src/lib/businessAnalyticsMath.ts')
+    expect(mathSrc).toContain('export function computeCommercialPeriodSummary(')
+    expect((mathSrc.match(/function computeCommercialPeriodSummary/g) ?? []).length).toBe(1)
+  })
+
+  it('getOverviewMetrics performs NO additional DB call as a result of sharing the pure helper — still exactly one Promise.all with the same 7 branches', () => {
+    const src = readSrc('src/lib/businessAnalyticsQuery.ts')
+    const fnSrc = src.slice(src.indexOf('export async function getOverviewMetrics'), src.indexOf('async function computeGrossSpreadAndMargin'))
+    const promiseAllIdx = fnSrc.indexOf('await Promise.all([')
+    const promiseAllBlock = fnSrc.slice(promiseAllIdx, fnSrc.indexOf('])', promiseAllIdx))
+    // Exactly 7 top-level branches, unchanged from before this cleanup.
+    expect(promiseAllBlock).toContain('prisma.orderItem.findMany(')
+    expect(promiseAllBlock).toContain('prisma.order.count(')
+    expect(promiseAllBlock).toContain('prisma.itemInstance.count(')
+    expect(promiseAllBlock).toContain('getSellThroughCohortCounts(range)')
+    expect(promiseAllBlock).toContain('getListingConversionCohortCounts(range)')
+    expect(promiseAllBlock).toContain('getOutstandingLiability()')
+    expect(promiseAllBlock).toContain('getSellersWithCompletedSalesCount(range)')
+    expect(fnSrc).not.toContain('getCommercialPeriodSummary(') // never calls the narrow helper — would be a second DB round-trip
+  })
+
+  it('cross-validation: getCommercialPeriodSummary and getOverviewMetrics produce IDENTICAL completedOrders/unitsSold/gmv for the same underlying rows', async () => {
+    const rows = [
+      { id: 'oi1', itemId: 'i1', price: 25.00, item: { sourceType: 'consignment', purchasePrice: null, createdAt: new Date('2026-01-01') }, order: { completedAt: new Date('2026-01-05') } },
+      { id: 'oi2', itemId: 'i2', price: 40.00, item: { sourceType: 'buyout', purchasePrice: 18.00, createdAt: new Date('2026-01-01') }, order: { completedAt: new Date('2026-01-05') } },
+    ]
+    const now = new Date()
+    const range = { preset: '30d' as const, start: new Date(now.getTime() - 1000), end: now, label: '' }
+
+    // getCommercialPeriodSummary call
+    ;(prisma.orderItem.findMany as Mock).mockResolvedValueOnce(rows.map(r => ({ price: r.price })))
+    ;(prisma.order.count as Mock).mockResolvedValueOnce(2)
+    const narrow = await getCommercialPeriodSummary(range)
+
+    // getOverviewMetrics call — same underlying rows, wider shape
+    ;(prisma.orderItem.findMany as Mock)
+      .mockResolvedValueOnce(rows)
+      .mockResolvedValueOnce([]) // getSellersWithCompletedSalesCount's own orderItem.findMany
+    ;(prisma.order.count as Mock).mockResolvedValueOnce(2)
+    ;(prisma.itemInstance.count as Mock).mockResolvedValue(0)
+    ;(prisma.listing.count as Mock).mockResolvedValue(0)
+    ;(prisma.sellerPayoutLine.findMany as Mock).mockResolvedValueOnce([])
+    ;(prisma.sellerPayoutLine.aggregate as Mock).mockResolvedValueOnce({ _sum: { netAmount: D('0') } })
+    ;(prisma.sellerAgreement.findMany as Mock).mockResolvedValueOnce([])
+    const wide = await getOverviewMetrics(range)
+
+    expect(narrow.completedOrders).toBe(wide.completedOrders)
+    expect(narrow.unitsSold).toBe(wide.unitsSold)
+    expect(narrow.gmv.toFixed(2)).toBe(wide.gmv.toFixed(2))
   })
 })

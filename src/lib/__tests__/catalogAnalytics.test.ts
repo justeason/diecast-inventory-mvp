@@ -277,7 +277,10 @@ describe('catalogAnalyticsQuery: Wanted with no supply (17D, BA/BC)', () => {
     const src = readSrc('src/lib/catalogAnalyticsQuery.ts')
     const fnSrc = src.slice(src.indexOf('export async function getWantedWithNoSupply'), src.length)
     expect(fnSrc).toContain('ORDER BY wanted_count DESC, w."catalogModelId" ASC')
-    expect(fnSrc).toMatch(/LIMIT \$\{NO_SUPPLY_LIMIT \+ 1\}/)
+    // 17E: limit is now a parameter (default NO_SUPPLY_LIMIT) so the management
+    // summary can request a smaller shortlist — still always LIMIT <n>+1, never unbounded.
+    expect(fnSrc).toMatch(/LIMIT \$\{limit \+ 1\}/)
+    expect(fnSrc).toContain('limit: number = NO_SUPPLY_LIMIT')
   })
 
   it('51 matching models -> returns the top 50 (by wantedCount desc) and reports truncated=true', async () => {
@@ -391,10 +394,12 @@ describe('catalogAnalyticsQuery + page: time-basis semantics (17D, BE/E/AK)', ()
     }
   })
 
-  it('changing the selected range never re-scopes getWantedWithNoSupply (no range parameter accepted at all)', () => {
+  it('changing the selected range never re-scopes getWantedWithNoSupply — its only parameter (17E) is an optional display-size limit, never a DateRange/period', () => {
     const src = readSrc('src/lib/catalogAnalyticsQuery.ts')
-    const sig = src.slice(src.indexOf('export async function getWantedWithNoSupply'), src.indexOf('export async function getWantedWithNoSupply') + 60)
-    expect(sig).toContain('getWantedWithNoSupply(): Promise')
+    const sig = src.slice(src.indexOf('export async function getWantedWithNoSupply'), src.indexOf('export async function getWantedWithNoSupply') + 90)
+    expect(sig).toContain('getWantedWithNoSupply(limit: number = NO_SUPPLY_LIMIT): Promise')
+    expect(sig).not.toContain('DateRange')
+    expect(sig).not.toContain('range:')
   })
 
   it('the page discloses period vs current columns in the table headers and a legend line', () => {
@@ -545,10 +550,12 @@ describe('AnalyticsNav: Catalog entry (17D, BK/C/AR)', () => {
     }
   })
 
-  it('no separate "Catalog Performance"/"Model Demand"/"Model Sales" tabs were added — exactly one new tab', () => {
+  it('no separate "Catalog Performance"/"Model Demand"/"Model Sales" tabs were added — exactly one new tab for 17D', () => {
     const src = readSrc('src/components/admin/analytics/AnalyticsNav.tsx')
-    const tabCount = [...src.matchAll(/href: '\/admin\/analytics/g)].length
-    expect(tabCount).toBe(7) // 6 pre-existing + 1 new
+    expect(src).not.toContain("label: 'Catalog Performance'")
+    expect(src).not.toContain("label: 'Model Demand'")
+    expect(src).not.toContain("label: 'Model Sales'")
+    expect(src).toContain("{ href: '/admin/analytics/catalog', label: 'Catalog' }")
   })
 })
 

@@ -33,6 +33,24 @@ export function subtractDecimal(a: Prisma.Decimal, b: Prisma.Decimal): Prisma.De
 
 export const DECIMAL_ZERO = ZERO
 
+// ── Commercial period summary (17E final source-of-truth cleanup) ────────────────
+//
+// Pure — takes already-fetched rows, does no DB access. The ONE place completed-
+// orders/units-sold/GMV are computed from raw OrderItem rows. Both
+// getCommercialPeriodSummary (its own narrow `{price}`-only fetch) and
+// getOverviewMetrics (its wider fetch, which already contains `price` alongside the
+// extra fields margin/median need) call this same function — a wide row satisfies
+// `{ price: number }` structurally, so no second query or reshaping is needed.
+export type CommercialPeriodSummary = { completedOrders: number; unitsSold: number; gmv: Prisma.Decimal }
+
+export function computeCommercialPeriodSummary(input: { orderItems: Array<{ price: number }>; completedOrders: number }): CommercialPeriodSummary {
+  return {
+    completedOrders: input.completedOrders,
+    unitsSold: input.orderItems.length,
+    gmv: sumDecimal(input.orderItems.map(r => decimalFromFloatDollars(r.price))),
+  }
+}
+
 // ── Ratios / period comparisons ─────────────────────────────────────────────────
 
 export type RatioResult = { value: number | null; numerator: number; denominator: number }
