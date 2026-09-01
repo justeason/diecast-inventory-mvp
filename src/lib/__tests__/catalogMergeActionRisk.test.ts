@@ -50,6 +50,11 @@ function makeTx(overrides: Record<string, unknown> = {}) {
       delete: vi.fn().mockResolvedValue({}),
       count: vi.fn().mockResolvedValue(0),
     },
+    // 18B: no nonterminal fanout by default (precondition passes) and nothing to
+    // retarget by default — every existing test in this file gets the "clean" path.
+    buyerAlertEvent: { updateMany: vi.fn().mockResolvedValue({ count: 0 }), count: vi.fn().mockResolvedValue(0) },
+    buyerAlertFanout: { updateMany: vi.fn().mockResolvedValue({ count: 0 }), count: vi.fn().mockResolvedValue(0) },
+    catalogPhotoFingerprint: { updateMany: vi.fn().mockResolvedValue({ count: 0 }), count: vi.fn().mockResolvedValue(0) },
     catalogModelMergeAudit: { create: vi.fn().mockResolvedValue({}) },
     ...overrides,
   }

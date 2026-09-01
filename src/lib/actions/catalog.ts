@@ -276,6 +276,55 @@ export async function mergeCatalogModels(
           if (!consumed.ok) { mergeError = { errors: { form: [consumed.error] } }; throw new Error('TX_VALIDATION') }
         }
 
+        // 18B: hard integrity precondition, not an overrideable risk gate. A
+        // pending/processing BuyerAlertFanout job pages WantedCatalogModel via a
+        // keyset cursor scoped to the PRE-merge population (see
+        // buyerAlertsFanoutProcessor.ts). If duplicate Wants are migrated to
+        // canonical while such a job is live, its cursor's semantics become invalid
+        // for the new combined population and recipients could be silently skipped —
+        // no safe cursor-repair/restart/reset exists, so the merge blocks instead.
+        // Deliberately does NOT distinguish a live lease from a stale one (no
+        // FANOUT_LEASE_MS import, no staleness check) — every nonterminal status
+        // blocks, conservatively; a stale job is already reclaimable by the existing
+        // processor on its own schedule, unrelated to this merge.
+        const nonterminalFanoutCount = await tx.buyerAlertFanout.count({
+          where: { catalogModelId: dupeId, status: { in: ['pending', 'processing'] } },
+        })
+        if (nonterminalFanoutCount > 0) {
+          mergeError = {
+            errors: { form: ['An alert fanout is pending or processing for this model. Retry the merge after alert processing completes.'] },
+          }
+          throw new Error('TX_VALIDATION')
+        }
+
+        // 18B final reconciliation: a SEPARATE hard precondition from the fanout one
+        // above — this closes a delivery-concurrency race, not a fanout-cursor one.
+        // buyerAlertsDelivery.ts's deliverOne() is not itself transactional: it reads
+        // the event row (capturing catalogModelId into a plain JS variable) via one
+        // standalone `prisma.buyerAlertEvent.findUnique`, then LATER — as a separate,
+        // unrelated query — re-checks WantedCatalogModel using that already-captured,
+        // now-possibly-stale catalogModelId value. If this merge's WantedCatalogModel
+        // migration commits in between those two reads, the worker's stale value finds
+        // no matching Wanted row (it was moved to canonicalId) and falsely suppresses
+        // a legitimate alert as 'wanted_removed' — even though the customer's want was
+        // only migrated, never removed. Blocking while any BuyerAlertEvent for this
+        // model is 'pending' or 'sending' closes that window entirely: 'sending' rows
+        // are actively/recently claimed for exactly this delivery sequence, and a
+        // stale 'sending' lease is already safely reclaimable by the existing
+        // DELIVERY_LEASE_MS mechanism in buyerAlertsDelivery.ts — no repair needed
+        // here. 'sent'/'failed'/'suppressed'/'delivery_unknown' are all terminal:
+        // processPendingBuyerAlerts's own candidate query never selects them again, so
+        // they carry no delivery-concurrency risk and are retargeted normally below.
+        const nonterminalEventCount = await tx.buyerAlertEvent.count({
+          where: { catalogModelId: dupeId, status: { in: ['pending', 'sending'] } },
+        })
+        if (nonterminalEventCount > 0) {
+          mergeError = {
+            errors: { form: ['An alert is pending delivery for this model. Retry the merge after delivery completes.'] },
+          }
+          throw new Error('TX_VALIDATION')
+        }
+
         const [items, collItems, suggestions, submissions, photos, wanted] = await Promise.all([
           tx.itemInstance.updateMany({ where: { catalogId: dupeId }, data: { catalogId: canonicalId } }),
           tx.collectionItem.updateMany({ where: { catalogId: dupeId }, data: { catalogId: canonicalId } }),
@@ -283,6 +332,18 @@ export async function mergeCatalogModels(
           tx.sellerSubmission.updateMany({ where: { catalogId: dupeId }, data: { catalogId: canonicalId } }),
           tx.catalogModelPhoto.updateMany({ where: { catalogId: dupeId }, data: { catalogId: canonicalId } }),
           reconcileWantedCatalogModelMerge(tx, dupeId, canonicalId),
+          // 18B: navigational/current-identity retarget only — no historical payload
+          // field changes. All BuyerAlertEvent statuses survive (not filtered); only
+          // 'complete'/'failed' BuyerAlertFanout rows are retargeted here — 'pending'/
+          // 'processing' cannot exist at this point (blocked above), so this filter is
+          // a defensive belt-and-suspenders against a row that raced into a nonterminal
+          // status between the check above and here (caught by the integrity check below
+          // regardless). Fingerprint retarget mirrors the existing photo migration —
+          // uniqueness is [catalogPhotoId, algorithmVersion], catalogModelId excluded,
+          // so no conflict handling is needed.
+          tx.buyerAlertEvent.updateMany({ where: { catalogModelId: dupeId }, data: { catalogModelId: canonicalId } }),
+          tx.buyerAlertFanout.updateMany({ where: { catalogModelId: dupeId, status: { in: ['complete', 'failed'] } }, data: { catalogModelId: canonicalId } }),
+          tx.catalogPhotoFingerprint.updateMany({ where: { catalogModelId: dupeId }, data: { catalogModelId: canonicalId } }),
         ])
 
         // No CatalogModelMergeAudit column exists for Wanted counts (no schema change
@@ -313,15 +374,23 @@ export async function mergeCatalogModels(
         // conflicts with FOR UPDATE). So remaining should always be 0. If non-zero, roll back.
         // Includes wantedCatalogModel — 18A: never rely on onDelete:Cascade to decide
         // customer intent; verify zero Wants still point at the duplicate before it's deleted.
-        const [ri, rc, rs, rsub, rp, rw] = await Promise.all([
+        // 18B: also buyerAlertEvent/buyerAlertFanout/catalogPhotoFingerprint — the
+        // fanout count here is intentionally UNFILTERED by status (unlike the retarget
+        // above), so a row that raced into pending/processing after the precondition
+        // check is still caught here and aborts the whole merge rather than being
+        // silently cascade-deleted.
+        const [ri, rc, rs, rsub, rp, rw, rae, raf, rfp] = await Promise.all([
           tx.itemInstance.count({ where: { catalogId: dupeId } }),
           tx.collectionItem.count({ where: { catalogId: dupeId } }),
           tx.catalogSuggestion.count({ where: { approvedCatalogId: dupeId } }),
           tx.sellerSubmission.count({ where: { catalogId: dupeId } }),
           tx.catalogModelPhoto.count({ where: { catalogId: dupeId } }),
           tx.wantedCatalogModel.count({ where: { catalogModelId: dupeId } }),
+          tx.buyerAlertEvent.count({ where: { catalogModelId: dupeId } }),
+          tx.buyerAlertFanout.count({ where: { catalogModelId: dupeId } }),
+          tx.catalogPhotoFingerprint.count({ where: { catalogModelId: dupeId } }),
         ])
-        const remaining = ri + rc + rs + rsub + rp + rw
+        const remaining = ri + rc + rs + rsub + rp + rw + rae + raf + rfp
         if (remaining > 0) {
           mergeError = {
             errors: {
