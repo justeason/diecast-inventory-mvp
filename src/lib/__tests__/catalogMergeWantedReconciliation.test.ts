@@ -62,7 +62,14 @@ function makeTx(dupeId: string, canonicalId: string, dupeWants: Want[], canonica
     return Promise.resolve([])
   })
   return {
-    $queryRaw: vi.fn().mockResolvedValue(undefined),
+    // $queryRaw is shared by the CatalogModel FOR UPDATE lock loop (return value
+    // unused) and, since 18C final, the ExternalMarketObservation row lock (return
+    // value = locked ids — defaults to none here).
+    $queryRaw: vi.fn().mockImplementation((strings: TemplateStringsArray) => {
+      const text = Array.isArray(strings) ? strings.join('') : String(strings)
+      if (text.includes('ExternalMarketObservation')) return Promise.resolve([])
+      return Promise.resolve(undefined)
+    }),
     catalogModel: {
       findUnique: vi.fn().mockImplementation((args: { where: { id: string } }) => Promise.resolve({ id: args.where.id, brand: 'Hot Wheels', name: 'Porsche 911' })),
       delete: vi.fn().mockResolvedValue({}),
@@ -84,6 +91,10 @@ function makeTx(dupeId: string, canonicalId: string, dupeWants: Want[], canonica
     buyerAlertEvent: { updateMany: vi.fn().mockResolvedValue({ count: 0 }), count: vi.fn().mockResolvedValue(0) },
     buyerAlertFanout: { updateMany: vi.fn().mockResolvedValue({ count: 0 }), count: vi.fn().mockResolvedValue(0) },
     catalogPhotoFingerprint: { updateMany: vi.fn().mockResolvedValue({ count: 0 }), count: vi.fn().mockResolvedValue(0) },
+    // 18C: no observations/drafts by default.
+    externalMarketObservation: { findMany: vi.fn().mockResolvedValue([]), updateMany: vi.fn().mockResolvedValue({ count: 0 }), count: vi.fn().mockResolvedValue(0) },
+    externalMarketObservationAudit: { createMany: vi.fn().mockResolvedValue({ count: 0 }) },
+    intakeDraft: { updateMany: vi.fn().mockResolvedValue({ count: 0 }), count: vi.fn().mockResolvedValue(0) },
     catalogModelMergeAudit: { create: vi.fn().mockResolvedValue({}) },
     ...overrides,
   }

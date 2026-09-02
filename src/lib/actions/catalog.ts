@@ -74,6 +74,72 @@ async function reconcileWantedCatalogModelMerge(
   return { migrated: migrated.count, reconciledOverlap }
 }
 
+// 18C: ExternalMarketObservation.catalogModelId is a live, admin-correctable
+// normalized match pointer (proven by matchObservationToCatalog/unmatchObservation,
+// which exist specifically to change it after creation) — a CatalogModel merge is
+// semantically the same kind of correction, so it must go through the SAME audit
+// convention those actions already established: every catalogModelId change gets an
+// ExternalMarketObservationAudit row (observationId, action, beforeSnapshot,
+// afterSnapshot). No schema change needed — `action` is a free-form string (not an
+// enum) and `adminInfo` is optional and left null by every existing action too, so
+// nothing here is fabricated. Only catalogModelId is touched — matchStatus/
+// matchMethod/rejectionReason/all source fields are untouched, so the snapshot
+// records only what actually changed, matching restoreObservation's own minimal-
+// snapshot convention. No uniqueness collision possible: [provider, externalId] and
+// fingerprint both exclude catalogModelId.
+//
+// 18C final reconciliation: the CatalogModel FOR UPDATE lock (held on dupeId since
+// the top of the merge transaction) does NOT protect these rows. Postgres only
+// requires a lock on the FK target being newly referenced, never on the one being
+// vacated — so matchObservationToCatalog/unmatchObservation/rejectObservation can
+// move an observation's catalogModelId away from dupeId (to null or a different
+// model) without ever touching dupeId's row lock. Without an explicit lock here, a
+// concurrent unmatch/rematch could commit between our read and our update, leaving
+// a phantom 'merged' audit row for a transition the merge never actually performed.
+// Fix: SELECT ... FOR UPDATE the affected observation rows FIRST — any concurrent
+// match/unmatch/reject/restore touching one of them then blocks on ITS OWN write
+// until this transaction commits or rolls back, so nothing can change out from
+// under the locked set between this read and the update below. The locked id set
+// is the single source of truth for both the audit rows and the update's affected
+// count; a mismatch (defensively checked, not expected to ever fire under this
+// locking) aborts the whole merge rather than leave an untrustworthy audit trail.
+async function reconcileExternalMarketObservationMerge(
+  tx: Prisma.TransactionClient,
+  dupeId: string,
+  canonicalId: string,
+): Promise<{ migrated: number }> {
+  const locked = await tx.$queryRaw<Array<{ id: string }>>`
+    SELECT id FROM "ExternalMarketObservation" WHERE "catalogModelId" = ${dupeId} FOR UPDATE
+  `
+  if (locked.length === 0) return { migrated: 0 }
+  const lockedIds = locked.map(r => r.id)
+
+  await tx.externalMarketObservationAudit.createMany({
+    data: lockedIds.map(id => ({
+      observationId: id,
+      action: 'merged',
+      beforeSnapshot: { catalogModelId: dupeId },
+      afterSnapshot: { catalogModelId: canonicalId },
+    })),
+  })
+
+  const migrated = await tx.externalMarketObservation.updateMany({
+    where: { id: { in: lockedIds }, catalogModelId: dupeId },
+    data: { catalogModelId: canonicalId },
+  })
+
+  // Defensive invariant, not expected to trip: the locked set is held continuously
+  // from the SELECT above through this update, so nothing else could have moved
+  // these rows away from dupeId in between. If it ever does mismatch, the audit
+  // rows just written would describe a transition that didn't fully happen — abort
+  // rather than leave that untrustworthy.
+  if (migrated.count !== lockedIds.length) {
+    throw new Error('OBSERVATION_RECONCILE_MISMATCH')
+  }
+
+  return { migrated: migrated.count }
+}
+
 // 15F-review (catalog-merge pass): approvalRequestId is set only when a risk gate
 // routed this action to the approval queue instead of performing the mutation.
 export type MergeActionState = { errors: Record<string, string[]>; approvalRequestId?: string } | null
@@ -344,6 +410,16 @@ export async function mergeCatalogModels(
           tx.buyerAlertEvent.updateMany({ where: { catalogModelId: dupeId }, data: { catalogModelId: canonicalId } }),
           tx.buyerAlertFanout.updateMany({ where: { catalogModelId: dupeId, status: { in: ['complete', 'failed'] } }, data: { catalogModelId: canonicalId } }),
           tx.catalogPhotoFingerprint.updateMany({ where: { catalogModelId: dupeId }, data: { catalogModelId: canonicalId } }),
+          // 18C: normalized-identity retarget only. ExternalMarketObservation goes
+          // through reconcileExternalMarketObservationMerge (audit-preserving, see
+          // above); IntakeDraft is a plain updateMany — the existing onDelete:SetNull
+          // is no longer relied upon during merge, since the correct canonical
+          // identity is already known (SetNull would only degrade the draft to its
+          // slower fuzzy-matching fallback for no reason). MobileCaptureItem is
+          // intentionally NOT included — @@unique([sessionId, catalogModelId]) needs
+          // overlap reconciliation like Wanted's, deferred to its own milestone.
+          reconcileExternalMarketObservationMerge(tx, dupeId, canonicalId),
+          tx.intakeDraft.updateMany({ where: { catalogModelId: dupeId }, data: { catalogModelId: canonicalId } }),
         ])
 
         // No CatalogModelMergeAudit column exists for Wanted counts (no schema change
@@ -379,7 +455,11 @@ export async function mergeCatalogModels(
         // above), so a row that raced into pending/processing after the precondition
         // check is still caught here and aborts the whole merge rather than being
         // silently cascade-deleted.
-        const [ri, rc, rs, rsub, rp, rw, rae, raf, rfp] = await Promise.all([
+        // 18C: also externalMarketObservation/intakeDraft — neither should silently
+        // FK-block (observation) or SetNull (draft) once explicitly reconciled above;
+        // a nonzero count here means the reconciliation itself is incomplete, and the
+        // whole merge must abort rather than let IntakeDraft's SetNull quietly fire.
+        const [ri, rc, rs, rsub, rp, rw, rae, raf, rfp, reo, rid] = await Promise.all([
           tx.itemInstance.count({ where: { catalogId: dupeId } }),
           tx.collectionItem.count({ where: { catalogId: dupeId } }),
           tx.catalogSuggestion.count({ where: { approvedCatalogId: dupeId } }),
@@ -389,8 +469,10 @@ export async function mergeCatalogModels(
           tx.buyerAlertEvent.count({ where: { catalogModelId: dupeId } }),
           tx.buyerAlertFanout.count({ where: { catalogModelId: dupeId } }),
           tx.catalogPhotoFingerprint.count({ where: { catalogModelId: dupeId } }),
+          tx.externalMarketObservation.count({ where: { catalogModelId: dupeId } }),
+          tx.intakeDraft.count({ where: { catalogModelId: dupeId } }),
         ])
-        const remaining = ri + rc + rs + rsub + rp + rw + rae + raf + rfp
+        const remaining = ri + rc + rs + rsub + rp + rw + rae + raf + rfp + reo + rid
         if (remaining > 0) {
           mergeError = {
             errors: {
