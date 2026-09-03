@@ -160,6 +160,152 @@ function toMergeRiskContext(sourceCatalogModelId: string, canonicalCatalogModelI
   }
 }
 
+// 18D: MobileCaptureItem is the last real CatalogModel FK relation. Draft sessions
+// remain actively customer-editable through addCaptureItem/updateCaptureItem/
+// removeCaptureItem/submitCaptureSession/cancelCaptureSession — none of those ever
+// acquire a CatalogModel lock, so this merge deliberately never locks
+// MobileCaptureSession either (see the lock-order note where the merge acquires its
+// CatalogModel locks below): doing so would introduce an opposing lock order against
+// addCaptureItem's own
+// session-then-insert sequence and risk a deadlock. Instead we lock only the
+// affected MobileCaptureItem rows — that alone is sufficient, because
+// updateCaptureItem/removeCaptureItem write those rows directly (and therefore
+// block on this lock), while submitCaptureSession only ever READS them (never
+// blocked by another transaction's row lock under MVCC) and cancelCaptureSession
+// never touches them at all. The parent session's status is read in the SAME query
+// via `FOR UPDATE OF mci`, which locks only the item side of the join, never the
+// session row. Because submitCaptureSession/cancelCaptureSession only ever
+// transition a session FROM 'draft' (never back, never sideways), an unlocked read
+// that observes 'submitted' or 'cancelled' is permanently valid for the rest of this
+// transaction. A read that observes 'draft' is treated conservatively — the whole
+// duplicate's merge is blocked outright, never distinguishing overlap from
+// non-overlap, because draft rows are still meaningful, actively-edited
+// customer-facing state that an admin merge must never silently rewrite underneath
+// the customer.
+type MobileCaptureOverlap = { dupeItemId: string; canonicalItemId: string; combinedQuantity: number }
+type MobileCaptureClassification =
+  | { blocked: true }
+  | { blocked: false; nonOverlapIds: string[]; overlaps: MobileCaptureOverlap[] }
+
+async function lockAndClassifyMobileCaptureItems(
+  tx: Prisma.TransactionClient,
+  dupeId: string,
+  canonicalId: string,
+): Promise<MobileCaptureClassification> {
+  const locked = await tx.$queryRaw<Array<{ id: string; sessionId: string; quantity: number; status: string }>>`
+    SELECT mci.id, mci."sessionId", mci.quantity, mcs.status
+    FROM "MobileCaptureItem" mci
+    JOIN "MobileCaptureSession" mcs ON mcs.id = mci."sessionId"
+    WHERE mci."catalogModelId" = ${dupeId}
+    ORDER BY mci.id
+    FOR UPDATE OF mci
+  `
+  if (locked.length === 0) return { blocked: false, nonOverlapIds: [], overlaps: [] }
+  if (locked.some((r) => r.status === 'draft')) return { blocked: true }
+  if (locked.some((r) => r.status !== 'submitted' && r.status !== 'cancelled')) {
+    throw new Error('MOBILE_CAPTURE_UNKNOWN_STATUS')
+  }
+
+  // Set-based overlap classification: which of these (necessarily terminal, and
+  // therefore frozen — see above) sessions already contain a canonical-B row too,
+  // because the customer captured both models before they were known to be
+  // duplicates? One bounded query over all affected sessionIds, never per-session.
+  const sessionIds = [...new Set(locked.map((r) => r.sessionId))]
+  const canonicalRows = await tx.mobileCaptureItem.findMany({
+    where: { sessionId: { in: sessionIds }, catalogModelId: canonicalId },
+    select: { id: true, sessionId: true, quantity: true },
+  })
+  const canonicalBySession = new Map(canonicalRows.map((r) => [r.sessionId, r]))
+
+  const nonOverlapIds: string[] = []
+  const overlaps: MobileCaptureOverlap[] = []
+  for (const row of locked) {
+    const canonicalRow = canonicalBySession.get(row.sessionId)
+    if (!canonicalRow) {
+      nonOverlapIds.push(row.id)
+    } else {
+      overlaps.push({
+        dupeItemId: row.id,
+        canonicalItemId: canonicalRow.id,
+        combinedQuantity: row.quantity + canonicalRow.quantity,
+      })
+    }
+  }
+  return { blocked: false, nonOverlapIds, overlaps }
+}
+
+// Applies a classification already proven safe by the caller (not blocked, no
+// overlap exceeds the 1..999 quantity range). Non-overlap rows are a single
+// set-based retarget preserving id/quantity/metadata/clientToken/payloadFingerprint/
+// createdAt exactly — payloadFingerprint intentionally continues to describe the
+// original add request (it is never read against a row's live catalogModelId by any
+// other code path, only compared against a fresh client replay of that same original
+// request, which would itself still carry the original catalogModelId). Overlap rows
+// keep the canonical-associated row untouched except quantity — it already
+// references canonical identity and its clientToken/payloadFingerprint already
+// describe the canonical request — and delete the duplicate row after combining
+// quantity onto the survivor. No table has an FK to MobileCaptureItem.id (verified
+// against the full schema), so the delete is safe.
+async function applyMobileCaptureItemReconciliation(
+  tx: Prisma.TransactionClient,
+  dupeId: string,
+  canonicalId: string,
+  classification: Extract<MobileCaptureClassification, { blocked: false }>,
+): Promise<{ migrated: number; overlapCollapsed: number }> {
+  const { nonOverlapIds, overlaps } = classification
+
+  const migrated = nonOverlapIds.length > 0
+    ? await tx.mobileCaptureItem.updateMany({
+        where: { id: { in: nonOverlapIds }, catalogModelId: dupeId },
+        data: { catalogModelId: canonicalId },
+      })
+    : { count: 0 }
+  if (migrated.count !== nonOverlapIds.length) {
+    throw new Error('MOBILE_CAPTURE_RECONCILE_MISMATCH')
+  }
+
+  for (const o of overlaps) {
+    const updated = await tx.mobileCaptureItem.updateMany({
+      where: { id: o.canonicalItemId, catalogModelId: canonicalId },
+      data: { quantity: o.combinedQuantity },
+    })
+    if (updated.count !== 1) throw new Error('MOBILE_CAPTURE_RECONCILE_MISMATCH')
+
+    const deleted = await tx.mobileCaptureItem.deleteMany({
+      where: { id: o.dupeItemId, catalogModelId: dupeId },
+    })
+    if (deleted.count !== 1) throw new Error('MOBILE_CAPTURE_RECONCILE_MISMATCH')
+  }
+
+  return { migrated: migrated.count, overlapCollapsed: overlaps.length }
+}
+
+// 18D: CollectionItem carries @@unique([profileId, catalogId]) (16F Final), which
+// the existing blind collectionItem.updateMany below never accounted for — if a
+// profile already holds a CollectionItem for both the duplicate and the canonical
+// model, that updateMany hits Postgres's own unique-constraint violation mid-
+// statement, aborting the whole merge with a generic, non-actionable error. This
+// turns that accidental DB exception into a deliberate precondition with an
+// actionable message, checked BEFORE the blind updateMany ever runs. Existing
+// product precedent (checkCollectionDuplicate / updateExistingCollectionQuantity)
+// is explicit that quantity conflicts are always resolved by explicit customer
+// choice, never auto-summed — so this never attempts a Wanted-style overlap merge,
+// it only blocks. One set-based self-join query, count only, no profile ids
+// returned (no PII surfaced in the error path).
+async function countCollectionItemOverlap(
+  tx: Prisma.TransactionClient,
+  dupeId: string,
+  canonicalId: string,
+): Promise<number> {
+  const rows = await tx.$queryRaw<Array<{ count: number }>>`
+    SELECT COUNT(*)::int AS count
+    FROM "CollectionItem" a
+    JOIN "CollectionItem" b ON a."profileId" = b."profileId"
+    WHERE a."catalogId" = ${dupeId} AND b."catalogId" = ${canonicalId}
+  `
+  return rows[0]?.count ?? 0
+}
+
 const CatalogSchema = z.object({
   brand: z.string().min(1, 'Brand is required'),
   name: z.string().min(1, 'Name is required'),
@@ -279,6 +425,14 @@ export async function mergeCatalogModels(
     await prisma.$transaction(async (tx) => {
       // Acquire row locks on both canonical and each duplicate in deterministic ID order
       // so concurrent merges targeting the same models always lock in the same order.
+      // 18D: this merge NEVER locks MobileCaptureSession — addCaptureItem locks
+      // MobileCaptureSession first, then (outside that lock) creates a
+      // MobileCaptureItem whose FK insert needs FOR KEY SHARE on this CatalogModel
+      // row. If this merge also locked MobileCaptureSession, the two transactions
+      // could wait on each other in opposite order (merge: CatalogModel→Session;
+      // capture: Session→CatalogModel-via-FK) — a deadlock. MobileCaptureItem row
+      // locking (lockAndClassifyMobileCaptureItems) is used instead — see its
+      // comment for why that's sufficient without ever touching Session locks.
       const lockIds = [...new Set([canonicalId, ...duplicateIds])].sort()
       for (const id of lockIds) {
         await tx.$queryRaw`SELECT id FROM "CatalogModel" WHERE id = ${id} FOR UPDATE`
@@ -391,7 +545,43 @@ export async function mergeCatalogModels(
           throw new Error('TX_VALIDATION')
         }
 
-        const [items, collItems, suggestions, submissions, photos, wanted] = await Promise.all([
+        // 18D: lock + classify affected MobileCaptureItem rows before any migration
+        // below runs. A draft-session reference hard-blocks this duplicate's merge
+        // outright (see lockAndClassifyMobileCaptureItems for why session-level
+        // locking is intentionally never used); a terminal overlap whose combined
+        // quantity would exceed the existing 1..999 range also blocks rather than
+        // silently clamp.
+        const mcClassification = await lockAndClassifyMobileCaptureItems(tx, dupeId, canonicalId)
+        if (mcClassification.blocked) {
+          mergeError = {
+            errors: { form: ['An active capture session references this model. Ask the customer to finish or cancel the capture session before merging.'] },
+          }
+          throw new Error('TX_VALIDATION')
+        }
+        if (mcClassification.overlaps.some((o) => o.combinedQuantity > 999)) {
+          mergeError = {
+            errors: { form: ['Merging these models would exceed the capture quantity limit in a historical capture session.'] },
+          }
+          throw new Error('TX_VALIDATION')
+        }
+
+        // 18D: CollectionItem overlap precondition — must be awaited and checked
+        // BEFORE the blind collectionItem.updateMany below, otherwise an overlapping
+        // profile's row hits Postgres's own unique-constraint violation instead of
+        // this deliberate, actionable message.
+        const collectionOverlapCount = await countCollectionItemOverlap(tx, dupeId, canonicalId)
+        if (collectionOverlapCount > 0) {
+          mergeError = {
+            errors: { form: ['A collection contains both the duplicate and canonical model. Resolve the duplicate collection entry before merging.'] },
+          }
+          throw new Error('TX_VALIDATION')
+        }
+
+        const [
+          items, collItems, suggestions, submissions, photos, wanted,
+          , , , , , // buyerAlertEvent/buyerAlertFanout/catalogPhotoFingerprint/observation/intakeDraft — counts unused here
+          mobileCapture,
+        ] = await Promise.all([
           tx.itemInstance.updateMany({ where: { catalogId: dupeId }, data: { catalogId: canonicalId } }),
           tx.collectionItem.updateMany({ where: { catalogId: dupeId }, data: { catalogId: canonicalId } }),
           tx.catalogSuggestion.updateMany({ where: { approvedCatalogId: dupeId }, data: { approvedCatalogId: canonicalId } }),
@@ -415,11 +605,14 @@ export async function mergeCatalogModels(
           // above); IntakeDraft is a plain updateMany — the existing onDelete:SetNull
           // is no longer relied upon during merge, since the correct canonical
           // identity is already known (SetNull would only degrade the draft to its
-          // slower fuzzy-matching fallback for no reason). MobileCaptureItem is
-          // intentionally NOT included — @@unique([sessionId, catalogModelId]) needs
-          // overlap reconciliation like Wanted's, deferred to its own milestone.
+          // slower fuzzy-matching fallback for no reason).
           reconcileExternalMarketObservationMerge(tx, dupeId, canonicalId),
           tx.intakeDraft.updateMany({ where: { catalogModelId: dupeId }, data: { catalogModelId: canonicalId } }),
+          // 18D: safe to run alongside everything else above — the draft-block and
+          // quantity-limit preconditions already resolved for this duplicate, so
+          // only a plain non-overlap retarget and/or a proven-safe overlap collapse
+          // remain (see applyMobileCaptureItemReconciliation).
+          applyMobileCaptureItemReconciliation(tx, dupeId, canonicalId, mcClassification),
         ])
 
         // No CatalogModelMergeAudit column exists for Wanted counts (no schema change
@@ -428,6 +621,12 @@ export async function mergeCatalogModels(
         const wantedNote = wanted.migrated > 0 || wanted.reconciledOverlap > 0
           ? `Wanted: ${wanted.migrated} migrated, ${wanted.reconciledOverlap} reconciled (customer wanted both models)`
           : null
+        // 18D: no CatalogModelMergeAudit column exists for MobileCapture counts
+        // either — same adminNote convention as Wanted above.
+        const mobileCaptureNote = mobileCapture.migrated > 0 || mobileCapture.overlapCollapsed > 0
+          ? `MobileCapture: ${mobileCapture.migrated} migrated, ${mobileCapture.overlapCollapsed} reconciled (capture session had both models)`
+          : null
+        const adminNote = [wantedNote, mobileCaptureNote].filter(Boolean).join(' | ') || null
 
         await tx.catalogModelMergeAudit.create({
           data: {
@@ -440,7 +639,7 @@ export async function mergeCatalogModels(
             movedCatalogSuggestions: suggestions.count,
             movedSellerSubmissions:  submissions.count,
             movedPhotos:             photos.count,
-            adminNote:               wantedNote,
+            adminNote,
           },
         })
 
@@ -459,7 +658,11 @@ export async function mergeCatalogModels(
         // FK-block (observation) or SetNull (draft) once explicitly reconciled above;
         // a nonzero count here means the reconciliation itself is incomplete, and the
         // whole merge must abort rather than let IntakeDraft's SetNull quietly fire.
-        const [ri, rc, rs, rsub, rp, rw, rae, raf, rfp, reo, rid] = await Promise.all([
+        // 18D: also mobileCaptureItem — the last real CatalogModel FK relation. A
+        // nonzero count here means the lock/classify/reconcile sequence above left a
+        // row unaccounted for; abort rather than let the required-FK delete below
+        // fail with a raw, non-actionable P2003.
+        const [ri, rc, rs, rsub, rp, rw, rae, raf, rfp, reo, rid, rmc] = await Promise.all([
           tx.itemInstance.count({ where: { catalogId: dupeId } }),
           tx.collectionItem.count({ where: { catalogId: dupeId } }),
           tx.catalogSuggestion.count({ where: { approvedCatalogId: dupeId } }),
@@ -471,8 +674,9 @@ export async function mergeCatalogModels(
           tx.catalogPhotoFingerprint.count({ where: { catalogModelId: dupeId } }),
           tx.externalMarketObservation.count({ where: { catalogModelId: dupeId } }),
           tx.intakeDraft.count({ where: { catalogModelId: dupeId } }),
+          tx.mobileCaptureItem.count({ where: { catalogModelId: dupeId } }),
         ])
-        const remaining = ri + rc + rs + rsub + rp + rw + rae + raf + rfp + reo + rid
+        const remaining = ri + rc + rs + rsub + rp + rw + rae + raf + rfp + reo + rid + rmc
         if (remaining > 0) {
           mergeError = {
             errors: {

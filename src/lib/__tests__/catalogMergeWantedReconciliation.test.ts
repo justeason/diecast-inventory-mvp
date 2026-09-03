@@ -63,11 +63,14 @@ function makeTx(dupeId: string, canonicalId: string, dupeWants: Want[], canonica
   })
   return {
     // $queryRaw is shared by the CatalogModel FOR UPDATE lock loop (return value
-    // unused) and, since 18C final, the ExternalMarketObservation row lock (return
-    // value = locked ids — defaults to none here).
+    // unused), the ExternalMarketObservation row lock (return value = locked ids —
+    // defaults to none), the 18D MobileCaptureItem row lock+session-status join
+    // (defaults to none), and the 18D CollectionItem overlap count (defaults to zero).
     $queryRaw: vi.fn().mockImplementation((strings: TemplateStringsArray) => {
       const text = Array.isArray(strings) ? strings.join('') : String(strings)
       if (text.includes('ExternalMarketObservation')) return Promise.resolve([])
+      if (text.includes('MobileCaptureItem'))         return Promise.resolve([])
+      if (text.includes('CollectionItem'))             return Promise.resolve([{ count: 0 }])
       return Promise.resolve(undefined)
     }),
     catalogModel: {
@@ -95,6 +98,13 @@ function makeTx(dupeId: string, canonicalId: string, dupeWants: Want[], canonica
     externalMarketObservation: { findMany: vi.fn().mockResolvedValue([]), updateMany: vi.fn().mockResolvedValue({ count: 0 }), count: vi.fn().mockResolvedValue(0) },
     externalMarketObservationAudit: { createMany: vi.fn().mockResolvedValue({ count: 0 }) },
     intakeDraft: { updateMany: vi.fn().mockResolvedValue({ count: 0 }), count: vi.fn().mockResolvedValue(0) },
+    // 18D: no capture rows by default.
+    mobileCaptureItem: {
+      findMany:   vi.fn().mockResolvedValue([]),
+      updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      count:      vi.fn().mockResolvedValue(0),
+    },
     catalogModelMergeAudit: { create: vi.fn().mockResolvedValue({}) },
     ...overrides,
   }

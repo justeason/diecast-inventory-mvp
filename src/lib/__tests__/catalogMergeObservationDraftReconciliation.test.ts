@@ -5,9 +5,9 @@
 // exact-match fast path even though the correct canonical identity is known. This
 // file proves: observations retarget with a preserved per-row audit trail (matching
 // the existing matchObservationToCatalog/unmatchObservation convention); drafts
-// retarget in place with no SetNull reliance; MobileCaptureItem remains untouched
-// (deferred to 18D — its @@unique([sessionId, catalogModelId]) needs overlap
-// reconciliation like 18A's Wanted work, not a plain retarget).
+// retarget in place with no SetNull reliance. MobileCaptureItem's own
+// @@unique([sessionId, catalogModelId]) overlap reconciliation is covered
+// separately by catalogMergeMobileCaptureCollectionReconciliation.test.ts (18D).
 //
 // 18C final reconciliation: the CatalogModel FOR UPDATE lock does NOT protect
 // ExternalMarketObservation rows — Postgres only locks the FK target being newly
@@ -49,14 +49,17 @@ import { mergeCatalogModels } from '@/lib/actions/catalog'
 const ZERO_IMPACT = { itemInstances: 0, collectionItems: 0, wantedBy: 0, sellerSubmissions: 0, photos: 0, fingerprints: 0, activeListings: 0, soldItems: 0, externalObs: 0 }
 
 // $queryRaw is shared by the CatalogModel FOR UPDATE lock loop (return value
-// unused) and, since 18C final, the ExternalMarketObservation row lock (return
-// value = the locked ids). Branches on template text to serve both correctly.
+// unused), the ExternalMarketObservation row lock (return value = the locked
+// ids), the 18D MobileCaptureItem row lock+session-status join (defaults to
+// none locked), and the 18D CollectionItem overlap count (defaults to zero).
 function queryRawMock(observationLockIds: string[] = []) {
   return vi.fn().mockImplementation((strings: TemplateStringsArray) => {
     const text = Array.isArray(strings) ? strings.join('') : String(strings)
     if (text.includes('ExternalMarketObservation')) {
       return Promise.resolve(observationLockIds.map(id => ({ id })))
     }
+    if (text.includes('MobileCaptureItem')) return Promise.resolve([])
+    if (text.includes('CollectionItem'))    return Promise.resolve([{ count: 0 }])
     return Promise.resolve(undefined) // CatalogModel FOR UPDATE — result unused
   })
 }
@@ -89,6 +92,13 @@ function makeTx(overrides: Record<string, unknown> = {}) {
     },
     externalMarketObservationAudit: { createMany: vi.fn().mockResolvedValue({ count: 0 }) },
     intakeDraft: { updateMany: vi.fn().mockResolvedValue({ count: 0 }), count: vi.fn().mockResolvedValue(0) },
+    // 18D: no capture rows by default.
+    mobileCaptureItem: {
+      findMany:   vi.fn().mockResolvedValue([]),
+      updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      count:      vi.fn().mockResolvedValue(0),
+    },
     catalogModelMergeAudit: { create: vi.fn().mockResolvedValue({}) },
     ...overrides,
   }
@@ -398,7 +408,7 @@ describe('18C: final pre-delete integrity guard catches observation/draft blocke
 
   it('final integrity check includes both new counts, unfiltered', () => {
     const src = readSrc('src/lib/actions/catalog.ts')
-    const idx = src.indexOf('const [ri, rc, rs, rsub, rp, rw, rae, raf, rfp, reo, rid]')
+    const idx = src.indexOf('const [ri, rc, rs, rsub, rp, rw, rae, raf, rfp, reo, rid, rmc]')
     const block = src.slice(idx, src.indexOf('])', idx))
     expect(block).toContain('tx.externalMarketObservation.count({ where: { catalogModelId: dupeId } })')
     expect(block).toContain('tx.intakeDraft.count({ where: { catalogModelId: dupeId } })')
@@ -420,21 +430,10 @@ describe('18C: no reliance on database FK failure or SetNull as merge logic (27)
   })
 })
 
-// ── 28: MobileCaptureItem remains deferred to 18D ──────────────────────────────────
-
-describe('18C: MobileCaptureItem is intentionally untouched — deferred to 18D (28)', () => {
-  it('catalog.ts never calls tx.mobileCaptureItem — a documenting comment explaining the deferral is fine, actual code touching the table is not', () => {
-    const src = readSrc('src/lib/actions/catalog.ts')
-    expect(src).not.toMatch(/tx\.mobileCaptureItem/)
-  })
-
-  it('the merge does not become "fully complete" — MobileCaptureItem is still absent from both the migration step and the final integrity check', () => {
-    const src = readSrc('src/lib/actions/catalog.ts')
-    const idx = src.indexOf('const [ri, rc, rs, rsub, rp, rw, rae, raf, rfp, reo, rid]')
-    const block = src.slice(idx, src.indexOf('])', idx))
-    expect(block).not.toContain('mobileCaptureItem')
-  })
-})
+// ── 28: MobileCaptureItem — superseded by 18D ───────────────────────────────────────
+// 18C left MobileCaptureItem untouched (deferred). 18D (see
+// catalogMergeMobileCaptureCollectionReconciliation.test.ts) implements the full
+// lock/classify/reconcile flow — this file no longer asserts the deferral.
 
 // ── schema/migration confirmation ──────────────────────────────────────────────────
 

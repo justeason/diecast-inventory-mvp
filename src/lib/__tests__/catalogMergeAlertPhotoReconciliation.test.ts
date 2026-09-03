@@ -41,11 +41,14 @@ const ZERO_IMPACT = { itemInstances: 0, collectionItems: 0, wantedBy: 0, sellerS
 function makeTx(overrides: Record<string, unknown> = {}) {
   return {
     // $queryRaw is shared by the CatalogModel FOR UPDATE lock loop (return value
-    // unused) and, since 18C final, the ExternalMarketObservation row lock (return
-    // value = locked ids — defaults to none here).
+    // unused), the ExternalMarketObservation row lock (return value = locked ids —
+    // defaults to none), the 18D MobileCaptureItem row lock+session-status join
+    // (defaults to none), and the 18D CollectionItem overlap count (defaults to zero).
     $queryRaw: vi.fn().mockImplementation((strings: TemplateStringsArray) => {
       const text = Array.isArray(strings) ? strings.join('') : String(strings)
       if (text.includes('ExternalMarketObservation')) return Promise.resolve([])
+      if (text.includes('MobileCaptureItem'))         return Promise.resolve([])
+      if (text.includes('CollectionItem'))             return Promise.resolve([{ count: 0 }])
       return Promise.resolve(undefined)
     }),
     catalogModel: {
@@ -76,6 +79,13 @@ function makeTx(overrides: Record<string, unknown> = {}) {
     externalMarketObservation: { findMany: vi.fn().mockResolvedValue([]), updateMany: vi.fn().mockResolvedValue({ count: 0 }), count: vi.fn().mockResolvedValue(0) },
     externalMarketObservationAudit: { createMany: vi.fn().mockResolvedValue({ count: 0 }) },
     intakeDraft: { updateMany: vi.fn().mockResolvedValue({ count: 0 }), count: vi.fn().mockResolvedValue(0) },
+    // 18D: no capture rows by default.
+    mobileCaptureItem: {
+      findMany:   vi.fn().mockResolvedValue([]),
+      updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      count:      vi.fn().mockResolvedValue(0),
+    },
     catalogModelMergeAudit: { create: vi.fn().mockResolvedValue({}) },
     ...overrides,
   }
@@ -283,7 +293,7 @@ describe('18B: final pre-delete integrity guard (34/10)', () => {
 
   it('final integrity check counts BuyerAlertFanout with NO status filter — every status counts against it, unlike the retarget step', () => {
     const src = readSrc('src/lib/actions/catalog.ts')
-    const idx = src.indexOf('const [ri, rc, rs, rsub, rp, rw, rae, raf, rfp, reo, rid]')
+    const idx = src.indexOf('const [ri, rc, rs, rsub, rp, rw, rae, raf, rfp, reo, rid, rmc]')
     const block = src.slice(idx, src.indexOf('])', idx))
     expect(block).toContain('tx.buyerAlertFanout.count({ where: { catalogModelId: dupeId } })')
     expect(block).not.toMatch(/buyerAlertFanout\.count\(\{[^}]*status/)
@@ -291,7 +301,7 @@ describe('18B: final pre-delete integrity guard (34/10)', () => {
 
   it('final integrity check also counts buyerAlertEvent and catalogPhotoFingerprint', () => {
     const src = readSrc('src/lib/actions/catalog.ts')
-    const idx = src.indexOf('const [ri, rc, rs, rsub, rp, rw, rae, raf, rfp, reo, rid]')
+    const idx = src.indexOf('const [ri, rc, rs, rsub, rp, rw, rae, raf, rfp, reo, rid, rmc]')
     const block = src.slice(idx, src.indexOf('])', idx))
     expect(block).toContain('tx.buyerAlertEvent.count({ where: { catalogModelId: dupeId } })')
     expect(block).toContain('tx.catalogPhotoFingerprint.count({ where: { catalogModelId: dupeId } })')

@@ -30,12 +30,15 @@ import { checkRiskGate, consumeApprovedRiskGate, markApprovalConsumed } from '@/
 const ZERO_IMPACT = { itemInstances: 0, collectionItems: 0, wantedBy: 0, sellerSubmissions: 0, photos: 0, fingerprints: 0, activeListings: 0, soldItems: 0, externalObs: 0 }
 
 // $queryRaw is shared by the CatalogModel FOR UPDATE lock loop (return value
-// unused) and, since 18C final, the ExternalMarketObservation row lock (return
-// value = locked ids — defaults to none here).
+// unused), the ExternalMarketObservation row lock (return value = locked ids —
+// defaults to none), the 18D MobileCaptureItem row lock+session-status join
+// (defaults to none), and the 18D CollectionItem overlap count (defaults to zero).
 function makeQueryRaw() {
   return vi.fn().mockImplementation((strings: TemplateStringsArray) => {
     const text = Array.isArray(strings) ? strings.join('') : String(strings)
     if (text.includes('ExternalMarketObservation')) return Promise.resolve([])
+    if (text.includes('MobileCaptureItem'))         return Promise.resolve([])
+    if (text.includes('CollectionItem'))             return Promise.resolve([{ count: 0 }])
     return Promise.resolve(undefined)
   })
 }
@@ -70,6 +73,15 @@ function makeTx(overrides: Record<string, unknown> = {}) {
     externalMarketObservation: { findMany: vi.fn().mockResolvedValue([]), updateMany: vi.fn().mockResolvedValue({ count: 0 }), count: vi.fn().mockResolvedValue(0) },
     externalMarketObservationAudit: { createMany: vi.fn().mockResolvedValue({ count: 0 }) },
     intakeDraft: { updateMany: vi.fn().mockResolvedValue({ count: 0 }), count: vi.fn().mockResolvedValue(0) },
+    // 18D: no capture rows by default — $queryRaw's MobileCaptureItem branch
+    // returns [] (nothing locked), so findMany/updateMany/deleteMany below are
+    // simply never reached.
+    mobileCaptureItem: {
+      findMany:   vi.fn().mockResolvedValue([]),
+      updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      count:      vi.fn().mockResolvedValue(0),
+    },
     catalogModelMergeAudit: { create: vi.fn().mockResolvedValue({}) },
     ...overrides,
   }
