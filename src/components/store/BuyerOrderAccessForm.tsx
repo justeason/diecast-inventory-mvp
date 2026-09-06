@@ -23,7 +23,12 @@ function SubmitButton() {
 // buildAccountIntentHref (see customerModelIntent.ts) — this form does not
 // validate it itself; requestBuyerOrderLink re-validates server-side before ever
 // embedding it in the magic-link email (Part M — never trust a hop's own claim).
-export function BuyerOrderAccessForm({ returnTo }: { returnTo?: string } = {}) {
+// 19A: `postVerify` is likewise optional/additive — only the create-account and
+// forgot-password-recovery flows ever set it, to one of the two fixed values
+// requestBuyerOrderLink/verifyBuyerLoginToken allowlist (see
+// customerModelIntent.ts's isAllowedPostVerify). Every existing caller omits it
+// and behaves byte-identically.
+export function BuyerOrderAccessForm({ returnTo, postVerify }: { returnTo?: string; postVerify?: string } = {}) {
   const [state, action] = useActionState(requestBuyerOrderLink, { status: 'idle' })
 
   if (state.status === 'sent') {
@@ -38,6 +43,7 @@ export function BuyerOrderAccessForm({ returnTo }: { returnTo?: string } = {}) {
   return (
     <form action={action} className="space-y-4">
       {returnTo && <input type="hidden" name="returnTo" value={returnTo} />}
+      {postVerify && <input type="hidden" name="postVerify" value={postVerify} />}
 
       {state.status === 'error' && (
         <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">

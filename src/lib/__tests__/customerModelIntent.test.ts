@@ -220,9 +220,9 @@ describe('16M: requestBuyerOrderLink embeds a validated returnTo in the magic-li
 
   it('source: verifyUrl embeds returnTo only when isSafeAccountReturnTo approves it', () => {
     const src = readSrc('src/lib/actions/buyerAuth.ts')
-    expect(src).toContain("import { isSafeAccountReturnTo } from '@/lib/customerModelIntent'")
+    expect(src).toContain("isSafeAccountReturnTo")
     expect(src).toContain('const safeReturnTo = isSafeAccountReturnTo(rawReturnTo)')
-    expect(src).toContain('safeReturnTo\n    ? `${appUrl}/account/orders/verify?token=${rawToken}&returnTo=${encodeURIComponent(safeReturnTo)}`')
+    expect(src).toContain("if (safeReturnTo) verifyParams.set('returnTo', safeReturnTo)")
   })
 
   it('preserves existing token/rate-limit/email-existence-privacy behavior unchanged (source check)', () => {
@@ -243,7 +243,7 @@ describe('16M: verifyBuyerLoginToken redirects to a re-validated returnTo, or fa
       verifyBuyerLoginToken({ status: 'idle' }, fd({ token: 'a'.repeat(64), returnTo: '/account/continue?action=want&catalogId=X' })),
     ).rejects.toThrow('NEXT_REDIRECT:/account/continue?action=want&catalogId=X')
 
-    expect(createBuyerSession).toHaveBeenCalledWith('p1')
+    expect(createBuyerSession).toHaveBeenCalledWith('p1', 'magic_link')
     // No Wanted/Collection/SellerSubmission mock exists at all in this test's
     // prisma mock — if the action tried to call any of them, it would throw
     // "is not a function", which the assertion above already proves it didn't.
@@ -339,7 +339,7 @@ describe('16M Final: verified first-time email creates exactly one CustomerProfi
     const upsertCall = (prisma.customerProfile.upsert as Mock).mock.calls[0][0]
     expect(upsertCall.where).toEqual({ email: 'brandnew@example.com' })
     expect(upsertCall.create).toEqual({ email: 'brandnew@example.com' })
-    expect(createBuyerSession).toHaveBeenCalledWith('new-profile-1')
+    expect(createBuyerSession).toHaveBeenCalledWith('new-profile-1', 'magic_link')
   })
 
   it('an existing email verified again reuses the same profile — update:{} never overwrites name/phone/notes', () => {
@@ -544,11 +544,11 @@ describe('16M: strict action allowlist — no dynamic function dispatch from use
 })
 
 describe('16M: anonymous continuation — model identity + login form, no private query (Part J)', () => {
-  it('when !session, renders BuyerOrderAccessForm with returnTo built from validated action+catalogModelId, and does not call getCatalogRelationshipState', () => {
+  it('when !session, renders CustomerSignInPanel (password + magic-link + create account) with returnTo built from validated action+catalogModelId, and does not call getCatalogRelationshipState', () => {
     const anonBranchIdx = continuePageSrc.indexOf('if (!session) {')
     const anonBranchEnd = continuePageSrc.indexOf('\n  }\n', anonBranchIdx)
     const block = continuePageSrc.slice(anonBranchIdx, anonBranchEnd)
-    expect(block).toContain('<BuyerOrderAccessForm returnTo={buildAccountIntentHref({ action, catalogModelId })} />')
+    expect(block).toContain('<CustomerSignInPanel returnTo={buildAccountIntentHref({ action, catalogModelId })} />')
     expect(block).not.toContain('getCatalogRelationshipState')
   })
   it('relationship query is gated behind `session ?`, mirroring the exact 16H/16F pattern', () => {
@@ -687,9 +687,9 @@ describe('16M: no hand-built query strings duplicated across surfaces — shared
 // ── Normal /account login regression (Part AE/BF) ────────────────────────────────
 
 describe('16M: normal /account login callers are unaffected (no forced continuation)', () => {
-  it('BuyerOrderAccessForm keeps working with zero props (returnTo optional, default {})', () => {
+  it('BuyerOrderAccessForm keeps working with zero props (returnTo/postVerify optional, default {})', () => {
     const src = readSrc('src/components/store/BuyerOrderAccessForm.tsx')
-    expect(src).toContain('export function BuyerOrderAccessForm({ returnTo }: { returnTo?: string } = {})')
+    expect(src).toContain('export function BuyerOrderAccessForm({ returnTo, postVerify }: { returnTo?: string; postVerify?: string } = {})')
   })
   it('existing callers (/account/orders, /account, /account/collection, /account/sell, /account/community) still render <BuyerOrderAccessForm /> with no props', () => {
     for (const rel of [

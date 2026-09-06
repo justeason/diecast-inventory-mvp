@@ -6,7 +6,7 @@ import { getBuyerSession } from '@/lib/buyerSession'
 import { getCatalogRelationshipState } from '@/lib/catalogRelationshipQuery'
 import { parseCustomerModelIntent, buildAccountIntentHref, isSafeCatalogModelId } from '@/lib/customerModelIntent'
 import { PhotoThumbnail } from '@/components/shared/PhotoThumbnail'
-import { BuyerOrderAccessForm } from '@/components/store/BuyerOrderAccessForm'
+import { CustomerSignInPanel } from '@/components/store/CustomerSignInPanel'
 import { AccountIntentActions } from '@/components/store/AccountIntentActions'
 
 export const dynamic = 'force-dynamic'
@@ -108,7 +108,7 @@ export default async function AccountContinuePage({
         <p className="text-sm text-gray-700 mb-6">
           You&apos;re signing in to: <span className="font-medium">{INTENT_DESCRIPTION[action]}</span>
         </p>
-        <BuyerOrderAccessForm returnTo={buildAccountIntentHref({ action, catalogModelId })} />
+        <CustomerSignInPanel returnTo={buildAccountIntentHref({ action, catalogModelId })} />
       </div>
     )
   }

@@ -1,9 +1,11 @@
 import type { Metadata } from 'next'
-import { getBuyerSession } from '@/lib/buyerSession'
+import { getBuyerSession, getBuyerSessionContext, recentMagicLinkReauth } from '@/lib/buyerSession'
 import { signOutBuyer } from '@/lib/actions/buyerAuth'
 import { BuyerOrderAccessForm } from '@/components/store/BuyerOrderAccessForm'
 import { CustomerAccountInfoForm } from '@/components/store/CustomerAccountInfoForm'
 import { PendingActionButton } from '@/components/store/PendingActionButton'
+import { SetPasswordForm } from '@/components/store/SetPasswordForm'
+import { ChangePasswordForm } from '@/components/store/ChangePasswordForm'
 import { AccountNav } from '@/components/store/AccountNav'
 import { prisma } from '@/lib/prisma'
 
@@ -40,6 +42,20 @@ export default async function AccountProfilePage() {
     where: { id: session.profileId },
     select: { name: true, phone: true, email: true, updatedAt: true },
   })
+
+  // 19A: CustomerCredential is a separate model specifically so it's never
+  // pulled in by a generic CustomerProfile read (see the model's own schema
+  // comment) — fetched here only by an explicit, narrow query, existence only.
+  const credential = await prisma.customerCredential.findUnique({
+    where: { profileId: session.profileId },
+    select: { id: true },
+  })
+
+  // Server-only eligibility check — only the resulting boolean ever reaches the
+  // client Change Password form, never the session id/createdAt/authMethod
+  // themselves.
+  const sessionContext = await getBuyerSessionContext()
+  const canSkipCurrentPassword = sessionContext ? recentMagicLinkReauth(sessionContext) : false
 
   return (
     <div className="max-w-lg">
@@ -82,6 +98,27 @@ export default async function AccountProfilePage() {
               className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-900"
             />
           </form>
+        </section>
+      )}
+
+      {/* 19A: a THIRD sibling section — never nested inside Account Info or
+          Account access. Set Password (no credential yet) vs Change Password
+          (credential exists) are mutually exclusive, so exactly one form
+          renders. */}
+      {accountInfo && (
+        <section className="mt-10">
+          <h2 className="text-sm font-semibold text-gray-900 mb-1">Password</h2>
+          {credential ? (
+            <>
+              <p className="text-sm text-gray-500 mb-4">Password: ••••••••</p>
+              <ChangePasswordForm canSkipCurrentPassword={canSkipCurrentPassword} />
+            </>
+          ) : (
+            <>
+              <p className="text-sm text-gray-500 mb-4">Not set. Add a password so you can sign in without waiting for an email link.</p>
+              <SetPasswordForm />
+            </>
+          )}
         </section>
       )}
     </div>

@@ -89,8 +89,9 @@ describe('Session architecture confirmation (16O verification, no changes expect
     const src = readSrc('src/lib/buyerSession.ts')
     expect(src).toContain('cookieStore.set(COOKIE_NAME, rawToken,')
     expect(src).toContain('const sessionHash = hashToken(rawToken)')
-    // Exact create-call fields:
-    expect(src).toContain('data: { profileId, sessionHash, expiresAt }')
+    // Exact create-call fields — 19A adds authMethod (which auth method proved
+    // identity for this session), stamped by every caller.
+    expect(src).toContain('data: { profileId, sessionHash, expiresAt, authMethod }')
   })
 
   it('no raw session token, session hash, or CustomerSession id is ever rendered/passed to a client component', () => {
@@ -191,37 +192,52 @@ describe('Generic auth email copy preserved (not reverted by 16O)', () => {
 
 // ── Part AX: no schema/migration changes ────────────────────────────────────────
 
-describe('No schema/migration changes for 16O', () => {
-  it('CustomerSession model definition is unchanged (still id/profileId/sessionHash/expiresAt/createdAt)', () => {
+describe('No schema/migration changes for 16O (19A adds authMethod only)', () => {
+  it('CustomerSession model definition still has id/profileId/sessionHash/expiresAt/createdAt, plus 19A\'s nullable authMethod', () => {
     const schema = readSrc('prisma/schema.prisma')
-    const block = schema.slice(schema.indexOf('model CustomerSession {'), schema.indexOf('model CustomerSession {') + 400)
+    const startIdx = schema.indexOf('model CustomerSession {')
+    const block = schema.slice(startIdx, schema.indexOf('\n}', startIdx))
     expect(block).toContain('sessionHash String   @unique')
     expect(block).toContain('@@index([profileId])')
+    expect(block).toContain('authMethod  String?')
   })
 })
 
 // ── Part AY: scope guard — no security-milestone functionality ─────────────────
 
-describe('Scope guard: no 16O overreach into future security/settings functionality', () => {
-  it('no change-email, password, MFA, passkey, OAuth, device-list, or account-deletion keywords in the sign-out/profile files', () => {
+describe('Scope guard: 16O still excludes MFA/passkey/OAuth/device-list/deletion — 19A intentionally adds password only', () => {
+  // 16O's original guard forbade "password" outright, since it predates any
+  // password functionality. 19A is the milestone that deliberately introduces
+  // it (Set/Change Password on this exact page) — so "password" is removed from
+  // the forbidden list here, while everything 19A's own scope guard explicitly
+  // excludes (MFA, passkeys, OAuth, device-list UI, account deletion) remains
+  // forbidden, unchanged.
+  it('no MFA, passkey, OAuth, device-list, or account-deletion keywords in the sign-out/profile/credential files', () => {
     for (const rel of [
       'src/lib/actions/buyerAuth.ts',
       'src/lib/buyerSession.ts',
+      'src/lib/actions/customerCredential.ts',
       'src/app/(store)/account/profile/page.tsx',
     ]) {
       const src = readSrc(rel)
-      expect(src).not.toMatch(/password|MFA|passkey|OAuth|device list|deleteAccount|export my data|trusted device/i)
+      expect(src).not.toMatch(/MFA|passkey|OAuth|device list|deleteAccount|export my data|trusted device/i)
     }
   })
-  it('no /account/security or /account/settings route was created', () => {
+  it('no /account/security or /account/settings route was created (19A extends /account/profile instead)', () => {
     expect(exists('src/app/(store)/account/security')).toBe(false)
     expect(exists('src/app/(store)/account/settings')).toBe(false)
   })
-  it('no "Sign out everywhere" / "log out all devices" capability exists', () => {
+  it('no general-purpose "Sign out everywhere" self-service feature exists — 19A\'s revokeOtherBuyerSessions is a scoped side effect of password CHANGE only, never a standalone button/copy, and it always preserves the current session explicitly (never a true "delete all" for the profile)', () => {
     for (const rel of ['src/lib/actions/buyerAuth.ts', 'src/lib/buyerSession.ts', 'src/app/(store)/account/profile/page.tsx']) {
       const src = readSrc(rel)
-      expect(src).not.toMatch(/everywhere|all devices|deleteMany\(\{\s*where:\s*\{\s*profileId/i)
+      expect(src).not.toMatch(/everywhere|all devices/i)
     }
+    const revokeSrc = readSrc('src/lib/buyerSession.ts')
+    const idx = revokeSrc.indexOf('export async function revokeOtherBuyerSessions')
+    const fnSrc = revokeSrc.slice(idx, revokeSrc.indexOf('\n}', idx))
+    // The one supported primitive always excludes the current session by id —
+    // never a bare deleteMany({ where: { profileId } }) with no exception.
+    expect(fnSrc).toContain('id: { not: currentSessionId }')
   })
 })
 

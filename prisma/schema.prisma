@@ -182,6 +182,7 @@ model CustomerProfile {
   updatedAt          DateTime                  @updatedAt
   orders             Order[]
   sessions           CustomerSession[]
+  credential         CustomerCredential?
   sellerProfile      SellerProfile?
   collectionItems    CollectionItem[]
   catalogSuggestions CatalogSuggestion[]
@@ -342,11 +343,34 @@ model CustomerSession {
   sessionHash String   @unique
   expiresAt   DateTime
   createdAt   DateTime @default(now())
+  // 19A: which credential proved identity for this session — 'magic_link' |
+  // 'password'. Nullable so every pre-19A row (and any future auth method we
+  // forget to stamp) reads as simply "unknown", never misread as a fresh
+  // magic-link reauth — recentMagicLinkReauth() requires the literal string
+  // 'magic_link', so null can never satisfy it.
+  authMethod  String?
 
   profile CustomerProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
 
   @@index([profileId])
   @@index([expiresAt])
+}
+
+// 19A: password credential, deliberately a separate one-to-one model rather than
+// a field on CustomerProfile — CustomerProfile is read broadly and often without
+// an explicit `select` (e.g. sellerProfiles.ts's existence check), so a hash
+// living there would be one missed `select` away from leaking into memory by
+// default. Keeping it here means passwordHash is only ever fetched by code that
+// explicitly joins/queries this model.
+model CustomerCredential {
+  id           String          @id @default(cuid())
+  profileId    String          @unique
+  profile      CustomerProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  passwordHash String
+
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
 }
 
 model CustomerCommunityProfile {

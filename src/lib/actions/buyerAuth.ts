@@ -8,7 +8,7 @@ import { normalizeEmail } from '@/lib/normalizeEmail'
 import { hashToken } from '@/lib/hashToken'
 import { createBuyerSession, clearBuyerSession } from '@/lib/buyerSession'
 import { buildMagicLinkEmail } from '@/lib/email/magicLinkEmail'
-import { isSafeAccountReturnTo } from '@/lib/customerModelIntent'
+import { isSafeAccountReturnTo, isAllowedPostVerify, resolvePostVerifyDestination } from '@/lib/customerModelIntent'
 
 const TOKEN_TTL_MS        = 15 * 60 * 1000  // 15 minutes
 const RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000  // 10 minutes
@@ -81,11 +81,18 @@ export async function requestBuyerOrderLink(
   const rawReturnTo = (formData.get('returnTo') as string | null) ?? null
   const safeReturnTo = isSafeAccountReturnTo(rawReturnTo)
 
+  // 19A: optional CLOSED post-verify mode (create-account / forgot-password) —
+  // re-validated against the fixed allowlist here, same defense-in-depth pattern
+  // as returnTo above. Never a free-form destination — see customerModelIntent.ts.
+  const rawPostVerify = (formData.get('postVerify') as string | null) ?? null
+  const safePostVerify = isAllowedPostVerify(rawPostVerify) ? rawPostVerify : null
+
   // Build verify URL using APP_URL — never trust a request Host header
   const appUrl = (process.env.APP_URL ?? 'https://www.collectntrades.com').replace(/\/$/, '')
-  const verifyUrl = safeReturnTo
-    ? `${appUrl}/account/orders/verify?token=${rawToken}&returnTo=${encodeURIComponent(safeReturnTo)}`
-    : `${appUrl}/account/orders/verify?token=${rawToken}`
+  const verifyParams = new URLSearchParams({ token: rawToken })
+  if (safeReturnTo) verifyParams.set('returnTo', safeReturnTo)
+  if (safePostVerify) verifyParams.set('postVerify', safePostVerify)
+  const verifyUrl = `${appUrl}/account/orders/verify?${verifyParams.toString()}`
 
   // Send email (fire-tolerant: return SENT regardless of send outcome)
   if (process.env.RESEND_API_KEY && process.env.ORDER_DIGEST_FROM_EMAIL) {
@@ -177,8 +184,11 @@ export async function verifyBuyerLoginToken(
     select: { id: true },
   })
 
-  // Create the authenticated buyer session and set the cookie
-  await createBuyerSession(profile.id)
+  // Create the authenticated buyer session and set the cookie. Every magic-link
+  // verification stamps 'magic_link' — this is what recentMagicLinkReauth() (see
+  // customerCredential.ts) checks to allow a password-recovery Change Password
+  // without the old password, within a 15-minute freshness window.
+  await createBuyerSession(profile.id, 'magic_link')
 
   // 16M: re-validate the client-submitted returnTo one final time, right before
   // the redirect — the earlier hops (form render, email URL) already validated
@@ -187,7 +197,14 @@ export async function verifyBuyerLoginToken(
   const rawReturnTo = (formData.get('returnTo') as string | null) ?? null
   const safeReturnTo = isSafeAccountReturnTo(rawReturnTo)
 
-  redirect(safeReturnTo ?? '/account/orders')
+  // 19A: postVerify is re-validated here too, same defense-in-depth as
+  // returnTo — it can only ever resolve to one of two fixed local paths (never
+  // an arbitrary destination), and only applies when returnTo itself is absent,
+  // so an in-flight Want/Own/Sell continuation always takes priority.
+  const rawPostVerify = (formData.get('postVerify') as string | null) ?? null
+  const postVerifyDest = resolvePostVerifyDestination(rawPostVerify)
+
+  redirect(safeReturnTo ?? postVerifyDest ?? '/account/orders')
 }
 
 // ─── signOutBuyer ─────────────────────────────────────────────────────────────

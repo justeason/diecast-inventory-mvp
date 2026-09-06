@@ -583,9 +583,9 @@ describe('18D: zero schema/migration changes', () => {
     expect(schema).toContain('@@unique([profileId, catalogId])')
   })
 
-  it('migration count is unchanged at 48 — 18D adds no new migration directory', () => {
+  it('migration count is unchanged at 48 (as of 18D) — 18D itself adds no new migration directory; later milestones may add their own', () => {
     const dirs = fs.readdirSync(path.join(process.cwd(), 'prisma/migrations'), { withFileTypes: true })
       .filter((d) => d.isDirectory())
-    expect(dirs.length).toBe(48)
+    expect(dirs.length).toBeGreaterThanOrEqual(48)
   })
 })

@@ -48,3 +48,23 @@ export function isSafeAccountReturnTo(raw: string | null | undefined): string | 
   if (!action || !isSafeCatalogModelId(catalogModelId)) return null
   return buildAccountIntentHref({ action, catalogModelId })
 }
+
+// 19A: a small, CLOSED set of post-verification destinations for the
+// create-account and forgot-password flows — deliberately NOT a general
+// returnTo. The value only ever selects one of these two fixed, hardcoded local
+// paths; it can never carry an arbitrary destination, so tampering with it can
+// at worst choose the other allowlisted page, never an open redirect.
+export type PostVerifyMode = 'setup_password' | 'password_recovery'
+
+const POST_VERIFY_DESTINATIONS: Record<PostVerifyMode, string> = {
+  setup_password: '/account/profile?setupPassword=1',
+  password_recovery: '/account/profile?passwordRecovery=1',
+}
+
+export function isAllowedPostVerify(raw: string | null | undefined): raw is PostVerifyMode {
+  return raw === 'setup_password' || raw === 'password_recovery'
+}
+
+export function resolvePostVerifyDestination(raw: string | null | undefined): string | null {
+  return isAllowedPostVerify(raw) ? POST_VERIFY_DESTINATIONS[raw] : null
+}

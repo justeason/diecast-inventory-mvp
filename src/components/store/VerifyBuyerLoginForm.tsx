@@ -22,7 +22,7 @@ function SubmitButton({ hasReturnTo }: { hasReturnTo: boolean }) {
 // AE, byte-identical to before). When present, it is already server-validated
 // (isSafeAccountReturnTo, in the parent page) before ever reaching this hidden
 // field; verifyBuyerLoginToken re-validates it again itself before redirecting.
-export function VerifyBuyerLoginForm({ token, returnTo }: { token: string; returnTo?: string }) {
+export function VerifyBuyerLoginForm({ token, returnTo, postVerify }: { token: string; returnTo?: string; postVerify?: string }) {
   const [state, action] = useActionState(verifyBuyerLoginToken, { status: 'idle' })
 
   return (
@@ -30,6 +30,7 @@ export function VerifyBuyerLoginForm({ token, returnTo }: { token: string; retur
       {/* Token submitted as hidden field — not displayed visibly in the UI */}
       <input type="hidden" name="token" value={token} />
       {returnTo && <input type="hidden" name="returnTo" value={returnTo} />}
+      {postVerify && <input type="hidden" name="postVerify" value={postVerify} />}
 
       {state.status === 'error' && (
         <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
