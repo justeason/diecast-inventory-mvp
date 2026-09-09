@@ -69,6 +69,7 @@ function queryRawMock(opts: { mobileCaptureLocked?: LockedRow[]; collectionOverl
     const text = Array.isArray(strings) ? strings.join('') : String(strings)
     if (text.includes('ExternalMarketObservation')) return Promise.resolve([])
     if (text.includes('MobileCaptureItem'))         return Promise.resolve(mobileCaptureLocked)
+    if (text.includes('GuestSellerItem'))  return Promise.resolve([])
     if (text.includes('CollectionItem'))             return Promise.resolve([{ count: collectionOverlapCount }])
     return Promise.resolve(undefined)
   })
@@ -111,6 +112,13 @@ function makeTx(opts: {
       findMany:   vi.fn().mockResolvedValue(canonicalRows),
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
       deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
+      count:      vi.fn().mockResolvedValue(0),
+    },
+    // 19B: no guest seller rows by default — $queryRaw's GuestSellerItem branch
+    // returns [] (nothing locked), so deleteMany/count below are simply never
+    // reached in the clean path.
+    guestSellerItem: {
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
       count:      vi.fn().mockResolvedValue(0),
     },
     catalogModelMergeAudit: { create: vi.fn().mockResolvedValue({}) },
@@ -443,7 +451,7 @@ describe('18D: final integrity check includes MobileCaptureItem, unfiltered (19/
 
   it('the final integrity check array includes rmc (mobileCaptureItem.count) unfiltered by status', () => {
     const src = readSrc('src/lib/actions/catalog.ts')
-    const idx = src.indexOf('const [ri, rc, rs, rsub, rp, rw, rae, raf, rfp, reo, rid, rmc]')
+    const idx = src.indexOf('const [ri, rc, rs, rsub, rp, rw, rae, raf, rfp, reo, rid, rmc, rgsi]')
     expect(idx).toBeGreaterThan(-1)
     const block = src.slice(idx, src.indexOf('])', idx))
     expect(block).toContain('tx.mobileCaptureItem.count({ where: { catalogModelId: dupeId } })')

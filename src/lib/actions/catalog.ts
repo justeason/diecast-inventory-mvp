@@ -306,6 +306,64 @@ async function countCollectionItemOverlap(
   return rows[0]?.count ?? 0
 }
 
+// 19B: GuestSellerItem is the newest CatalogModel FK relation, and — like
+// MobileCaptureItem in 18D — this merge deliberately never locks
+// GuestSellerSession. GuestSellerSession has no status field; "active" is
+// simply expiresAt > now. Unlike MobileCaptureItem, an active guest reference
+// is never retargeted — @@unique([sessionId, catalogModelId]) makes a blind
+// A→B retarget collision-prone if the same guest session happens to reference
+// both, and (per the approved product decision) guest sessions have no
+// "customer support" surface to reconcile an overlap the way authenticated
+// terminal MobileCapture sessions do. So the rule is simpler than
+// MobileCaptureItem's: active blocks outright, expired rows are simply
+// deleted (guest work behind an expired token is already permanently
+// inaccessible to its owner — nothing is lost that wasn't already gone).
+type GuestSellerItemClassification =
+  | { blocked: true }
+  | { blocked: false; staleIds: string[] }
+
+async function lockAndClassifyGuestSellerItems(
+  tx: Prisma.TransactionClient,
+  dupeId: string,
+): Promise<GuestSellerItemClassification> {
+  const locked = await tx.$queryRaw<Array<{ id: string; sessionId: string; expiresAt: Date }>>`
+    SELECT gsi.id, gsi."sessionId", gss."expiresAt"
+    FROM "GuestSellerItem" gsi
+    JOIN "GuestSellerSession" gss ON gss.id = gsi."sessionId"
+    WHERE gsi."catalogModelId" = ${dupeId}
+    ORDER BY gsi.id
+    FOR UPDATE OF gsi
+  `
+  if (locked.length === 0) return { blocked: false, staleIds: [] }
+
+  const now = Date.now()
+  if (locked.some((r) => r.expiresAt.getTime() > now)) return { blocked: true }
+
+  return { blocked: false, staleIds: locked.map((r) => r.id) }
+}
+
+// Deletes the already-locked, already-expired rows only — never retargets,
+// never touches an active row (the caller has already proven none exist by
+// this point). Count-checked against the exact locked id set, same defensive
+// convention as every other 18A-18D reconciliation function.
+async function reconcileGuestSellerItemMerge(
+  tx: Prisma.TransactionClient,
+  dupeId: string,
+  classification: Extract<GuestSellerItemClassification, { blocked: false }>,
+): Promise<{ staleDeleted: number }> {
+  const { staleIds } = classification
+  if (staleIds.length === 0) return { staleDeleted: 0 }
+
+  const deleted = await tx.guestSellerItem.deleteMany({
+    where: { id: { in: staleIds }, catalogModelId: dupeId },
+  })
+  if (deleted.count !== staleIds.length) {
+    throw new Error('GUEST_SELLER_ITEM_RECONCILE_MISMATCH')
+  }
+
+  return { staleDeleted: deleted.count }
+}
+
 const CatalogSchema = z.object({
   brand: z.string().min(1, 'Brand is required'),
   name: z.string().min(1, 'Name is required'),
@@ -433,6 +491,12 @@ export async function mergeCatalogModels(
       // capture: Session→CatalogModel-via-FK) — a deadlock. MobileCaptureItem row
       // locking (lockAndClassifyMobileCaptureItems) is used instead — see its
       // comment for why that's sufficient without ever touching Session locks.
+      // 19B: same reasoning for GuestSellerSession — this merge NEVER locks it.
+      // addGuestSellerItem's existing-session path locks GuestSellerSession first,
+      // then inserts a GuestSellerItem whose FK needs FOR KEY SHARE on this
+      // CatalogModel row; locking GuestSellerSession here too would risk the same
+      // opposing order. lockAndClassifyGuestSellerItems locks only the affected
+      // GuestSellerItem rows instead.
       const lockIds = [...new Set([canonicalId, ...duplicateIds])].sort()
       for (const id of lockIds) {
         await tx.$queryRaw`SELECT id FROM "CatalogModel" WHERE id = ${id} FOR UPDATE`
@@ -577,10 +641,24 @@ export async function mergeCatalogModels(
           throw new Error('TX_VALIDATION')
         }
 
+        // 19B: lock + classify affected GuestSellerItem rows before any migration
+        // below runs. An unexpired (active) reference hard-blocks this duplicate's
+        // merge outright — see lockAndClassifyGuestSellerItems for why
+        // GuestSellerSession is never locked and why active rows are never
+        // retargeted.
+        const gsiClassification = await lockAndClassifyGuestSellerItems(tx, dupeId)
+        if (gsiClassification.blocked) {
+          mergeError = {
+            errors: { form: ['An active guest selling batch references this model. Complete or allow the guest batch to expire before merging.'] },
+          }
+          throw new Error('TX_VALIDATION')
+        }
+
         const [
           items, collItems, suggestions, submissions, photos, wanted,
           , , , , , // buyerAlertEvent/buyerAlertFanout/catalogPhotoFingerprint/observation/intakeDraft — counts unused here
           mobileCapture,
+          guestSeller,
         ] = await Promise.all([
           tx.itemInstance.updateMany({ where: { catalogId: dupeId }, data: { catalogId: canonicalId } }),
           tx.collectionItem.updateMany({ where: { catalogId: dupeId }, data: { catalogId: canonicalId } }),
@@ -613,6 +691,9 @@ export async function mergeCatalogModels(
           // only a plain non-overlap retarget and/or a proven-safe overlap collapse
           // remain (see applyMobileCaptureItemReconciliation).
           applyMobileCaptureItemReconciliation(tx, dupeId, canonicalId, mcClassification),
+          // 19B: only expired (already-inaccessible) rows ever reach here — an
+          // active reference already aborted the merge above.
+          reconcileGuestSellerItemMerge(tx, dupeId, gsiClassification),
         ])
 
         // No CatalogModelMergeAudit column exists for Wanted counts (no schema change
@@ -626,7 +707,13 @@ export async function mergeCatalogModels(
         const mobileCaptureNote = mobileCapture.migrated > 0 || mobileCapture.overlapCollapsed > 0
           ? `MobileCapture: ${mobileCapture.migrated} migrated, ${mobileCapture.overlapCollapsed} reconciled (capture session had both models)`
           : null
-        const adminNote = [wantedNote, mobileCaptureNote].filter(Boolean).join(' | ') || null
+        // 19B: no CatalogModelMergeAudit column for GuestSellerItem counts either.
+        // Never a "migrated" count — active rows blocked the merge above, so any
+        // count here is always an expired-row deletion, not a retarget.
+        const guestSellerNote = guestSeller.staleDeleted > 0
+          ? `GuestSeller: ${guestSeller.staleDeleted} expired guest item(s) removed`
+          : null
+        const adminNote = [wantedNote, mobileCaptureNote, guestSellerNote].filter(Boolean).join(' | ') || null
 
         await tx.catalogModelMergeAudit.create({
           data: {
@@ -662,7 +749,10 @@ export async function mergeCatalogModels(
         // nonzero count here means the lock/classify/reconcile sequence above left a
         // row unaccounted for; abort rather than let the required-FK delete below
         // fail with a raw, non-actionable P2003.
-        const [ri, rc, rs, rsub, rp, rw, rae, raf, rfp, reo, rid, rmc] = await Promise.all([
+        // 19B: also guestSellerItem — active rows already aborted the merge above,
+        // so a nonzero count here means an expired row's deletion above was
+        // incomplete; abort rather than let the required-FK delete below fail.
+        const [ri, rc, rs, rsub, rp, rw, rae, raf, rfp, reo, rid, rmc, rgsi] = await Promise.all([
           tx.itemInstance.count({ where: { catalogId: dupeId } }),
           tx.collectionItem.count({ where: { catalogId: dupeId } }),
           tx.catalogSuggestion.count({ where: { approvedCatalogId: dupeId } }),
@@ -675,8 +765,9 @@ export async function mergeCatalogModels(
           tx.externalMarketObservation.count({ where: { catalogModelId: dupeId } }),
           tx.intakeDraft.count({ where: { catalogModelId: dupeId } }),
           tx.mobileCaptureItem.count({ where: { catalogModelId: dupeId } }),
+          tx.guestSellerItem.count({ where: { catalogModelId: dupeId } }),
         ])
-        const remaining = ri + rc + rs + rsub + rp + rw + rae + raf + rfp + reo + rid + rmc
+        const remaining = ri + rc + rs + rsub + rp + rw + rae + raf + rfp + reo + rid + rmc + rgsi
         if (remaining > 0) {
           mergeError = {
             errors: {

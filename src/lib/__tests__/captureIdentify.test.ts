@@ -93,6 +93,13 @@ beforeEach(() => {
 
 const actionSrc = readSrc('src/lib/actions/captureIdentify.ts')
 const actionCode = stripComments(actionSrc)
+// 19B: the recognition core (fingerprint → match → enrich → relationship) was
+// extracted verbatim into captureIdentifyCore.ts so a second, differently-
+// rate-limited caller (sellRecognize.ts) could reuse it without a second
+// implementation. captureIdentify.ts itself is now only rate-limit + upload
+// validation + a call into the shared core — structural checks that inspect
+// the core's own logic now read coreSrc instead.
+const coreSrc = readSrc('src/lib/captureIdentifyCore.ts')
 const componentSrc = readSrc('src/components/store/CaptureIdentify.tsx')
 const componentCode = stripComments(componentSrc)
 const pageSrc = readSrc('src/app/(store)/capture/page.tsx')
@@ -110,9 +117,11 @@ describe('16K: recognition was already separable from persistence — no stop-co
     expect(matchQuerySrc).not.toMatch(/\.(create|update|delete|upsert|createMany|updateMany|deleteMany)\(/)
   })
 
-  it('the new public action reuses both unmodified — no second recognition/matching engine', () => {
-    expect(actionSrc).toContain("import { computeImageFingerprint, FingerprintError } from '@/lib/catalogImageFingerprint'")
-    expect(actionSrc).toContain("import { findCatalogImageMatches } from '@/lib/catalogImageMatchingQuery'")
+  it('the new public action reuses both unmodified — no second recognition/matching engine (19B: via the shared captureIdentifyCore.ts, not duplicated)', () => {
+    expect(coreSrc).toContain("import { computeImageFingerprint, FingerprintError } from '@/lib/catalogImageFingerprint'")
+    expect(coreSrc).toContain("import { findCatalogImageMatches } from '@/lib/catalogImageMatchingQuery'")
+    expect(actionSrc).toContain("import { runImageRecognition, validateUpload")
+    expect(actionSrc).toContain("from '@/lib/captureIdentifyCore'")
   })
 
   it('the shared engine files themselves were not modified by 16K (still exactly the 12G-C algorithm/version)', () => {
@@ -186,11 +195,13 @@ describe('16K/16L: public/anonymous access — recognition never requires or gat
     expect(rlCallIdx).toBeGreaterThan(-1)
     expect(actionSrc.slice(rlCallIdx, rlCallIdx + 40)).not.toMatch(/profileId/)
   })
-  it('16L: identifyModelFromPhoto reads getBuyerSession() only AFTER rate-limit/validation/fingerprint/matching succeed, and only for optional read-only relationship enrichment — never used to gate/require recognition itself', () => {
-    const sessionIdx = actionSrc.indexOf('await getBuyerSession()')
-    const matchIdx = actionSrc.indexOf('findCatalogImageMatches(fp)')
+  it('16L: recognition reads getBuyerSession() only AFTER fingerprint/matching succeed, and only for optional read-only relationship enrichment — never used to gate/require recognition itself (19B: logic lives in captureIdentifyCore.ts)', () => {
+    const sessionIdx = coreSrc.indexOf('await getBuyerSession()')
+    const matchIdx = coreSrc.indexOf('findCatalogImageMatches(fp)')
     expect(sessionIdx).toBeGreaterThan(matchIdx)
-    expect(actionSrc).not.toMatch(/if \(!session\)\s*return \{\s*error/)
+    expect(coreSrc).not.toMatch(/if \(!session\)\s*return \{\s*error/)
+    // The public action's own rate-limit gate happens before it ever calls in.
+    expect(actionSrc.indexOf('checkRateLimit')).toBeLessThan(actionSrc.indexOf('runImageRecognition('))
   })
 })
 
@@ -267,9 +278,9 @@ describe('16K: recognition output — bounded candidates, authoritative model li
     expect(call.where).toEqual({ id: { in: ['cat1'] } })
   })
 
-  it('candidate limit is capped (CANDIDATE_LIMIT constant used to slice results)', () => {
-    expect(actionSrc).toContain('const CANDIDATE_LIMIT = 5')
-    expect(actionSrc).toContain('results.slice(0, CANDIDATE_LIMIT)')
+  it('candidate limit is capped (CANDIDATE_LIMIT constant used to slice results) — 19B: lives in captureIdentifyCore.ts', () => {
+    expect(coreSrc).toContain('const CANDIDATE_LIMIT = 5')
+    expect(coreSrc).toContain('results.slice(0, CANDIDATE_LIMIT)')
   })
 
   it('every candidate result links to /catalog/[catalogModelId], never /browse?q= or admin routes', () => {
@@ -305,8 +316,8 @@ describe('16L: capture results render Want/Own/Sell actions via CaptureCandidate
   it('CaptureIdentify.tsx itself still contains no wantAction/unwantAction/addToCollectionAction — those live in CaptureCandidateActions, reused not duplicated', () => {
     expect(componentCode).not.toMatch(/wantAction|unwantAction|addToCollectionAction/)
   })
-  it('identifyModelFromPhoto now performs one batched relationship read via getCatalogRelationshipState (16F), bounded to the live candidate ids', () => {
-    expect(actionSrc).toContain('getCatalogRelationshipState(session.profileId, liveIds)')
+  it('recognition performs one batched relationship read via getCatalogRelationshipState (16F), bounded to the live candidate ids — 19B: lives in captureIdentifyCore.ts', () => {
+    expect(coreSrc).toContain('getCatalogRelationshipState(session.profileId, liveIds)')
   })
 })
 
@@ -371,8 +382,8 @@ describe('16K: application file-size limit stays safely under the framework Serv
     expect(configSrc).toMatch(/serverActions:\s*\{\s*bodySizeLimit:\s*'10mb'/)
   })
 
-  it('application MAX_FILE_BYTES (9 MB) is strictly less than the framework 10mb body limit, leaving multipart-overhead headroom', () => {
-    expect(actionSrc).toContain('const MAX_FILE_BYTES = 9 * 1024 * 1024')
+  it('application MAX_FILE_BYTES (9 MB) is strictly less than the framework 10mb body limit, leaving multipart-overhead headroom — 19B: lives in captureIdentifyCore.ts', () => {
+    expect(coreSrc).toContain('const MAX_FILE_BYTES = 9 * 1024 * 1024')
     const FRAMEWORK_LIMIT_BYTES = 10 * 1024 * 1024
     const APP_LIMIT_BYTES = 9 * 1024 * 1024
     expect(APP_LIMIT_BYTES).toBeLessThan(FRAMEWORK_LIMIT_BYTES)
@@ -382,9 +393,9 @@ describe('16K: application file-size limit stays safely under the framework Serv
     expect(FRAMEWORK_LIMIT_BYTES - APP_LIMIT_BYTES).toBeGreaterThan(1024)
   })
 
-  it('the user-facing error message matches the actual enforced application limit — no contradiction between claim and behavior', () => {
-    expect(actionSrc).toContain("return 'Image must be 9 MB or smaller.'")
-    expect(actionSrc).not.toContain("'Image must be 10 MB or smaller.'")
+  it('the user-facing error message matches the actual enforced application limit — no contradiction between claim and behavior — 19B: lives in captureIdentifyCore.ts', () => {
+    expect(coreSrc).toContain("return 'Image must be 9 MB or smaller.'")
+    expect(coreSrc).not.toContain("'Image must be 10 MB or smaller.'")
   })
 })
 
@@ -477,19 +488,24 @@ describe('16K: rate limiter storage is process-local — verified, not silently 
 // ── Full request execution order ────────────────────────────────────────────────
 
 describe('16K: exact execution order — rate limit, then validation, then decode, then DB', () => {
-  it('source order: rate-limit fail-closed check appears before the file-presence check, which appears before fingerprinting, which appears before DB matching', () => {
+  it('source order: rate-limit fail-closed check appears before the file-presence check, which appears before the call into the shared recognition core (19B: fingerprint/match/enrich ordering now lives in captureIdentifyCore.ts, checked separately below)', () => {
     const rlKeyIdx = actionSrc.indexOf('rateLimitKeyFromHeaders(reqHeaders')
     const rlCheckIdx = actionSrc.indexOf('checkRateLimit(rateLimitKey')
     const fileIdx = actionSrc.indexOf("formData.get('image')")
     const validateIdx = actionSrc.indexOf('validateUpload(file)')
-    const fingerprintIdx = actionSrc.indexOf('computeImageFingerprint(buffer')
-    const matchIdx = actionSrc.indexOf('findCatalogImageMatches(fp)')
-    const enrichIdx = actionSrc.indexOf('prisma.catalogModel.findMany(')
+    const runIdx = actionSrc.indexOf('runImageRecognition(file')
 
     expect(rlKeyIdx).toBeLessThan(rlCheckIdx)
     expect(rlCheckIdx).toBeLessThan(fileIdx)
     expect(fileIdx).toBeLessThan(validateIdx)
-    expect(validateIdx).toBeLessThan(fingerprintIdx)
+    expect(validateIdx).toBeLessThan(runIdx)
+  })
+
+  it('within the shared core: fingerprinting happens before DB matching, before enrichment', () => {
+    const fingerprintIdx = coreSrc.indexOf('computeImageFingerprint(buffer')
+    const matchIdx = coreSrc.indexOf('findCatalogImageMatches(fp)')
+    const enrichIdx = coreSrc.indexOf('prisma.catalogModel.findMany(')
+
     expect(fingerprintIdx).toBeLessThan(matchIdx)
     expect(matchIdx).toBeLessThan(enrichIdx)
   })
@@ -591,24 +607,24 @@ describe('16K: a returned candidate MUST correspond to a live CatalogModel row',
     expect(result).toEqual({ candidates: [], lowCoverage: false })
   })
 
-  it('every returned candidate\'s catalogModelId is keyed by id into the live enrichment map, never by array position', () => {
-    expect(actionSrc).toContain('const detailById = new Map(models.map((m) => [m.id, m]))')
-    expect(actionSrc).toContain('top.filter((c) => detailById.has(c.catalogModelId))')
-    expect(actionSrc).not.toMatch(/models\[i\]|top\[i\]|models\[index\]/)
+  it('every returned candidate\'s catalogModelId is keyed by id into the live enrichment map, never by array position — 19B: lives in captureIdentifyCore.ts', () => {
+    expect(coreSrc).toContain('const detailById = new Map(models.map((m) => [m.id, m]))')
+    expect(coreSrc).toContain('top.filter((c) => detailById.has(c.catalogModelId))')
+    expect(coreSrc).not.toMatch(/models\[i\]|top\[i\]|models\[index\]/)
   })
 
   it('the "View Model" href is built exclusively from the live, id-matched candidate — component never receives an id it did not enrich', () => {
     expect(componentSrc).toContain('href={`/catalog/${c.catalogModelId}`}')
-    // The action guarantees c.catalogModelId always corresponds to a live row by
+    // The core guarantees c.catalogModelId always corresponds to a live row by
     // the time it reaches the component — no client-side existence check needed.
-    expect(actionSrc).toContain('const liveTop = top.filter((c) => detailById.has(c.catalogModelId))')
+    expect(coreSrc).toContain('const liveTop = top.filter((c) => detailById.has(c.catalogModelId))')
   })
 
-  it('detail lookup uses the non-null-asserted live map entry (guaranteed present after the filter), not an optional fallback to raw matcher fields for identity', () => {
-    expect(actionSrc).toContain('const detail = detailById.get(c.catalogModelId)!')
-    expect(actionSrc).toContain('series: detail.series,')
-    expect(actionSrc).toContain('color: detail.color,')
-    expect(actionSrc).toContain('scale: detail.scale,')
+  it('detail lookup uses the non-null-asserted live map entry (guaranteed present after the filter), not an optional fallback to raw matcher fields for identity — 19B: lives in captureIdentifyCore.ts', () => {
+    expect(coreSrc).toContain('const detail = detailById.get(c.catalogModelId)!')
+    expect(coreSrc).toContain('series: detail.series,')
+    expect(coreSrc).toContain('color: detail.color,')
+    expect(coreSrc).toContain('scale: detail.scale,')
   })
 })
 
@@ -629,9 +645,9 @@ describe('16K: zero-Listing CatalogModel is still a successful recognition resul
     expect(result?.candidates?.[0].lowestPrice).toBeNull()
   })
 
-  it('availability query reuses the exact centralized eligibility predicate (listingEligibility.ts)', () => {
-    expect(actionSrc).toContain("import { eligibleListingWhere } from '@/lib/listingEligibility'")
-    expect(actionSrc).toContain('eligibleListingWhere(candidateIds)')
+  it('availability query reuses the exact centralized eligibility predicate (listingEligibility.ts) — 19B: lives in captureIdentifyCore.ts', () => {
+    expect(coreSrc).toContain("import { eligibleListingWhere } from '@/lib/listingEligibility'")
+    expect(coreSrc).toContain('eligibleListingWhere(candidateIds)')
   })
 
   it('component never gates a candidate render behind availableCount > 0', () => {
@@ -804,10 +820,10 @@ describe('16K: zero schema/migration changes, no guest-session persistence model
 // ── Part BG: query/provider/storage cost shape ───────────────────────────────────
 
 describe('16K/16L: exact recognition cost shape — bounded, no hidden per-candidate loop', () => {
-  it('exactly 2 enrichment queries when candidates exist, in parallel (Promise.all)', () => {
-    expect(actionSrc).toContain('await Promise.all([')
-    const idx = actionSrc.indexOf('await Promise.all([')
-    const block = actionSrc.slice(idx, actionSrc.indexOf('])', idx))
+  it('exactly 2 enrichment queries when candidates exist, in parallel (Promise.all) — 19B: lives in captureIdentifyCore.ts', () => {
+    expect(coreSrc).toContain('await Promise.all([')
+    const idx = coreSrc.indexOf('await Promise.all([')
+    const block = coreSrc.slice(idx, coreSrc.indexOf('])', idx))
     expect(block).toContain('prisma.catalogModel.findMany(')
     expect(block).toContain('prisma.listing.findMany(')
   })
@@ -818,10 +834,10 @@ describe('16K/16L: exact recognition cost shape — bounded, no hidden per-candi
     expect(prisma.catalogModel.findMany).not.toHaveBeenCalled()
     expect(getCatalogRelationshipState).not.toHaveBeenCalled()
   })
-  it('no per-candidate loop issues its own DB or provider call (no await inside the final .map over liveTop)', () => {
-    const enrichIdx = actionSrc.indexOf('const candidates: IdentifyCandidate[] = liveTop.map(')
+  it('no per-candidate loop issues its own DB or provider call (no await inside the final .map over liveTop) — 19B: lives in captureIdentifyCore.ts', () => {
+    const enrichIdx = coreSrc.indexOf('const candidates: IdentifyCandidate[] = liveTop.map(')
     expect(enrichIdx).toBeGreaterThan(-1)
-    const mapBlock = actionSrc.slice(enrichIdx, actionSrc.indexOf('})\n\n    return { candidates', enrichIdx))
+    const mapBlock = coreSrc.slice(enrichIdx, coreSrc.indexOf('})\n\n    return { candidates', enrichIdx))
     expect(mapBlock).not.toMatch(/await /)
   })
   it('16L: exactly one getCatalogRelationshipState call per request (authenticated), never per-candidate', async () => {

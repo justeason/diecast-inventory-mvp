@@ -1116,7 +1116,10 @@ describe('catalogDataQuality: setPrimaryCatalogPhoto', () => {
 
 describe('catalogDataQuality: mergeCatalogModels stale preview', () => {
   const catalogSrc = readSrc('src/lib/actions/catalog.ts')
-  const slice      = readSlice(catalogSrc, 'mergeCatalogModels', 7000)
+  // 19B: widened from 7000 — 18D/19B added GuestSellerItem/MobileCaptureItem/
+  // CollectionItem merge-reconciliation preconditions between the function start
+  // and the stale-preview check this slice targets.
+  const slice      = readSlice(catalogSrc, 'mergeCatalogModels', 9000)
 
   it('reads expectedImpactSnapshot from formData', () => {
     expect(slice).toContain('expectedImpactSnapshot')

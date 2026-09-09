@@ -41,6 +41,12 @@ const wrapperCode = stripComments(wrapperSrc)
 const actionsCompSrc = readSrc('src/components/store/CaptureCandidateActions.tsx')
 const actionsCompCode = stripComments(actionsCompSrc)
 const captureIdentifySrc = readSrc('src/lib/actions/captureIdentify.ts')
+// 19B: the recognition core (fingerprint/match/enrich/relationship) was
+// extracted verbatim into captureIdentifyCore.ts so a second, differently-
+// rate-limited caller (sellRecognize.ts) could reuse it without duplicating
+// it. captureIdentify.ts itself is now only rate-limit + upload validation +
+// a call into the shared core.
+const coreSrc = readSrc('src/lib/captureIdentifyCore.ts')
 const catalogActionsSrc = readSrc('src/components/store/CatalogActions.tsx')
 const catalogModelActionsSrc = readSrc('src/components/store/CatalogModelActions.tsx')
 const componentSrc = readSrc('src/components/store/CaptureIdentify.tsx')
@@ -89,8 +95,8 @@ describe('16L: recognition (identifyModelFromPhoto) still performs zero business
     const code = stripComments(captureIdentifySrc)
     expect(code).not.toMatch(/createCollectionItem|addToWantedList|removeFromWantedList|wantAction|unwantAction|addToCollectionAction/)
   })
-  it('captureIdentify.ts imports getCatalogRelationshipState (read) but not any mutation wrapper', () => {
-    expect(captureIdentifySrc).toContain("import { getCatalogRelationshipState")
+  it('recognition imports getCatalogRelationshipState (read) but not any mutation wrapper — 19B: lives in captureIdentifyCore.ts, called into by captureIdentify.ts', () => {
+    expect(coreSrc).toContain("import { getCatalogRelationshipState")
   })
 })
 
@@ -135,14 +141,14 @@ describe('16L: every candidate row is independently isolated — same full actio
 // ── Part E/AD/AW: batched authenticated relationship lookup ────────────────────
 
 describe('16L: authenticated relationship lookup is batched once inside recognition, never per-candidate', () => {
-  it('identifyModelFromPhoto calls getCatalogRelationshipState exactly once with the full liveIds array', () => {
-    expect(captureIdentifySrc).toContain('getCatalogRelationshipState(session.profileId, liveIds)')
-    // Only one call site exists in the whole file.
-    const matches = [...captureIdentifySrc.matchAll(/getCatalogRelationshipState\(/g)]
+  it('recognition calls getCatalogRelationshipState exactly once with the full liveIds array — 19B: lives in captureIdentifyCore.ts', () => {
+    expect(coreSrc).toContain('getCatalogRelationshipState(session.profileId, liveIds)')
+    // Only one call site exists in the whole core file.
+    const matches = [...coreSrc.matchAll(/getCatalogRelationshipState\(/g)]
     expect(matches.length).toBe(1)
   })
-  it('liveIds is derived from liveTop (already deduped/live-filtered), not a raw unfiltered candidate array', () => {
-    expect(captureIdentifySrc).toContain('const liveIds = liveTop.map((c) => c.catalogModelId)')
+  it('liveIds is derived from liveTop (already deduped/live-filtered), not a raw unfiltered candidate array — 19B: lives in captureIdentifyCore.ts', () => {
+    expect(coreSrc).toContain('const liveIds = liveTop.map((c) => c.catalogModelId)')
   })
 })
 
@@ -365,10 +371,10 @@ describe('16L: mobile-first, restrained layout — actions wrap, no giant grid',
 // ── Part AY: regression — 16K production behavior preserved ─────────────────────
 
 describe('16L: regression — 16K recognition/production safeguards untouched', () => {
-  it('9 MB validation, rate limiting constants, and stale-candidate filtering are all still present verbatim', () => {
-    expect(captureIdentifySrc).toContain('const MAX_FILE_BYTES = 9 * 1024 * 1024')
+  it('9 MB validation, rate limiting constants, and stale-candidate filtering are all still present verbatim (19B: file validation/stale-filtering now live in captureIdentifyCore.ts; the rate-limit constant stays in captureIdentify.ts)', () => {
+    expect(coreSrc).toContain('const MAX_FILE_BYTES = 9 * 1024 * 1024')
     expect(captureIdentifySrc).toContain('const IDENTIFY_MAX = 5')
-    expect(captureIdentifySrc).toContain('const liveTop = top.filter((c) => detailById.has(c.catalogModelId))')
+    expect(coreSrc).toContain('const liveTop = top.filter((c) => detailById.has(c.catalogModelId))')
   })
   it('next.config.ts Sharp/libvips outputFileTracingIncludes fix is untouched', () => {
     const configSrc = readSrc('next.config.ts')

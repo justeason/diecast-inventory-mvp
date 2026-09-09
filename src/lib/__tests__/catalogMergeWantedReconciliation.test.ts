@@ -70,6 +70,7 @@ function makeTx(dupeId: string, canonicalId: string, dupeWants: Want[], canonica
       const text = Array.isArray(strings) ? strings.join('') : String(strings)
       if (text.includes('ExternalMarketObservation')) return Promise.resolve([])
       if (text.includes('MobileCaptureItem'))         return Promise.resolve([])
+      if (text.includes('GuestSellerItem'))  return Promise.resolve([])
       if (text.includes('CollectionItem'))             return Promise.resolve([{ count: 0 }])
       return Promise.resolve(undefined)
     }),
@@ -102,6 +103,13 @@ function makeTx(dupeId: string, canonicalId: string, dupeWants: Want[], canonica
     mobileCaptureItem: {
       findMany:   vi.fn().mockResolvedValue([]),
       updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      count:      vi.fn().mockResolvedValue(0),
+    },
+    // 19B: no guest seller rows by default — $queryRaw's GuestSellerItem branch
+    // returns [] (nothing locked), so deleteMany/count below are simply never
+    // reached in the clean path.
+    guestSellerItem: {
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
       count:      vi.fn().mockResolvedValue(0),
     },

@@ -126,8 +126,8 @@ describe('Part 19/20/21 — scope discipline: no premature 16F/16N work (16A sna
 })
 
 describe('Focused-review: Sell vs Selling now represent distinct customer intents', () => {
-  it('no new public Sell page was introduced — /sell does not exist as a top-level customer route', () => {
-    expect(exists('src/app/(store)/sell/page.tsx')).toBe(false)
+  it('19B: /sell now exists as a deliberate, separate camera-first guest/authenticated capture route — but customerNav.ts\'s "Sell" entry is NOT repointed to it (still /account/sell, confirmed below). /sell is reachable only by direct URL until 19C makes guest work claimable.', () => {
+    expect(exists('src/app/(store)/sell/page.tsx')).toBe(true)
   })
 
   it('customerNav.ts sends Sell and Account > Selling to different hrefs', () => {

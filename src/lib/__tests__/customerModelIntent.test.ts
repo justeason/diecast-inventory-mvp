@@ -637,9 +637,9 @@ describe('16M: /capture anonymous actions preserve intent', () => {
   it('no plain /account dead-end remains', () => {
     expect(src).not.toContain('href="/account"')
   })
-  it('no private relationship query was added to capture as a side effect of this change', () => {
-    const captureIdentifySrc = readSrc('src/lib/actions/captureIdentify.ts')
-    const matches = [...captureIdentifySrc.matchAll(/getCatalogRelationshipState\(/g)]
+  it('no private relationship query was added to capture as a side effect of this change (19B: the one call site now lives in the shared captureIdentifyCore.ts, called into by captureIdentify.ts)', () => {
+    const coreSrc = readSrc('src/lib/captureIdentifyCore.ts')
+    const matches = [...coreSrc.matchAll(/getCatalogRelationshipState\(/g)]
     expect(matches.length).toBe(1) // unchanged from 16L — still exactly one
   })
 })

@@ -59,6 +59,7 @@ function queryRawMock(observationLockIds: string[] = []) {
       return Promise.resolve(observationLockIds.map(id => ({ id })))
     }
     if (text.includes('MobileCaptureItem')) return Promise.resolve([])
+    if (text.includes('GuestSellerItem'))  return Promise.resolve([])
     if (text.includes('CollectionItem'))    return Promise.resolve([{ count: 0 }])
     return Promise.resolve(undefined) // CatalogModel FOR UPDATE — result unused
   })
@@ -96,6 +97,13 @@ function makeTx(overrides: Record<string, unknown> = {}) {
     mobileCaptureItem: {
       findMany:   vi.fn().mockResolvedValue([]),
       updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      count:      vi.fn().mockResolvedValue(0),
+    },
+    // 19B: no guest seller rows by default — $queryRaw's GuestSellerItem branch
+    // returns [] (nothing locked), so deleteMany/count below are simply never
+    // reached in the clean path.
+    guestSellerItem: {
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
       count:      vi.fn().mockResolvedValue(0),
     },
@@ -408,7 +416,7 @@ describe('18C: final pre-delete integrity guard catches observation/draft blocke
 
   it('final integrity check includes both new counts, unfiltered', () => {
     const src = readSrc('src/lib/actions/catalog.ts')
-    const idx = src.indexOf('const [ri, rc, rs, rsub, rp, rw, rae, raf, rfp, reo, rid, rmc]')
+    const idx = src.indexOf('const [ri, rc, rs, rsub, rp, rw, rae, raf, rfp, reo, rid, rmc, rgsi]')
     const block = src.slice(idx, src.indexOf('])', idx))
     expect(block).toContain('tx.externalMarketObservation.count({ where: { catalogModelId: dupeId } })')
     expect(block).toContain('tx.intakeDraft.count({ where: { catalogModelId: dupeId } })')

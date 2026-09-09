@@ -48,6 +48,7 @@ function makeTx(overrides: Record<string, unknown> = {}) {
       const text = Array.isArray(strings) ? strings.join('') : String(strings)
       if (text.includes('ExternalMarketObservation')) return Promise.resolve([])
       if (text.includes('MobileCaptureItem'))         return Promise.resolve([])
+      if (text.includes('GuestSellerItem'))  return Promise.resolve([])
       if (text.includes('CollectionItem'))             return Promise.resolve([{ count: 0 }])
       return Promise.resolve(undefined)
     }),
@@ -83,6 +84,13 @@ function makeTx(overrides: Record<string, unknown> = {}) {
     mobileCaptureItem: {
       findMany:   vi.fn().mockResolvedValue([]),
       updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      count:      vi.fn().mockResolvedValue(0),
+    },
+    // 19B: no guest seller rows by default — $queryRaw's GuestSellerItem branch
+    // returns [] (nothing locked), so deleteMany/count below are simply never
+    // reached in the clean path.
+    guestSellerItem: {
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
       count:      vi.fn().mockResolvedValue(0),
     },
@@ -293,7 +301,7 @@ describe('18B: final pre-delete integrity guard (34/10)', () => {
 
   it('final integrity check counts BuyerAlertFanout with NO status filter — every status counts against it, unlike the retarget step', () => {
     const src = readSrc('src/lib/actions/catalog.ts')
-    const idx = src.indexOf('const [ri, rc, rs, rsub, rp, rw, rae, raf, rfp, reo, rid, rmc]')
+    const idx = src.indexOf('const [ri, rc, rs, rsub, rp, rw, rae, raf, rfp, reo, rid, rmc, rgsi]')
     const block = src.slice(idx, src.indexOf('])', idx))
     expect(block).toContain('tx.buyerAlertFanout.count({ where: { catalogModelId: dupeId } })')
     expect(block).not.toMatch(/buyerAlertFanout\.count\(\{[^}]*status/)
@@ -301,7 +309,7 @@ describe('18B: final pre-delete integrity guard (34/10)', () => {
 
   it('final integrity check also counts buyerAlertEvent and catalogPhotoFingerprint', () => {
     const src = readSrc('src/lib/actions/catalog.ts')
-    const idx = src.indexOf('const [ri, rc, rs, rsub, rp, rw, rae, raf, rfp, reo, rid, rmc]')
+    const idx = src.indexOf('const [ri, rc, rs, rsub, rp, rw, rae, raf, rfp, reo, rid, rmc, rgsi]')
     const block = src.slice(idx, src.indexOf('])', idx))
     expect(block).toContain('tx.buyerAlertEvent.count({ where: { catalogModelId: dupeId } })')
     expect(block).toContain('tx.catalogPhotoFingerprint.count({ where: { catalogModelId: dupeId } })')

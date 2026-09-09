@@ -31,6 +31,7 @@ model CatalogModel {
   buyerAlertEvents     BuyerAlertEvent[]
   buyerAlertFanouts    BuyerAlertFanout[]
   intakeDrafts         IntakeDraft[]
+  guestSellerItems     GuestSellerItem[]
 
   @@index([brand])
   @@index([name])
@@ -1240,6 +1241,54 @@ model MobileCaptureItem {
   payloadFingerprint String
   createdAt          DateTime             @default(now())
   updatedAt          DateTime             @updatedAt
+
+  @@unique([sessionId, clientToken])
+  @@unique([sessionId, catalogModelId])
+  @@index([sessionId])
+}
+
+// 19B: anonymous seller capture session — deliberately a SEPARATE model from
+// MobileCaptureSession, not a nullable-customerProfileId variant of it. Every
+// existing MobileCapture ownership query is scoped by customerProfileId; making
+// that nullable would force every one of those queries (and the 18A-18D
+// CatalogModel-merge reconciliation logic, which reasons about "the customer
+// actively editing this session") to branch on guest-vs-authenticated. Keeping
+// guest state in its own table means the authenticated invariants are never
+// touched, and 19C's future claim step is a well-defined conversion into
+// MobileCaptureSession/Item rather than a permanent merger of two identity
+// models. No status field — "active" is simply expiresAt > now; there is no
+// "claimed" state in 19B since claim isn't implemented yet (19C).
+model GuestSellerSession {
+  id        String            @id @default(cuid())
+  tokenHash String            @unique
+  expiresAt DateTime
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+  items     GuestSellerItem[]
+
+  @@index([expiresAt])
+}
+
+// 19B: catalogModelId is REQUIRED (unlike a "pending recognition" design) —
+// only an explicitly-confirmed CatalogModel is ever persisted. Recognition
+// candidates live in client state only; nothing is written until the seller
+// picks one. This keeps every row immediately claimable into MobileCaptureItem
+// with no "what does an unresolved guest row mean" question for 19C. No PII
+// field exists anywhere on this model by design.
+model GuestSellerItem {
+  id                 String             @id @default(cuid())
+  sessionId          String
+  session            GuestSellerSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  catalogModelId     String
+  catalogModel       CatalogModel       @relation(fields: [catalogModelId], references: [id])
+  quantity           Int                @default(1)
+  condition          String?
+  notes              String?
+  saleTypePreference String?
+  clientToken        String
+  payloadFingerprint String
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
 
   @@unique([sessionId, clientToken])
   @@unique([sessionId, catalogModelId])
