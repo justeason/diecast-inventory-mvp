@@ -168,7 +168,7 @@ describe('CatalogActions.tsx: reuses authoritative mutations only, no new engine
   })
 
   it('ownership is never a destructive toggle — the owned state renders a Link to manage the item, never a remove/delete form', () => {
-    const ownedIdx = src.indexOf('✓ Own')
+    const ownedIdx = src.indexOf('Owned{ownedQuantity')
     const blockStart = src.lastIndexOf('collectionItemId && (', ownedIdx)
     const block = src.slice(blockStart, ownedIdx + 40)
     expect(block).toContain('<Link')
@@ -206,7 +206,7 @@ describe('CatalogActions.tsx: reuses authoritative mutations only, no new engine
   it('every action carries a model-scoped accessible label, not an icon-only control (Want/Unwant/Add-to-Collection via PendingActionButton\'s ariaLabel prop, the rest as plain aria-label)', () => {
     expect(src).toContain('ariaLabel={`Want ${modelName}`}')
     expect(src).toContain('ariaLabel={`Remove ${modelName} from Wanted`}')
-    expect(src).toContain('ariaLabel={`Add ${modelName} to Collection`}')
+    expect(src).toContain('ariaLabel={`I Own It — ${modelName}`}')
     expect(src).toContain('aria-label={`View owned ${modelName}`}')
     expect(src).toContain('aria-label={`Sell one ${modelName}`}')
   })

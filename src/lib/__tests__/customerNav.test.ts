@@ -6,12 +6,12 @@ import {
 } from '@/lib/customerNav'
 
 describe('CUSTOMER_PRIMARY_NAV — exactly the five stable concepts (Part 2/28/29)', () => {
-  it('has exactly five entries: Shop, Sell, Community, Order Status (Account is handled separately, not a plain link)', () => {
-    expect(CUSTOMER_PRIMARY_NAV.map((i) => i.label)).toEqual(['Shop', 'Sell', 'Community', 'Order Status'])
+  it('has exactly four entries: Market, Sell, Community, Order Status (Account is handled separately, not a plain link)', () => {
+    expect(CUSTOMER_PRIMARY_NAV.map((i) => i.label)).toEqual(['Market', 'Sell', 'Community', 'Order Status'])
   })
 
-  it('Shop points to /browse (the actual search/filter/buy page, not /market)', () => {
-    expect(CUSTOMER_PRIMARY_NAV.find((i) => i.key === 'shop')?.href).toBe('/browse')
+  it('20A: Market points to /catalog — the unified CatalogModel-centric discovery surface, not /browse', () => {
+    expect(CUSTOMER_PRIMARY_NAV.find((i) => i.key === 'market')?.href).toBe('/catalog')
   })
 
   it('19C: Sell points to the frictionless, no-login-required /sell entry point — /account/sell remains a separate authenticated history route, not the primary nav destination', () => {
@@ -93,12 +93,13 @@ describe('CUSTOMER_ACCOUNT_ANONYMOUS_HREF — Part 7 (16A) / Part B/2 (16B)', ()
 })
 
 describe('getCustomerPrimarySection — active-state mapping (Part 17/31)', () => {
-  it('maps the shop routes correctly', () => {
+  it('20A: maps the market routes correctly — /catalog (primary), plus /browse and /market (still separate, still grouped under the same tab)', () => {
     // getCustomerPrimarySection receives a pathname (as Next's usePathname() returns
     // it — no query string) — CategoryNav's own /browse?brand=... links resolve to
     // pathname '/browse' by the time this function ever sees them.
-    expect(getCustomerPrimarySection('/browse')).toBe('shop')
-    expect(getCustomerPrimarySection('/market')).toBe('shop')
+    expect(getCustomerPrimarySection('/catalog')).toBe('market')
+    expect(getCustomerPrimarySection('/browse')).toBe('market')
+    expect(getCustomerPrimarySection('/market')).toBe('market')
   })
 
   it('maps /account/sell/* to Sell, not Account (starting a sale highlights Sell)', () => {

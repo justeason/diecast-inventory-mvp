@@ -107,8 +107,8 @@ describe('16L: CaptureCandidateActions mirrors CatalogModelActions domain semant
     expect(actionsCompSrc).toContain('/account/collection/${collectionItemId}/sell')
     expect(actionsCompSrc).toContain('/sell?catalogId=${encodeURIComponent(catalogModelId)}')
   })
-  it('owned display uses "✓ Own N" with N from ownedQuantity, same as CatalogModelActions', () => {
-    expect(actionsCompSrc).toContain("✓ Own{ownedQuantity !== null ? ` ${ownedQuantity}` : ''}")
+  it('20A: owned display uses "Owned N" with N from ownedQuantity, same as CatalogModelActions', () => {
+    expect(actionsCompSrc).toContain("Owned{ownedQuantity !== null ? ` ${ownedQuantity}` : ''}")
   })
   it('uses customer language only — no CatalogModel/CollectionItem/SellerSubmission literal text', () => {
     for (const src of [actionsCompSrc, componentSrc]) {
@@ -172,7 +172,7 @@ describe('16L/16M: anonymous candidate actions preserve intent through sign-in, 
 
 // ── Part G/H: Own — not owned / owned ────────────────────────────────────────────
 
-describe('16L: Add to Collection ("I Own This") reuses createCollectionItem flow unmodified', () => {
+describe('16L/20A: "I Own It" reuses createCollectionItem flow unmodified', () => {
   it('not-owned branch submits addToCollectionAction.bind(null, catalogModelId) — same P2002/uniqueness path as /catalog/[id]', () => {
     expect(actionsCompSrc).toContain('addToCollectionAction.bind(null, catalogModelId)')
   })
@@ -343,12 +343,12 @@ describe('16L: accessibility of capture candidate actions', () => {
   it('every action has a model-specific aria-label', () => {
     expect(actionsCompSrc).toContain('ariaLabel={`Want ${modelName}`}')
     expect(actionsCompSrc).toContain('ariaLabel={`Remove ${modelName} from Wanted`}')
-    expect(actionsCompSrc).toContain('ariaLabel={`Add ${modelName} to Collection`}')
+    expect(actionsCompSrc).toContain('ariaLabel={`I Own It — ${modelName}`}')
     expect(actionsCompSrc).toContain('aria-label={`View owned ${modelName}`}')
     expect(actionsCompSrc).toContain('aria-label={`Sell one ${modelName}`}')
   })
   it('owned quantity is rendered as readable text, not color-only', () => {
-    expect(actionsCompSrc).toMatch(/✓ Own\{ownedQuantity/)
+    expect(actionsCompSrc).toMatch(/Owned\{ownedQuantity/)
   })
   it('focus-visible styling present on all custom buttons/links', () => {
     expect(actionsCompSrc).toContain('focus-visible:outline')

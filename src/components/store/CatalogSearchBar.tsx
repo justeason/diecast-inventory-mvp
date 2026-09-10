@@ -4,6 +4,7 @@ type Props = {
   q?: string
   brand?: string
   year?: string
+  availableNow?: boolean
   brands: string[]
 }
 
@@ -12,9 +13,11 @@ type Props = {
 // /browse's own bar: Series/Scale are CatalogModel identity, but their cardinality
 // wasn't verifiable (empty dev dataset) and Series is flagged by spec as a likely
 // high-cardinality risk, so both are text-searchable via `q` only, not dropdowns.
-export function CatalogSearchBar({ q, brand, year, brands }: Props) {
-  const isActive = !!(q || brand || year)
-  const formKey = [q, brand, year].join('|')
+// 20A: Available Now added as a plain checkbox — submitting the form always
+// resets to page 1 (no hidden `page` field), matching every other filter change.
+export function CatalogSearchBar({ q, brand, year, availableNow, brands }: Props) {
+  const isActive = !!(q || brand || year || availableNow)
+  const formKey = [q, brand, year, availableNow].join('|')
 
   return (
     <form key={formKey} method="GET" action="/catalog" className="flex flex-wrap items-end gap-3 mb-8">
@@ -66,6 +69,20 @@ export function CatalogSearchBar({ q, brand, year, brands }: Props) {
           defaultValue={year ?? ''}
           className="w-24 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
         />
+      </div>
+
+      <div className="flex items-center gap-2 pb-2">
+        <input
+          id="catalog-available-now"
+          type="checkbox"
+          name="availableNow"
+          value="1"
+          defaultChecked={availableNow}
+          className="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-900"
+        />
+        <label htmlFor="catalog-available-now" className="text-sm text-gray-700">
+          Available Now
+        </label>
       </div>
 
       <button

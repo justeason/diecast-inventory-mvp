@@ -220,7 +220,7 @@ describe('16H: CatalogModelActions reuses the exact 16F/16G authoritative action
   })
 
   it('ownership is never a destructive toggle — the owned state renders a Link to Collection detail, never a delete form', () => {
-    const idx = actionsRowSrc.indexOf('✓ Own')
+    const idx = actionsRowSrc.indexOf('Owned{ownedQuantity')
     const blockStart = actionsRowSrc.lastIndexOf('collectionItemId ? (', idx)
     const block = actionsRowSrc.slice(blockStart, idx + 40)
     expect(block).toContain('<Link')
@@ -240,7 +240,7 @@ describe('16H: CatalogModelActions reuses the exact 16F/16G authoritative action
   it('every action carries a model-scoped accessible label', () => {
     expect(actionsRowSrc).toContain('ariaLabel={`Want ${modelName}`}')
     expect(actionsRowSrc).toContain('ariaLabel={`Remove ${modelName} from Wanted`}')
-    expect(actionsRowSrc).toContain('ariaLabel={`Add ${modelName} to Collection`}')
+    expect(actionsRowSrc).toContain('ariaLabel={`I Own It — ${modelName}`}')
     expect(actionsRowSrc).toContain('aria-label={`View owned ${modelName}`}')
     expect(actionsRowSrc).toContain('aria-label={`Sell one ${modelName}`}')
   })

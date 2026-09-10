@@ -60,18 +60,19 @@ export function CatalogModelActions({
         </form>
       )}
 
-      {/* Collection */}
+      {/* Own — 20A: customer-facing wording is "I Own It" / "Owned N", never
+          "Add to Collection" (Collection remains the internal/nav term only). */}
       {!isAuthenticated ? (
         <Link href={ownHref} aria-label={`Sign in to add ${modelName} to your collection`} className={btnCls}>
-          + Add to Collection
+          I Own It
         </Link>
       ) : collectionItemId ? (
         <Link href={`/account/collection/${collectionItemId}`} aria-label={`View owned ${modelName}`} className={ownedCls}>
-          ✓ Own{ownedQuantity !== null ? ` ${ownedQuantity}` : ''}
+          Owned{ownedQuantity !== null ? ` ${ownedQuantity}` : ''}
         </Link>
       ) : (
         <form action={addToCollectionAction.bind(null, catalogModelId)}>
-          <PendingActionButton label="+ Add to Collection" pendingLabel="Adding…" ariaLabel={`Add ${modelName} to Collection`} className={btnCls} />
+          <PendingActionButton label="I Own It" pendingLabel="Adding…" ariaLabel={`I Own It — ${modelName}`} className={btnCls} />
         </form>
       )}
 

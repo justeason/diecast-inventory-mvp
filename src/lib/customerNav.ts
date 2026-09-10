@@ -2,7 +2,7 @@
 // plus the Account grouping. No separate drifting arrays for desktop/mobile/
 // authenticated/anonymous (Part 26/27); CustomerHeader.tsx renders all of it.
 
-export type CustomerNavKey = 'shop' | 'sell' | 'community' | 'orderStatus' | 'account'
+export type CustomerNavKey = 'market' | 'sell' | 'community' | 'orderStatus' | 'account'
 
 export type CustomerNavItem = { key: CustomerNavKey; label: string; href: string }
 
@@ -11,11 +11,14 @@ export type CustomerNavItem = { key: CustomerNavKey; label: string; href: string
 // here — see CUSTOMER_ACCOUNT_LINKS below for where they live now.
 //
 // Route choices (Part A inspection):
-//   Shop         -> /browse   (the actual search/filter/buy page; CategoryNav's
-//                    brand/category links already exclusively target /browse — the
-//                    canonical shopping entry point. /market is a secondary
-//                    merchandising/discovery page, left reachable by direct link,
-//                    not primary nav; its domain logic is untouched.)
+//   Market       -> /catalog (20A: the unified CatalogModel-centric discovery
+//                    surface — every model, available or not, one continuous
+//                    grid. Was "Shop" -> /browse; /browse remains a separate,
+//                    fully functional Listing-centric purchase grid, still
+//                    directly linkable, just no longer the primary nav
+//                    destination. /market is ALSO a separate, unrenamed page —
+//                    the already-shipped Trending/Fast Movers/Recently Sold
+//                    merchandising surface — never repurposed or merged here.)
 //   Sell         -> /sell (19C: the camera-first, no-login-required start-selling
 //                    entry point — anonymous visitors build a batch immediately,
 //                    no login wall. /account/sell remains a SEPARATE, distinct
@@ -27,7 +30,7 @@ export type CustomerNavItem = { key: CustomerNavKey; label: string; href: string
 //                    a private community PROFILE SETTINGS page, not the public feed)
 //   Order Status -> /order-status (unchanged, already public)
 export const CUSTOMER_PRIMARY_NAV: CustomerNavItem[] = [
-  { key: 'shop', label: 'Shop', href: '/browse' },
+  { key: 'market', label: 'Market', href: '/catalog' },
   { key: 'sell', label: 'Sell', href: '/sell' },
   { key: 'community', label: 'Community', href: '/community' },
   { key: 'orderStatus', label: 'Order Status', href: '/order-status' },
@@ -76,7 +79,7 @@ export const CUSTOMER_ACCOUNT_ANONYMOUS_HREF = '/account'
 const SECTION_PREFIXES: { key: CustomerNavKey; prefixes: string[] }[] = [
   { key: 'sell', prefixes: ['/sell', '/account/sell'] },
   { key: 'account', prefixes: ['/account'] },
-  { key: 'shop', prefixes: ['/browse', '/market'] },
+  { key: 'market', prefixes: ['/catalog', '/browse', '/market'] },
   { key: 'community', prefixes: ['/community'] },
   { key: 'orderStatus', prefixes: ['/order-status'] },
 ]

@@ -217,8 +217,8 @@ describe('16G Final: regression — Want/Collection/Sell/Buy mutation semantics 
     expect(wantFnSrc).toContain('await addToWantedList(null, formData)')
   })
 
-  it('19C: Own N link is unchanged; Sell One routing now goes to /sell?catalogId (frictionless, no login wall) when unrecorded', () => {
-    expect(actionsSrc).toContain('✓ Own')
+  it('20A: Owned N link wording updated; Sell One routing still goes to /sell?catalogId (frictionless, no login wall) when unrecorded', () => {
+    expect(actionsSrc).toContain('Owned{ownedQuantity')
     expect(actionsSrc).toContain('/account/collection/${collectionItemId}/sell')
     expect(actionsSrc).toContain('/sell?catalogId=${encodeURIComponent(catalogModelId)}')
   })
@@ -307,7 +307,7 @@ describe('16G Final Reconciliation: accessible-name plumbing and PendingActionBu
     const addFormIdx = actionsSrc.indexOf('addToCollectionAction.bind')
     const addBlock = actionsSrc.slice(addFormIdx - 50, addFormIdx + 350)
     expect(addBlock).toContain('PendingActionButton')
-    expect(addBlock).toContain('ariaLabel={`Add ${modelName} to Collection`}')
+    expect(addBlock).toContain('ariaLabel={`I Own It — ${modelName}`}')
   })
 
   it('PendingActionButton actually forwards its ariaLabel prop to the real DOM aria-label attribute', () => {
@@ -347,7 +347,7 @@ describe('16G Final Reconciliation: authenticated relationship states can still 
     const fnSrc = actionsSrc.slice(fnIdx, fnEnd)
     expect(fnSrc).not.toContain('♥ Wanted')
     expect(fnSrc).not.toContain('♡ Want')
-    expect(fnSrc).not.toContain('✓ Own')
+    expect(fnSrc).not.toContain('Owned{')
   })
 })
 

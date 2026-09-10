@@ -158,12 +158,12 @@ describe('AccountNav: still exactly Overview/Orders/Collection/Wanted & Alerts/S
   })
 })
 
-describe('Global nav: still exactly Shop/Sell/Community/Order Status — Account handled separately, no new top-level item', () => {
-  it('CUSTOMER_PRIMARY_NAV has exactly 4 entries, unchanged', () => {
+describe('Global nav: still exactly Market/Sell/Community/Order Status — Account handled separately, no new top-level item', () => {
+  it('CUSTOMER_PRIMARY_NAV has exactly 4 entries — 20A renamed "shop" to "market", count unchanged', () => {
     const src = readSrc('src/lib/customerNav.ts')
     const arrayMatch = src.match(/CUSTOMER_PRIMARY_NAV: CustomerNavItem\[\] = \[([\s\S]*?)\]/)
     const keys = [...(arrayMatch![1].matchAll(/key: '(\w+)'/g))].map((m) => m[1])
-    expect(keys).toEqual(['shop', 'sell', 'community', 'orderStatus'])
+    expect(keys).toEqual(['market', 'sell', 'community', 'orderStatus'])
   })
 })
 

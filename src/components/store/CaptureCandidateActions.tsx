@@ -72,18 +72,19 @@ export function CaptureCandidateActions({ catalogModelId, modelName, initialRela
         </form>
       )}
 
-      {/* Collection */}
+      {/* Own — 20A: customer-facing wording is "I Own It" / "Owned N", never
+          "Add to Collection". */}
       {!isAuthenticated ? (
         <Link href={ownHref} aria-label={`Sign in to add ${modelName} to your collection`} className={btnCls}>
-          ＋ I Own This
+          I Own It
         </Link>
       ) : collectionItemId ? (
         <Link href={`/account/collection/${collectionItemId}`} aria-label={`View owned ${modelName}`} className={ownedCls}>
-          ✓ Own{ownedQuantity !== null ? ` ${ownedQuantity}` : ''}
+          Owned{ownedQuantity !== null ? ` ${ownedQuantity}` : ''}
         </Link>
       ) : (
         <form action={addToCollectionAction.bind(null, catalogModelId)}>
-          <PendingActionButton label="＋ I Own This" pendingLabel="Adding…" ariaLabel={`Add ${modelName} to Collection`} className={btnCls} />
+          <PendingActionButton label="I Own It" pendingLabel="Adding…" ariaLabel={`I Own It — ${modelName}`} className={btnCls} />
         </form>
       )}
 

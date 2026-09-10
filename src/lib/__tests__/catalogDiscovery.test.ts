@@ -31,11 +31,30 @@ import { prisma } from '@/lib/prisma'
 import { getCatalogDiscovery, CATALOG_PAGE_SIZE } from '@/lib/catalogDiscoveryQuery'
 import { eligibleListingWhere } from '@/lib/listingEligibility'
 
+// 20A: default (no q/availableNow) mode issues TWO non-distinct findMany calls
+// (available tier, then unavailable tier) instead of one. Existing tests that
+// don't care about tiering just want modelRows to appear exactly once — so the
+// FIRST non-distinct call gets modelRows, any subsequent one gets []. Search
+// mode and availableNow mode only ever make one non-distinct call, so they are
+// completely unaffected by this counter.
 function mockPage(modelRows: unknown[], brandRows: { brand: string }[] = [{ brand: 'Hot Wheels' }]) {
+  let nonDistinctCalls = 0
   ;(prisma.catalogModel.findMany as Mock).mockImplementation((args: { distinct?: string[] }) => {
     if (args.distinct) return Promise.resolve(brandRows)
-    return Promise.resolve(modelRows)
+    nonDistinctCalls += 1
+    return Promise.resolve(nonDistinctCalls === 1 ? modelRows : [])
   })
+}
+
+// 20A: identifies the count() call carrying the plain filter where-clause
+// (brand/year/q), unaffected by the new availability-tiering wrapper — i.e.
+// the one whose where does NOT contain an `items` relation filter. In two-tier
+// default mode there are two count() calls (available-tier, then base); in
+// search/availableNow mode there is exactly one, which this also finds
+// correctly since it has no `items` key either way in the relevant case.
+function baseCountWhere(mock: Mock, invocationIndex = 0): WhereNode {
+  const baseCalls = mock.mock.calls.filter((c) => !JSON.stringify(c[0].where).includes('"items"'))
+  return baseCalls[invocationIndex][0].where
 }
 
 // Evaluates a Prisma-shaped where clause (AND/OR/contains/equality leaves only —
@@ -91,7 +110,7 @@ describe('16J: eligibility predicate — no CatalogModel status/public field exi
 
     await getCatalogDiscovery({})
 
-    const countWhere = (prisma.catalogModel.count as Mock).mock.calls[0][0].where
+    const countWhere = baseCountWhere(prisma.catalogModel.count as Mock)
     expect(countWhere).toEqual({})
   })
 })
@@ -236,7 +255,7 @@ describe('16J: search — case-insensitive text match across identity fields onl
 
     await getCatalogDiscovery({ q: '   ' })
 
-    const where = (prisma.catalogModel.count as Mock).mock.calls[0][0].where
+    const where = baseCountWhere(prisma.catalogModel.count as Mock)
     expect(where).toEqual({})
   })
 
@@ -407,7 +426,7 @@ describe('16J: structured filters — brand and year only', () => {
 
     await getCatalogDiscovery({ brand: 'Hot Wheels' })
 
-    const where = (prisma.catalogModel.count as Mock).mock.calls[0][0].where
+    const where = baseCountWhere(prisma.catalogModel.count as Mock)
     expect(where.AND).toContainEqual({ brand: 'Hot Wheels' })
   })
 
@@ -417,7 +436,7 @@ describe('16J: structured filters — brand and year only', () => {
 
     await getCatalogDiscovery({ year: '2022' })
 
-    const where = (prisma.catalogModel.count as Mock).mock.calls[0][0].where
+    const where = baseCountWhere(prisma.catalogModel.count as Mock)
     expect(where.AND).toContainEqual({ year: 2022 })
   })
 
@@ -426,12 +445,11 @@ describe('16J: structured filters — brand and year only', () => {
     ;(prisma.catalogModel.count as Mock).mockResolvedValue(0)
 
     await getCatalogDiscovery({ year: 'abcd' })
-    let where = (prisma.catalogModel.count as Mock).mock.calls[0][0].where
-    expect(where).toEqual({})
+    expect(baseCountWhere(prisma.catalogModel.count as Mock, 0)).toEqual({})
 
+    ;(prisma.catalogModel.count as Mock).mockClear()
     await getCatalogDiscovery({ year: '99' })
-    where = (prisma.catalogModel.count as Mock).mock.calls[1][0].where
-    expect(where).toEqual({})
+    expect(baseCountWhere(prisma.catalogModel.count as Mock, 0)).toEqual({})
   })
 
   it('q + brand + year combine as AND', async () => {
@@ -558,35 +576,44 @@ describe('16J: CatalogModelCard — one CatalogModel per result, not a Listing/p
 
 // ── Part R: no relationship state on results (documented decision) ─────────────
 
-describe('16J: no Want/Own/Sell on search results (Part R baseline, not extended)', () => {
-  it('CatalogModelCard has no Want/Collection/Sell actions', () => {
+// 20A supersedes Part R: the unified Market card now DOES carry Want/Own/Sell,
+// batched via the same relationship helper /browse and /catalog/[id] already
+// use — never per-card, never queried for anonymous visitors (see the
+// dedicated relationship-batching describe block further down).
+describe('20A: CatalogModelCard carries Want/Own/Sell, reusing existing mutations only', () => {
+  it('CatalogModelCard reuses the existing wantAction/unwantAction/addToCollectionAction — no new mutation engine', () => {
     const cardSrc = readSrc('src/components/store/CatalogModelCard.tsx')
-    expect(cardSrc).not.toMatch(/wantAction|unwantAction|addToCollectionAction|CatalogModelActions|CatalogActions/)
+    expect(cardSrc).toContain("import { wantAction, unwantAction, addToCollectionAction } from '@/lib/actions/catalogModelDomainActions'")
   })
 
-  it('getCatalogDiscovery/page.tsx never calls getCatalogRelationshipState — no private per-visitor query on discovery', () => {
+  it('getCatalogDiscoveryQuery itself never calls getCatalogRelationshipState/getBuyerSession — relationship state is the PAGE\'s job, not the query layer\'s', () => {
     const querySrc = readSrc('src/lib/catalogDiscoveryQuery.ts')
-    const pageSrc = readSrc('src/app/(store)/catalog/page.tsx')
     expect(querySrc).not.toMatch(/getCatalogRelationshipState|getBuyerSession/)
-    expect(pageSrc).not.toMatch(/getCatalogRelationshipState|getBuyerSession/)
+  })
+
+  it('/catalog page.tsx now DOES call both — gated on session, batched by id list, exactly like /browse and /catalog/[id]', () => {
+    const pageSrc = readSrc('src/app/(store)/catalog/page.tsx')
+    expect(pageSrc).toContain('getBuyerSession()')
+    expect(pageSrc).toContain('getCatalogRelationshipState(session.profileId, modelIds)')
   })
 })
 
 // ── Part V/BD: availability label semantics ─────────────────────────────────────
 
-describe('16J: availability label semantics (0 / 1 / N, never $0)', () => {
+describe('20A: availability label semantics — "N available · from $X.XX" / "Currently unavailable", never Sold Out', () => {
   const cardSrc = readSrc('src/components/store/CatalogModelCard.tsx')
 
-  it('0 → "No copies currently available"', () => {
-    expect(cardSrc).toContain("'No copies currently available'")
+  it('0 → "Currently unavailable" — never "Sold out"/"No copies currently available"/"Out of stock"', () => {
+    expect(cardSrc).toContain("'Currently unavailable'")
+    expect(cardSrc).not.toMatch(/Sold out|No copies currently available|Out of stock/i)
   })
 
-  it('1 → singular "copy", N → plural "copies"', () => {
-    expect(cardSrc).toContain("availability.count === 1 ? 'copy' : 'copies'")
-  })
-
-  it('price label only renders when lowestPrice is non-null, never a fabricated $0', () => {
+  it('available → "N available", with "· from $X.XX" appended only when a price exists', () => {
+    expect(cardSrc).toContain("`${availability.count} available")
     expect(cardSrc).toContain('availability.lowestPrice !== null')
+  })
+
+  it('defensive available-but-no-price case renders "N available" with no fabricated price', () => {
     expect(cardSrc).not.toMatch(/lowestPrice\s*\?\?\s*0/)
   })
 
@@ -608,7 +635,7 @@ describe('16J: image behavior — CatalogModel photo only, existing placeholder 
 
   it('photoUrl comes from CatalogModel.photos (the existing 16H model-photo relation), not a Listing/CollectionItem/admin image', () => {
     const querySrc = readSrc('src/lib/catalogDiscoveryQuery.ts')
-    expect(querySrc).toContain('photos: { take: 1, orderBy: { sortOrder: \'asc\' }, select: { url: true } }')
+    expect(querySrc).toContain('photos: { take: 1, orderBy: { sortOrder: \'asc\' as const }, select: { url: true } }')
     expect(querySrc).not.toMatch(/CollectionItem|intakeDraft|IntakeDraft/i)
   })
 
@@ -667,11 +694,10 @@ describe('16J: contextual linkage between /browse, /catalog, and /catalog/[id]',
 
 // ── Part AD: no new primary nav item ─────────────────────────────────────────────
 
-describe('16J: no new primary nav item', () => {
-  it('customerNav.ts primary nav is unchanged (still exactly Shop/Sell/Community/Order Status)', () => {
+describe('20A: /catalog is now the primary nav destination, still no SECOND catalog nav item', () => {
+  it('customerNav.ts primary nav is still exactly 4 entries — Market/Sell/Community/Order Status', () => {
     const navSrc = readSrc('src/lib/customerNav.ts')
-    expect(navSrc).toContain("{ key: 'shop', label: 'Shop', href: '/browse' }")
-    expect(navSrc).not.toMatch(/label: 'Catalog'/)
+    expect(navSrc).toContain("{ key: 'market', label: 'Market', href: '/catalog' }")
     const navMatches = [...navSrc.matchAll(/CUSTOMER_PRIMARY_NAV: CustomerNavItem\[\] = \[([\s\S]*?)\]/g)]
     expect(navMatches[0][1].match(/key:/g)?.length).toBe(4)
   })
@@ -689,9 +715,9 @@ describe('16J: customer language avoids the internal term "CatalogModel"', () =>
     }
   })
 
-  it('page uses "Model Catalog" / "Explore" customer-facing language', () => {
+  it('20A: page uses "Market" customer-facing heading', () => {
     const pageSrc = readSrc('src/app/(store)/catalog/page.tsx')
-    expect(pageSrc).toContain('Model Catalog')
+    expect(pageSrc).toContain('Market')
   })
 })
 
@@ -711,15 +737,15 @@ describe('16J: 16H Collection/Wanted linkage to /catalog/[id] is unchanged', () 
 
 // ── Part BF/BG/T: anonymous & authenticated behavior ────────────────────────────
 
-describe('16J: anonymous and authenticated discovery use the identical public query', () => {
-  it('/catalog page.tsx never imports getBuyerSession — no session branching on discovery', () => {
-    const pageSrc = readSrc('src/app/(store)/catalog/page.tsx')
-    expect(pageSrc).not.toContain('getBuyerSession')
-  })
-
-  it('getCatalogDiscovery has no session/profileId parameter', () => {
+describe('20A: anonymous and authenticated discovery use the identical PUBLIC catalog query — only the relationship overlay differs', () => {
+  it('getCatalogDiscovery itself has no session/profileId parameter — the query layer stays public/session-agnostic', () => {
     const querySrc = readSrc('src/lib/catalogDiscoveryQuery.ts')
     expect(querySrc).not.toMatch(/profileId/)
+  })
+
+  it('the page branches session only to decide whether to run the relationship overlay — never to change getCatalogDiscovery\'s own arguments', () => {
+    const pageSrc = readSrc('src/app/(store)/catalog/page.tsx')
+    expect(pageSrc).toContain('session ? await getCatalogRelationshipState(session.profileId, modelIds) : null')
   })
 })
 
@@ -808,11 +834,22 @@ describe('16J: accessibility', () => {
     expect(pageSrc).toContain('aria-labelledby="catalog-results-heading"')
   })
 
-  it('each result card is a single semantic link, not nested interactive elements', () => {
-    const linkOpenCount = (cardSrc.match(/<Link\b/g) ?? []).length
-    const buttonCount = (cardSrc.match(/<button\b/g) ?? []).length
-    expect(linkOpenCount).toBe(1)
-    expect(buttonCount).toBe(0)
+  it('20A: model link, availability link, and Want/Own/Sell actions are SIBLINGS — never nested inside one another (no <a><button></a>)', () => {
+    // The model-identity <Link> closes (via its own wrapping <div>) before the
+    // availability block and action row begin — proven by locating the model
+    // Link's own closing tag ahead of the availability/action markup, not by a
+    // raw single-Link-per-card count (20A intentionally has multiple).
+    const modelLinkIdx = cardSrc.indexOf('href={`/catalog/${model.id}`}')
+    const modelLinkCloseIdx = cardSrc.indexOf('</Link>', modelLinkIdx)
+    const availabilityIdx = cardSrc.indexOf('hasAvailability ?')
+    const actionRowIdx = cardSrc.indexOf('className={actionRowCls}')
+    expect(modelLinkCloseIdx).toBeGreaterThan(-1)
+    expect(availabilityIdx).toBeGreaterThan(modelLinkCloseIdx)
+    expect(actionRowIdx).toBeGreaterThan(modelLinkCloseIdx)
+    // No literal <button> nested directly inside an <a>/<Link> in this file —
+    // PendingActionButton's own <button> lives in a separate component file,
+    // always inside a sibling <form>, never inside this card's model Link.
+    expect(stripComments(cardSrc)).not.toContain('<button')
   })
 
   it('the card image has meaningful alt text (model name)', () => {
@@ -820,7 +857,7 @@ describe('16J: accessibility', () => {
   })
 
   it('availability is rendered as text, not color-only', () => {
-    expect(cardSrc).toContain('{availabilityLabel}')
+    expect(cardSrc).toContain('{availabilityText}')
   })
 
   it('pagination links have clear directional labels (reused shared Pagination component)', () => {
@@ -834,11 +871,11 @@ describe('16J: accessibility', () => {
 // ── Read-only render (Part AU) ────────────────────────────────────────────────────
 
 describe('16J: discovery performs no mutation', () => {
-  it('no create/update/delete/upsert anywhere in the query module or page', () => {
+  it('no Prisma create/update/delete/upsert anywhere in the query module or page — 20A\'s page.tsx does use plain URLSearchParams.delete() to build a "clear filter" link, which is not a Prisma call', () => {
     const querySrc = readSrc('src/lib/catalogDiscoveryQuery.ts')
     const pageSrc = readSrc('src/app/(store)/catalog/page.tsx')
     for (const src of [querySrc, pageSrc]) {
-      expect(src).not.toMatch(/\.(create|update|delete|upsert|createMany|updateMany|deleteMany)\(/)
+      expect(src).not.toMatch(/prisma\.\w+\.(create|update|delete|upsert|createMany|updateMany|deleteMany)\(/)
     }
   })
 })

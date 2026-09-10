@@ -14,3 +14,15 @@ export function eligibleListingWhere(catalogId: string | string[]): Prisma.Listi
     },
   }
 }
+
+// 20A: the SAME eligibility rule, expressed from ItemInstance's own side (no
+// catalogId scoping needed — used inside a CatalogModel.items relation filter,
+// where Prisma already scopes to the parent row). Used with `some`/`none` to
+// ask "does this CatalogModel have >=1 eligible Listing" without a raw EXISTS
+// query and without fetching any Listing rows.
+export function eligibleItemInstanceWhere(): Prisma.ItemInstanceWhereInput {
+  return {
+    status: 'available',
+    listing: { status: 'active' },
+  }
+}

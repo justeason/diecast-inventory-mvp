@@ -51,7 +51,7 @@ function SecondaryActions({
           aria-label={`Sign in to add ${modelName} to your collection`}
           className={itemCls}
         >
-          + Add to Collection
+          I Own It
         </Link>
         <Link href={sellHref} aria-label={`Sell one ${modelName}`} className={itemCls}>
           Sell One
@@ -64,9 +64,9 @@ function SecondaryActions({
       {!collectionItemId && (
         <form action={addToCollectionAction.bind(null, catalogModelId)}>
           <PendingActionButton
-            label="+ Add to Collection"
+            label="I Own It"
             pendingLabel="Adding…"
-            ariaLabel={`Add ${modelName} to Collection`}
+            ariaLabel={`I Own It — ${modelName}`}
             className={itemCls}
           />
         </form>
@@ -157,7 +157,7 @@ export function CatalogActions({
             aria-label={`View owned ${modelName}`}
             className="text-xs font-medium text-green-700 hover:text-green-800 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-900 rounded"
           >
-            ✓ Own{ownedQuantity !== null ? ` ${ownedQuantity}` : ''}
+            Owned{ownedQuantity !== null ? ` ${ownedQuantity}` : ''}
           </Link>
         )}
       </div>
