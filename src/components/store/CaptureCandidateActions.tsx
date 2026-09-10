@@ -42,15 +42,18 @@ export function CaptureCandidateActions({ catalogModelId, modelName, initialRela
   const wantedBtnCls = 'rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-100 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-900'
   const ownedCls = 'rounded-md border border-green-200 bg-green-50 px-3 py-1.5 text-xs font-medium text-green-700 hover:bg-green-100 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-900'
 
+  // 19C: generic Sell One now routes to the frictionless /sell?catalogId
+  // preselection flow for both anonymous and authenticated visitors — no
+  // re-recognition needed, this candidate's model is already known. Want/I Own
+  // It behavior is unchanged.
   const sellHref = collectionItemId
     ? `/account/collection/${collectionItemId}/sell`
-    : `/account/sell/new?catalogId=${encodeURIComponent(catalogModelId)}`
+    : `/sell?catalogId=${encodeURIComponent(catalogModelId)}`
 
   // 16M: anonymous capture-result actions now preserve intent through sign-in
   // instead of dead-ending at plain /account.
   const wantHref = buildAccountIntentHref({ action: 'want', catalogModelId })
   const ownHref = buildAccountIntentHref({ action: 'own', catalogModelId })
-  const sellIntentHref = buildAccountIntentHref({ action: 'sell', catalogModelId })
 
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -84,16 +87,10 @@ export function CaptureCandidateActions({ catalogModelId, modelName, initialRela
         </form>
       )}
 
-      {/* Sell One */}
-      {!isAuthenticated ? (
-        <Link href={sellIntentHref} aria-label={`Sign in to sell ${modelName}`} className={btnCls}>
-          Sell One
-        </Link>
-      ) : (
-        <Link href={sellHref} aria-label={`Sell one ${modelName}`} className={btnCls}>
-          Sell One
-        </Link>
-      )}
+      {/* Sell One — same destination for anonymous and authenticated visitors */}
+      <Link href={sellHref} aria-label={`Sell one ${modelName}`} className={btnCls}>
+        Sell One
+      </Link>
     </div>
   )
 }

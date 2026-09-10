@@ -34,6 +34,17 @@ export function buildAccountIntentHref({
   return `/account/continue?${params.toString()}`
 }
 
+// 19C: guest seller batch claim has no catalogModelId to carry (it's batch-wide,
+// not model-relative), so it can't fit the /account/continue?action=&catalogId=
+// shape above. Rather than retrofit that hardened, heavily-tested route with a
+// "no specific model" mode, this is a second, CLOSED set of exact-literal
+// destinations — same non-parameterized-fixed-string approach as PostVerifyMode
+// below, just reusing the `returnTo` plumbing (already wired through password
+// login, magic-link request/verify, AND account creation) instead of a third
+// parallel intent channel. Exact string equality only — never a prefix/startsWith
+// match — so no query string, trailing slash, or encoded trick can ride along.
+const FIXED_SAFE_RETURN_TARGETS: ReadonlySet<string> = new Set(['/account/sell/claim'])
+
 // Open-redirect defense (Part M): never pass an untrusted `returnTo` string
 // through to redirect()/href as-is. Requires the literal local prefix (rejects any
 // scheme, host, protocol-relative "//", or backslash trick outright, since none of
@@ -41,7 +52,9 @@ export function buildAccountIntentHref({
 // actually need and REBUILDS the URL via buildAccountIntentHref — so no stray
 // byte sequence from the original string can survive into the final destination.
 export function isSafeAccountReturnTo(raw: string | null | undefined): string | null {
-  if (!raw || !raw.startsWith('/account/continue?')) return null
+  if (!raw) return null
+  if (FIXED_SAFE_RETURN_TARGETS.has(raw)) return raw
+  if (!raw.startsWith('/account/continue?')) return null
   const params = new URLSearchParams(raw.slice('/account/continue?'.length))
   const action = parseCustomerModelIntent(params.get('action'))
   const catalogModelId = params.get('catalogId')

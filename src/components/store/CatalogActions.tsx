@@ -40,6 +40,9 @@ function SecondaryActions({
   modelName: string
   itemCls: string
 }) {
+  // 19C: Sell One is the SAME destination (sellHref) regardless of auth state —
+  // computed by the caller as /sell?catalogId (no existing CollectionItem) or
+  // /account/collection/{id}/sell (owned-item context, unchanged).
   if (!isAuthenticated) {
     return (
       <>
@@ -50,11 +53,7 @@ function SecondaryActions({
         >
           + Add to Collection
         </Link>
-        <Link
-          href={buildAccountIntentHref({ action: 'sell', catalogModelId })}
-          aria-label={`Sign in to sell ${modelName}`}
-          className={itemCls}
-        >
+        <Link href={sellHref} aria-label={`Sell one ${modelName}`} className={itemCls}>
           Sell One
         </Link>
       </>
@@ -118,7 +117,7 @@ export function CatalogActions({
 
   const sellHref = collectionItemId
     ? `/account/collection/${collectionItemId}/sell`
-    : `/account/sell/new?catalogId=${encodeURIComponent(catalogModelId)}`
+    : `/sell?catalogId=${encodeURIComponent(catalogModelId)}`
 
   return (
     <div className="mt-2 pt-2 border-t border-gray-100 flex items-center justify-between gap-2">

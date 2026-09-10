@@ -1,12 +1,12 @@
 'use server'
 
-import crypto from 'crypto'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { getBuyerSession } from '@/lib/buyerSession'
 import { getRequestId } from '@/lib/requestId'
 import { normalizeError } from '@/lib/errors'
 import { checkRateLimit } from '@/lib/rateLimit'
+import { computeMobileCaptureFingerprint } from '@/lib/captureFingerprint'
 
 export type CaptureDestination = 'collection' | 'sell'
 
@@ -80,30 +80,6 @@ function isPrismaP2002(e: unknown): boolean {
 function p2002ConstraintName(e: unknown): string {
   if (!(e instanceof Prisma.PrismaClientKnownRequestError)) return ''
   return String(e.meta?.target ?? '')
-}
-
-// Server-computed SHA-256 fingerprint of the full normalized item payload.
-// Null fields are represented as empty strings; boolean as 'true'/'false'.
-// Does not include clientToken, sessionId, profileId, or any image data.
-function computePayloadFingerprint(params: {
-  catalogModelId:     string
-  quantity:           number
-  acquisitionDate:    string | null
-  condition:          string | null
-  notes:              string | null
-  isPublic:           boolean
-  saleTypePreference: string | null
-}): string {
-  const parts = [
-    params.catalogModelId,
-    String(params.quantity),
-    params.acquisitionDate ?? '',
-    params.condition ?? '',
-    params.notes ?? '',
-    String(params.isPublic),
-    params.saleTypePreference ?? '',
-  ]
-  return crypto.createHash('sha256').update(parts.join('\x00')).digest('hex')
 }
 
 function itemResultFromRow(
@@ -239,7 +215,7 @@ export async function addCaptureItem(
   const acquisitionDateNorm = input.acquisitionDate
     ? new Date(input.acquisitionDate).toISOString()
     : null
-  const payloadFingerprint = computePayloadFingerprint({
+  const payloadFingerprint = computeMobileCaptureFingerprint({
     catalogModelId:     catalog.id,
     quantity:           input.quantity,
     acquisitionDate:    acquisitionDateNorm,

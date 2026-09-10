@@ -8,6 +8,7 @@ import {
   updateCaptureItem,
   removeCaptureItem,
   getCaptureSession,
+  submitCaptureSession,
 } from '@/lib/actions/mobileCapture'
 import {
   addGuestSellerItem,
@@ -182,6 +183,23 @@ export async function getUnclaimedGuestBatchCount(): Promise<number> {
   if (!session) return 0 // anonymous visitors ARE the guest batch — nothing "extra" to report
   const guestBatch = await getGuestSellerBatch()
   return guestBatch.items.length
+}
+
+// 19C: the explicit final-submission action for the authenticated backend only
+// — a guest has no MobileCaptureSession to submit (they must claim first).
+// Resolves the session id itself (never trusts a client-supplied id) and calls
+// the existing, unmodified submitCaptureSession — zero duplicate
+// SellerSubmission-creation logic.
+export async function submitSellBatch(): Promise<AR<{ submitted: boolean }>> {
+  const session = await getBuyerSession()
+  if (!session) return { ok: false, error: 'Sign in to submit your selling batch.' }
+
+  const sessionId = await peekMobileCaptureSessionId(session.profileId)
+  if (!sessionId) return { ok: false, error: 'No items to submit.' }
+
+  const result = await submitCaptureSession(sessionId)
+  if (!result.ok) return result
+  return { ok: true, data: { submitted: result.data.submitted } }
 }
 
 // ── Manual catalog search fallback (item 26) ──────────────────────────────────

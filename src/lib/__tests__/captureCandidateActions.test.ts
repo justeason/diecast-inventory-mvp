@@ -103,9 +103,9 @@ describe('16L: recognition (identifyModelFromPhoto) still performs zero business
 // ── Part K/L: presentation differs, domain shared ───────────────────────────────
 
 describe('16L: CaptureCandidateActions mirrors CatalogModelActions domain semantics with compact presentation', () => {
-  it('same sellHref ternary: owned → /account/collection/[id]/sell, unrecorded → /account/sell/new?catalogId=', () => {
+  it('19C: same sellHref ternary: owned → /account/collection/[id]/sell, unrecorded → /sell?catalogId= (frictionless, no login wall)', () => {
     expect(actionsCompSrc).toContain('/account/collection/${collectionItemId}/sell')
-    expect(actionsCompSrc).toContain('/account/sell/new?catalogId=${encodeURIComponent(catalogModelId)}')
+    expect(actionsCompSrc).toContain('/sell?catalogId=${encodeURIComponent(catalogModelId)}')
   })
   it('owned display uses "✓ Own N" with N from ownedQuantity, same as CatalogModelActions', () => {
     expect(actionsCompSrc).toContain("✓ Own{ownedQuantity !== null ? ` ${ownedQuantity}` : ''}")
@@ -155,12 +155,13 @@ describe('16L: authenticated relationship lookup is batched once inside recognit
 // ── Part F/AM: anonymous behavior ───────────────────────────────────────────────
 
 describe('16L/16M: anonymous candidate actions preserve intent through sign-in, no private query, no mutation attempted', () => {
-  it('CaptureCandidateActions renders intent-preserving sign-in links (16M buildAccountIntentHref) for all three actions when relationship is null, not a plain /account dead-end', () => {
-    const hrefVars = [...actionsCompSrc.matchAll(/const (\w+) = buildAccountIntentHref\(\{ action: '(want|own|sell)', catalogModelId \}\)/g)]
-    expect(hrefVars.length).toBe(3)
-    const anonLinkUsages = [...actionsCompSrc.matchAll(/<Link href=\{(wantHref|ownHref|sellIntentHref)\} aria-label=\{`Sign in to/g)]
-    expect(anonLinkUsages.length).toBe(3)
+  it('CaptureCandidateActions renders intent-preserving sign-in links (16M buildAccountIntentHref) for Want/Own when relationship is null, not a plain /account dead-end — 19C: Sell One no longer signs in first, it routes straight to /sell?catalogId for anonymous and authenticated visitors alike', () => {
+    const hrefVars = [...actionsCompSrc.matchAll(/const (\w+) = buildAccountIntentHref\(\{ action: '(want|own)', catalogModelId \}\)/g)]
+    expect(hrefVars.length).toBe(2)
+    const anonLinkUsages = [...actionsCompSrc.matchAll(/<Link href=\{(wantHref|ownHref)\} aria-label=\{`Sign in to/g)]
+    expect(anonLinkUsages.length).toBe(2)
     expect(actionsCompSrc).not.toContain('href="/account"')
+    expect(actionsCompSrc).not.toContain("action: 'sell'")
   })
   it('no ?returnTo=, ?action= query param, or guest-session/pending-action-cookie persistence logic exists', () => {
     for (const src of [actionsCompSrc, componentSrc, captureIdentifySrc]) {

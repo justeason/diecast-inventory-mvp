@@ -217,10 +217,10 @@ describe('16G Final: regression — Want/Collection/Sell/Buy mutation semantics 
     expect(wantFnSrc).toContain('await addToWantedList(null, formData)')
   })
 
-  it('Own N link and Sell One routing (owned vs unrecorded) are unchanged', () => {
+  it('19C: Own N link is unchanged; Sell One routing now goes to /sell?catalogId (frictionless, no login wall) when unrecorded', () => {
     expect(actionsSrc).toContain('✓ Own')
     expect(actionsSrc).toContain('/account/collection/${collectionItemId}/sell')
-    expect(actionsSrc).toContain('/account/sell/new?catalogId=${encodeURIComponent(catalogModelId)}')
+    expect(actionsSrc).toContain('/sell?catalogId=${encodeURIComponent(catalogModelId)}')
   })
 
   it('Buy (AddToCartButton) remains outside CatalogActions entirely, unconditionally rendered', () => {
@@ -230,12 +230,12 @@ describe('16G Final: regression — Want/Collection/Sell/Buy mutation semantics 
     expect(cartIdx).toBeLessThan(actionsIdx)
   })
 
-  it('anonymous behavior is preserved in both the desktop tray and the mobile popup — SecondaryActions renders sign-in links for both when relationship is null', () => {
+  it('anonymous behavior is preserved for Add to Collection in both the desktop tray and the mobile popup — SecondaryActions renders a sign-in link when relationship is null — 19C: Sell One is no longer sign-in-gated, it renders the same sellHref Link for anonymous and authenticated alike', () => {
     expect(actionsSrc).toContain('if (!isAuthenticated) {')
     const fnIdx = actionsSrc.indexOf('function SecondaryActions')
     const fnSrc = actionsSrc.slice(fnIdx, actionsSrc.indexOf('function CatalogActions'))
     expect(fnSrc).toContain('Sign in to add')
-    expect(fnSrc).toContain('Sign in to sell')
+    expect(fnSrc).not.toContain('Sign in to sell')
   })
 
   it('duplicate Listing cards for the same model still receive identical relationship data — CatalogActions/SecondaryActions have no fetching/caching of their own', () => {

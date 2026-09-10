@@ -14,8 +14,8 @@ describe('CUSTOMER_PRIMARY_NAV — exactly the five stable concepts (Part 2/28/2
     expect(CUSTOMER_PRIMARY_NAV.find((i) => i.key === 'shop')?.href).toBe('/browse')
   })
 
-  it('Sell points to the existing /account/sell entry point — no invented public route', () => {
-    expect(CUSTOMER_PRIMARY_NAV.find((i) => i.key === 'sell')?.href).toBe('/account/sell')
+  it('19C: Sell points to the frictionless, no-login-required /sell entry point — /account/sell remains a separate authenticated history route, not the primary nav destination', () => {
+    expect(CUSTOMER_PRIMARY_NAV.find((i) => i.key === 'sell')?.href).toBe('/sell')
   })
 
   it('Community points to the PUBLIC /community feed, never the private /account/community settings page', () => {
@@ -68,10 +68,10 @@ describe('CUSTOMER_ACCOUNT_LINKS — personal destinations collapsed under Accou
     expect(selling?.href).toBe('/account/portfolios')
   })
 
-  it('top-level Sell and Account > Selling are distinct hrefs, representing different customer intents', () => {
+  it('19C: top-level Sell and Account > Selling are distinct hrefs, representing different customer intents', () => {
     const sellHref = CUSTOMER_PRIMARY_NAV.find((i) => i.key === 'sell')?.href
     const sellingHref = CUSTOMER_ACCOUNT_LINKS.find((l) => l.label === 'Selling')?.href
-    expect(sellHref).toBe('/account/sell')
+    expect(sellHref).toBe('/sell')
     expect(sellingHref).toBe('/account/portfolios')
     expect(sellHref).not.toBe(sellingHref)
   })

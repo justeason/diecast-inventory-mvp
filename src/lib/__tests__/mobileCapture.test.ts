@@ -12,6 +12,11 @@ const src  = (rel: string) => fs.readFileSync(path.join(root, rel), 'utf8')
 
 const schemaSrc    = src('prisma/schema.prisma')
 const actionsSrc   = src('src/lib/actions/mobileCapture.ts')
+// 19C: computePayloadFingerprint was extracted to captureFingerprint.ts (as
+// computeMobileCaptureFingerprint) so guestSellerClaim.ts can reuse it without
+// mobileCapture.ts's 'use server' directive forcing it to become an
+// independently-callable, unthrottled Server Action.
+const fingerprintSrc = src('src/lib/captureFingerprint.ts')
 const wizardSrc    = src('src/components/store/CaptureWizard.tsx')
 const reviewSrc    = src('src/components/store/CaptureReview.tsx')
 const capturePage  = src('src/app/(store)/account/capture/page.tsx')
@@ -840,15 +845,16 @@ describe('mobileCapture: full-payload fingerprint', () => {
   it('exports cancelCaptureSession', () => {
     expect(actionsSrc).toContain('export async function cancelCaptureSession')
   })
-  it('computePayloadFingerprint uses SHA-256 via crypto module', () => {
-    expect(actionsSrc).toContain("import crypto from 'crypto'")
-    expect(actionsSrc).toContain('createHash')
-    expect(actionsSrc).toContain("'sha256'")
-    expect(actionsSrc).toContain('computePayloadFingerprint')
+  it('19C: computeMobileCaptureFingerprint uses SHA-256 via crypto module, extracted to captureFingerprint.ts', () => {
+    expect(fingerprintSrc).toContain("import crypto from 'crypto'")
+    expect(fingerprintSrc).toContain('createHash')
+    expect(fingerprintSrc).toContain("'sha256'")
+    expect(fingerprintSrc).toContain('computeMobileCaptureFingerprint')
+    expect(actionsSrc).toContain("import { computeMobileCaptureFingerprint } from '@/lib/captureFingerprint'")
   })
   it('fingerprint includes all 7 normalized item fields', () => {
-    const idx = actionsSrc.indexOf('function computePayloadFingerprint')
-    const body = actionsSrc.slice(idx, idx + 500)
+    const idx = fingerprintSrc.indexOf('function computeMobileCaptureFingerprint')
+    const body = fingerprintSrc.slice(idx, idx + 500)
     expect(body).toContain('catalogModelId')
     expect(body).toContain('quantity')
     expect(body).toContain('acquisitionDate')
@@ -858,8 +864,8 @@ describe('mobileCapture: full-payload fingerprint', () => {
     expect(body).toContain('saleTypePreference')
   })
   it('fingerprint does NOT include clientToken, sessionId, profileId, or image data', () => {
-    const idx = actionsSrc.indexOf('function computePayloadFingerprint')
-    const body = actionsSrc.slice(idx, idx + 500)
+    const idx = fingerprintSrc.indexOf('function computeMobileCaptureFingerprint')
+    const body = fingerprintSrc.slice(idx, idx + 500)
     expect(body).not.toContain('clientToken')
     expect(body).not.toContain('sessionId')
     expect(body).not.toContain('profileId')
@@ -867,7 +873,7 @@ describe('mobileCapture: full-payload fingerprint', () => {
     expect(body).not.toContain('photo')
   })
   it('uses null-byte separator between fingerprint fields', () => {
-    expect(actionsSrc).toContain("'\\x00'")
+    expect(fingerprintSrc).toContain("'\\x00'")
   })
   it('compares existing.payloadFingerprint to computed value on P2002 retry', () => {
     const idx = actionsSrc.indexOf('export async function addCaptureItem')
@@ -876,7 +882,7 @@ describe('mobileCapture: full-payload fingerprint', () => {
   })
   it('fingerprint is computed from server-resolved catalog ID (not client-supplied)', () => {
     // Search for the call site (has object literal) not the function definition
-    const idx = actionsSrc.indexOf('computePayloadFingerprint({')
+    const idx = actionsSrc.indexOf('computeMobileCaptureFingerprint({')
     const body = actionsSrc.slice(idx, idx + 300)
     expect(body).toContain('catalog.id')
   })

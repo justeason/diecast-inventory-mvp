@@ -181,9 +181,9 @@ describe('CatalogActions.tsx: reuses authoritative mutations only, no new engine
     expect(src).not.toMatch(/\.length\}\s*`\s*\)/)
   })
 
-  it('Sell One routes to the existing /account/collection/[id]/sell when owned, or the existing manual-sell flow with catalogId context when not', () => {
+  it('19C: Sell One routes to the existing /account/collection/[id]/sell when owned, or the frictionless /sell?catalogId flow when not — same destination for anonymous and authenticated visitors', () => {
     expect(src).toContain('/account/collection/${collectionItemId}/sell')
-    expect(src).toContain('/account/sell/new?catalogId=${encodeURIComponent(catalogModelId)}')
+    expect(src).toContain('/sell?catalogId=${encodeURIComponent(catalogModelId)}')
   })
 
   it('Sell One never creates a SellerSubmission directly — it is a plain Link in both branches, not a form', () => {
@@ -194,12 +194,13 @@ describe('CatalogActions.tsx: reuses authoritative mutations only, no new engine
     expect(block).not.toContain('sellerSubmission.create')
   })
 
-  it('anonymous (relationship === null) shows all three private actions as sign-in links carrying model intent (16M), never a fabricated wanted/owned state', () => {
+  it('anonymous (relationship === null) shows Want/Add-to-Collection as sign-in links carrying model intent (16M), never a fabricated wanted/owned state — 19C: Sell One is no longer a sign-in link, it goes straight to /sell?catalogId for anonymous visitors too', () => {
     // 16M: anonymous links now preserve intent via buildAccountIntentHref rather
     // than dead-ending at plain /account — see customerModelIntent.test.ts.
-    const anonLinks = [...src.matchAll(/href=\{buildAccountIntentHref\(\{ action: '(want|own|sell)', catalogModelId \}\)\}[^>]*aria-label=\{`Sign in to [^`]+`\}/g)]
-    expect(anonLinks.length).toBe(3)
+    const anonLinks = [...src.matchAll(/href=\{buildAccountIntentHref\(\{ action: '(want|own)', catalogModelId \}\)\}[^>]*aria-label=\{`Sign in to [^`]+`\}/g)]
+    expect(anonLinks.length).toBe(2)
     expect(src).not.toMatch(/relationship\s*\?\?\s*\{\s*wanted:\s*false/)
+    expect(src).not.toContain("action: 'sell'")
   })
 
   it('every action carries a model-scoped accessible label, not an icon-only control (Want/Unwant/Add-to-Collection via PendingActionButton\'s ariaLabel prop, the rest as plain aria-label)', () => {

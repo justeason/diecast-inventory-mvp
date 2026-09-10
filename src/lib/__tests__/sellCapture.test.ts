@@ -23,6 +23,7 @@ vi.mock('@/lib/actions/mobileCapture', () => ({
   updateCaptureItem: vi.fn(),
   removeCaptureItem: vi.fn(),
   getCaptureSession: vi.fn(),
+  submitCaptureSession: vi.fn(),
 }))
 vi.mock('@/lib/actions/guestSeller', () => ({
   addGuestSellerItem: vi.fn(),
@@ -34,9 +35,9 @@ vi.mock('@/lib/catalogSearch', () => ({ searchCatalogModels: vi.fn() }))
 
 import { prisma } from '@/lib/prisma'
 import { getBuyerSession } from '@/lib/buyerSession'
-import { getOrCreateDraftSession, addCaptureItem, getCaptureSession } from '@/lib/actions/mobileCapture'
+import { getOrCreateDraftSession, addCaptureItem, getCaptureSession, submitCaptureSession } from '@/lib/actions/mobileCapture'
 import { addGuestSellerItem, updateGuestSellerItem, removeGuestSellerItem, getGuestSellerBatch } from '@/lib/actions/guestSeller'
-import { addSellItem, updateSellItem, removeSellItem, getSellBatch, getUnclaimedGuestBatchCount } from '@/lib/actions/sellCapture'
+import { addSellItem, updateSellItem, removeSellItem, getSellBatch, getUnclaimedGuestBatchCount, submitSellBatch } from '@/lib/actions/sellCapture'
 
 const ITEM_INPUT = { catalogModelId: 'cat1', quantity: 1, condition: null, notes: null, saleTypePreference: 'unsure', clientToken: 'tok-1' }
 
@@ -166,6 +167,48 @@ describe('getUnclaimedGuestBatchCount: signed-in-only notice, never merges/delet
   })
 })
 
+describe('19C: submitSellBatch — the explicit final-submission action, authenticated only, reuses submitCaptureSession unmodified', () => {
+  it('signed out → error, submitCaptureSession never called', async () => {
+    ;(getBuyerSession as Mock).mockResolvedValue(null)
+    const result = await submitSellBatch()
+    expect(result.ok).toBe(false)
+    expect(submitCaptureSession).not.toHaveBeenCalled()
+  })
+
+  it('signed in with no MobileCaptureSession yet → "No items to submit.", never falls through to a guest action', async () => {
+    ;(getBuyerSession as Mock).mockResolvedValue({ profileId: 'p1' })
+    ;(prisma.mobileCaptureSession.findFirst as Mock).mockResolvedValue(null)
+    const result = await submitSellBatch()
+    expect(result).toEqual({ ok: false, error: 'No items to submit.' })
+    expect(submitCaptureSession).not.toHaveBeenCalled()
+  })
+
+  it('signed in with an existing draft session calls submitCaptureSession with the resolved session id — zero duplicate SellerSubmission logic', async () => {
+    ;(getBuyerSession as Mock).mockResolvedValue({ profileId: 'p1' })
+    ;(prisma.mobileCaptureSession.findFirst as Mock).mockResolvedValue({ id: 'mcs1' })
+    ;(submitCaptureSession as Mock).mockResolvedValue({ ok: true, data: { submitted: true, results: [] } })
+
+    const result = await submitSellBatch()
+    expect(result).toEqual({ ok: true, data: { submitted: true } })
+    expect(submitCaptureSession).toHaveBeenCalledWith('mcs1')
+  })
+
+  it('a submitCaptureSession failure is passed through unmodified', async () => {
+    ;(getBuyerSession as Mock).mockResolvedValue({ profileId: 'p1' })
+    ;(prisma.mobileCaptureSession.findFirst as Mock).mockResolvedValue({ id: 'mcs1' })
+    ;(submitCaptureSession as Mock).mockResolvedValue({ ok: false, error: 'No items to submit.' })
+
+    const result = await submitSellBatch()
+    expect(result).toEqual({ ok: false, error: 'No items to submit.' })
+  })
+
+  it('structural: submitSellBatch never creates a SellerSubmission itself — no sellerSubmission.create reference in sellCapture.ts', () => {
+    const src = readSrc('src/lib/actions/sellCapture.ts')
+    expect(src).not.toMatch(/sellerSubmission\.create/i)
+    expect(src).toContain('await submitCaptureSession(sessionId)')
+  })
+})
+
 describe('19B: /sell page itself never creates any session merely by rendering (GET is zero-write)', () => {
   it('page.tsx only calls getSellBatch/getUnclaimedGuestBatchCount — both proven read-only above', () => {
     const src = readSrc('src/app/(store)/sell/page.tsx')
@@ -204,9 +247,9 @@ describe('19B: SellCaptureFlow prevents double-submit on Confirm & Add / manual-
     expect(deleteIdx).toBeGreaterThan(finallyIdx)
   })
 
-  it('both the candidate-confirm button and the manual-search Add button call the SAME confirmCandidate — one guarded entry point, not two independent add paths', () => {
+  it('19C: the candidate-confirm button, the manual-search Add button, and the preselected-model Confirm & Add button all call the SAME confirmCandidate — one guarded entry point, not separate add paths', () => {
     const matches = [...src.matchAll(/onClick=\{\(\) => confirmCandidate\(/g)]
-    expect(matches.length).toBe(2)
+    expect(matches.length).toBe(3)
   })
 
   it('the visual disabled state still reflects addPendingId — the ref guard is a correctness backstop, not a replacement for the existing UI feedback', () => {

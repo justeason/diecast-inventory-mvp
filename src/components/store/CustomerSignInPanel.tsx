@@ -20,7 +20,10 @@ export function CustomerSignInPanel({ returnTo }: { returnTo?: string } = {}) {
 
       <p className="text-sm text-gray-500">
         New to CollectNTrades?{' '}
-        <Link href="/account/create-account" className="font-medium text-gray-900 underline underline-offset-2">
+        <Link
+          href={returnTo ? `/account/create-account?returnTo=${encodeURIComponent(returnTo)}` : '/account/create-account'}
+          className="font-medium text-gray-900 underline underline-offset-2"
+        >
           Create account
         </Link>
       </p>

@@ -253,14 +253,33 @@ describe('19A: /account/create-account is email-only, verification-first', () =>
     const src = readSrc('src/app/(store)/account/create-account/page.tsx')
     expect(src).not.toMatch(/name="password"|type="password"/)
   })
-  it('uses the existing BuyerOrderAccessForm with postVerify="setup_password" — no separate signup action', () => {
+  it('uses the existing BuyerOrderAccessForm with postVerify="setup_password" — no separate signup action — 19C: now also threads a re-validated returnTo (e.g. a guest seller\'s claim intent) through the same form, with returnTo still taking priority over postVerify at verify time', () => {
     const src = readSrc('src/app/(store)/account/create-account/page.tsx')
-    expect(src).toContain('<BuyerOrderAccessForm postVerify="setup_password" />')
+    expect(src).toContain('<BuyerOrderAccessForm returnTo={safeReturnTo ?? undefined} postVerify="setup_password" />')
   })
   it('copy explains verification-first flow', () => {
     const src = readSrc('src/app/(store)/account/create-account/page.tsx')
     expect(src).toMatch(/verify your account/i)
     expect(src).toMatch(/set your password/i)
+  })
+})
+
+describe('19C: Create Account preserves claim returnTo end-to-end', () => {
+  it('CustomerSignInPanel\'s Create account link carries returnTo forward as a query param when present', () => {
+    const src = readSrc('src/components/store/CustomerSignInPanel.tsx')
+    expect(src).toContain("`/account/create-account?returnTo=${encodeURIComponent(returnTo)}`")
+    expect(src).toContain("'/account/create-account'")
+  })
+
+  it('/account/create-account re-validates returnTo via isSafeAccountReturnTo — never trusts the query string as-is', () => {
+    const src = readSrc('src/app/(store)/account/create-account/page.tsx')
+    expect(src).toContain("import { isSafeAccountReturnTo } from '@/lib/customerModelIntent'")
+    expect(src).toContain('const safeReturnTo = isSafeAccountReturnTo(returnTo)')
+  })
+
+  it('an already-authenticated visitor hitting /account/create-account?returnTo=... is redirected straight to it, not to plain /account', () => {
+    const src = readSrc('src/app/(store)/account/create-account/page.tsx')
+    expect(src).toContain('if (session) redirect(safeReturnTo ?? \'/account\')')
   })
 })
 

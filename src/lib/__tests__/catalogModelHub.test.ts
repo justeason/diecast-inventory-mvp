@@ -232,9 +232,9 @@ describe('16H: CatalogModelActions reuses the exact 16F/16G authoritative action
     expect(actionsRowSrc).toContain('ownedQuantity !== null ? ` ${ownedQuantity}` : \'\'')
   })
 
-  it('Sell One routes to /account/collection/[id]/sell when owned, or /account/sell/new?catalogId=... when not — same as 16F', () => {
+  it('19C: Sell One routes to /account/collection/[id]/sell when owned, or /sell?catalogId=... (frictionless, no login wall) when not', () => {
     expect(actionsRowSrc).toContain('/account/collection/${collectionItemId}/sell')
-    expect(actionsRowSrc).toContain('/account/sell/new?catalogId=${encodeURIComponent(catalogModelId)}')
+    expect(actionsRowSrc).toContain('/sell?catalogId=${encodeURIComponent(catalogModelId)}')
   })
 
   it('every action carries a model-scoped accessible label', () => {

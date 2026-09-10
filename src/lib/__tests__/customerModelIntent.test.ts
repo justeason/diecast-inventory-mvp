@@ -139,6 +139,32 @@ describe('16M: isSafeAccountReturnTo — Part AZ open-redirect defense', () => {
   })
 })
 
+// ── 19C: fixed-literal returnTo extension for guest seller batch claim ─────────
+
+describe('19C: isSafeAccountReturnTo accepts exactly one new fixed literal — /account/sell/claim', () => {
+  it('the exact literal is accepted and returned unmodified', () => {
+    expect(isSafeAccountReturnTo('/account/sell/claim')).toBe('/account/sell/claim')
+  })
+
+  it('rejects any trailing query string, path segment, or trailing slash — exact string match only, never a prefix', () => {
+    expect(isSafeAccountReturnTo('/account/sell/claim?foo=bar')).toBeNull()
+    expect(isSafeAccountReturnTo('/account/sell/claim/')).toBeNull()
+    expect(isSafeAccountReturnTo('/account/sell/claim/extra')).toBeNull()
+    expect(isSafeAccountReturnTo('/account/sell/claimx')).toBeNull()
+  })
+
+  it('rejects scheme/host/protocol-relative/backslash tricks against the new literal, same as the existing /account/continue defense', () => {
+    expect(isSafeAccountReturnTo('https://evil.example/account/sell/claim')).toBeNull()
+    expect(isSafeAccountReturnTo('//evil.example/account/sell/claim')).toBeNull()
+    expect(isSafeAccountReturnTo('\\\\evil.example/account/sell/claim')).toBeNull()
+  })
+
+  it('does not widen the /account/continue shape — action=sell still requires a catalogId and is unaffected by the new literal', () => {
+    expect(isSafeAccountReturnTo('/account/continue?action=sell&catalogId=abc123')).toBe('/account/continue?action=sell&catalogId=abc123')
+    expect(isSafeAccountReturnTo('/account/continue?action=sell')).toBeNull()
+  })
+})
+
 // ── buyerAuth.ts: returnTo propagation (behavioral) ─────────────────────────────
 
 vi.mock('@/lib/prisma', () => ({
@@ -218,6 +244,21 @@ describe('16M: requestBuyerOrderLink embeds a validated returnTo in the magic-li
     expect(result.status).toBe('sent')
   })
 
+  it('19C: a guest seller\'s claim returnTo (/account/sell/claim) is embedded in the outgoing email verifyUrl — same mechanism as want/own/sell', async () => {
+    ;(prisma.customerProfile.findUnique as Mock).mockResolvedValue({ id: 'p1', name: 'Bob' })
+    ;(prisma.customerLoginToken.count as Mock).mockResolvedValue(0)
+    ;(prisma.customerLoginToken.deleteMany as Mock).mockResolvedValue({ count: 0 })
+    ;(prisma.customerLoginToken.create as Mock).mockResolvedValue({})
+
+    await requestBuyerOrderLink(
+      { status: 'idle' },
+      fd({ email: 'bob@example.com', returnTo: '/account/sell/claim' }),
+    )
+
+    const emailArgs = mockSend.mock.calls[0][0]
+    expect(emailArgs.html).toContain(encodeURIComponent('/account/sell/claim'))
+  })
+
   it('source: verifyUrl embeds returnTo only when isSafeAccountReturnTo approves it', () => {
     const src = readSrc('src/lib/actions/buyerAuth.ts')
     expect(src).toContain("isSafeAccountReturnTo")
@@ -277,6 +318,29 @@ describe('16M: verifyBuyerLoginToken redirects to a re-validated returnTo, or fa
     await expect(
       verifyBuyerLoginToken({ status: 'idle' }, fd({ token: 'a'.repeat(64), returnTo: 'https://evil.example' })),
     ).rejects.toThrow('NEXT_REDIRECT:/account/orders')
+  })
+
+  it('19C: a magic-link login carrying the claim returnTo redirects to /account/sell/claim', async () => {
+    ;(prisma.customerLoginToken.updateMany as Mock).mockResolvedValue({ count: 1 })
+    ;(prisma.customerLoginToken.findFirst as Mock).mockResolvedValue({ email: 'bob@example.com' })
+    ;(prisma.customerProfile.upsert as Mock).mockResolvedValue({ id: 'p1' })
+
+    await expect(
+      verifyBuyerLoginToken({ status: 'idle' }, fd({ token: 'a'.repeat(64), returnTo: '/account/sell/claim' })),
+    ).rejects.toThrow('NEXT_REDIRECT:/account/sell/claim')
+  })
+
+  it('19C: new-account creation carrying BOTH returnTo=/account/sell/claim and postVerify=setup_password still lands on the claim page — returnTo outranks postVerify, so password setup never blocks batch recovery', async () => {
+    ;(prisma.customerLoginToken.updateMany as Mock).mockResolvedValue({ count: 1 })
+    ;(prisma.customerLoginToken.findFirst as Mock).mockResolvedValue({ email: 'bob@example.com' })
+    ;(prisma.customerProfile.upsert as Mock).mockResolvedValue({ id: 'p1' })
+
+    await expect(
+      verifyBuyerLoginToken(
+        { status: 'idle' },
+        fd({ token: 'a'.repeat(64), returnTo: '/account/sell/claim', postVerify: 'setup_password' }),
+      ),
+    ).rejects.toThrow('NEXT_REDIRECT:/account/sell/claim')
   })
 
   it('does not weaken single-use token consumption — still an atomic updateMany gated on usedAt:null', () => {
@@ -629,10 +693,10 @@ describe('16M: continueWantAction composes wantAction + redirect, no duplicated 
 
 describe('16M: /capture anonymous actions preserve intent', () => {
   const src = readSrc('src/components/store/CaptureCandidateActions.tsx')
-  it('Want This / I Own This / Sell One anonymous links all use buildAccountIntentHref with the correct action', () => {
+  it('Want This / I Own This anonymous links use buildAccountIntentHref with the correct action — 19C: Sell One no longer preserves intent through sign-in, it routes straight to /sell?catalogId', () => {
     expect(src).toContain("buildAccountIntentHref({ action: 'want', catalogModelId })")
     expect(src).toContain("buildAccountIntentHref({ action: 'own', catalogModelId })")
-    expect(src).toContain("buildAccountIntentHref({ action: 'sell', catalogModelId })")
+    expect(src).not.toContain("action: 'sell'")
   })
   it('no plain /account dead-end remains', () => {
     expect(src).not.toContain('href="/account"')
@@ -646,10 +710,10 @@ describe('16M: /capture anonymous actions preserve intent', () => {
 
 describe('16M: /catalog/[id] (CatalogModelActions) anonymous actions preserve intent', () => {
   const src = readSrc('src/components/store/CatalogModelActions.tsx')
-  it('Want / Add to Collection / Sell One anonymous links all use buildAccountIntentHref', () => {
+  it('Want / Add to Collection anonymous links use buildAccountIntentHref — 19C: Sell One routes straight to /sell?catalogId instead', () => {
     expect(src).toContain("buildAccountIntentHref({ action: 'want', catalogModelId })")
     expect(src).toContain("buildAccountIntentHref({ action: 'own', catalogModelId })")
-    expect(src).toContain("buildAccountIntentHref({ action: 'sell', catalogModelId })")
+    expect(src).not.toContain("action: 'sell'")
   })
   it('no plain /account dead-end remains', () => {
     expect(src).not.toContain('href="/account"')
@@ -658,10 +722,10 @@ describe('16M: /catalog/[id] (CatalogModelActions) anonymous actions preserve in
 
 describe('16M: /browse (CatalogActions, persistent + secondary) anonymous actions preserve intent', () => {
   const src = readSrc('src/components/store/CatalogActions.tsx')
-  it('Want (persistent) and Add to Collection / Sell One (SecondaryActions) anonymous links all use buildAccountIntentHref', () => {
+  it('Want (persistent) and Add to Collection (SecondaryActions) anonymous links use buildAccountIntentHref — 19C: Sell One routes straight to /sell?catalogId instead', () => {
     expect(src).toContain("buildAccountIntentHref({ action: 'want', catalogModelId })")
     expect(src).toContain("buildAccountIntentHref({ action: 'own', catalogModelId })")
-    expect(src).toContain("buildAccountIntentHref({ action: 'sell', catalogModelId })")
+    expect(src).not.toContain("action: 'sell'")
   })
   it('no plain /account dead-end remains', () => {
     expect(src).not.toContain('href="/account"')

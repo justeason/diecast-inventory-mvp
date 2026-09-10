@@ -126,12 +126,13 @@ describe('Part 19/20/21 — scope discipline: no premature 16F/16N work (16A sna
 })
 
 describe('Focused-review: Sell vs Selling now represent distinct customer intents', () => {
-  it('19B: /sell now exists as a deliberate, separate camera-first guest/authenticated capture route — but customerNav.ts\'s "Sell" entry is NOT repointed to it (still /account/sell, confirmed below). /sell is reachable only by direct URL until 19C makes guest work claimable.', () => {
+  it('19C: /sell is now the primary "Sell" nav destination — the deliberate, separate camera-first guest/authenticated capture route customerNav.ts repoints "Sell" to, now that guest work is claimable (see guestSellerClaim.ts). /account/sell remains a separate, un-repurposed authenticated route.', () => {
     expect(exists('src/app/(store)/sell/page.tsx')).toBe(true)
+    expect(navSrc).toMatch(/key:\s*'sell',\s*label:\s*'Sell',\s*href:\s*'\/sell'/)
   })
 
   it('customerNav.ts sends Sell and Account > Selling to different hrefs', () => {
-    expect(navSrc).toMatch(/key:\s*'sell',\s*label:\s*'Sell',\s*href:\s*'\/account\/sell'/)
+    expect(navSrc).toMatch(/key:\s*'sell',\s*label:\s*'Sell',\s*href:\s*'\/sell'/)
     expect(navSrc).toMatch(/key:\s*'selling',\s*label:\s*'Selling',\s*href:\s*'\/account\/portfolios'/)
   })
 

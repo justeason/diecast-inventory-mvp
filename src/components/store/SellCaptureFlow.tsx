@@ -1,15 +1,19 @@
 'use client'
 
+import Link from 'next/link'
 import { useActionState, useState, useRef, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import { useFormStatus } from 'react-dom'
 import { recognizeForSell } from '@/lib/actions/sellRecognize'
 import type { IdentifyCandidate } from '@/lib/captureIdentifyCore'
 import {
   addSellItem, updateSellItem, removeSellItem,
-  searchModelsForSell,
+  searchModelsForSell, submitSellBatch,
   type SellItemResult,
 } from '@/lib/actions/sellCapture'
 import type { CatalogMatchResult } from '@/lib/catalogMatching'
+
+export type PreselectedModel = { id: string; brand: string; name: string; year: number | null }
 
 const CONDITION_OPTIONS = ['mint', 'near_mint', 'good', 'fair', 'poor', 'damaged'] as const
 const CONDITION_LABELS: Record<string, string> = {
@@ -43,14 +47,25 @@ function SubmitButton({ label, pendingLabel, disabled }: { label: string; pendin
 export function SellCaptureFlow({
   initialItems,
   unclaimedGuestBatchCount,
+  isAuthenticated,
+  preselected,
+  justClaimed,
 }: {
   initialItems: SellItemResult[]
   unclaimedGuestBatchCount: number
+  isAuthenticated: boolean
+  preselected: PreselectedModel | null
+  justClaimed: boolean
 }) {
+  const router = useRouter()
   const [recognizeState, recognizeAction] = useActionState(recognizeForSell, null)
   const [items, setItems] = useState<SellItemResult[]>(initialItems)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const objectUrlRef = useRef<string | null>(null)
+
+  const [submitPending, setSubmitPending] = useState(false)
+  const [submitError, setSubmitError] = useState<string | null>(null)
+  const submitInFlightRef = useRef(false)
 
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<CatalogMatchResult[] | null>(null)
@@ -140,6 +155,26 @@ export function SellCaptureFlow({
     }
   }
 
+  // 19C: the explicit final-submission action, authenticated only — reuses the
+  // existing, unmodified submitCaptureSession via submitSellBatch. Guarded by a
+  // synchronous ref (same pattern as addInFlightRef above) so a fast double-click
+  // can't fire two concurrent submissions; the destination on success is
+  // /account/sell, the authenticated selling-activity/history page.
+  async function handleSubmitBatch() {
+    if (submitInFlightRef.current) return
+    submitInFlightRef.current = true
+    setSubmitPending(true)
+    setSubmitError(null)
+    try {
+      const result = await submitSellBatch()
+      if (!result.ok) { setSubmitError(result.error); return }
+      router.push('/account/sell')
+    } finally {
+      submitInFlightRef.current = false
+      setSubmitPending(false)
+    }
+  }
+
   const candidates = recognizeState?.candidates ?? null
   const isSingleConfident =
     candidates !== null &&
@@ -148,10 +183,19 @@ export function SellCaptureFlow({
 
   return (
     <div className="flex flex-col gap-8">
+      {justClaimed && (
+        <div className="rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+          Your saved items were added to your selling batch.
+        </div>
+      )}
+
       {unclaimedGuestBatchCount > 0 && (
         <div className="rounded-md border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700">
           You also have {unclaimedGuestBatchCount} item{unclaimedGuestBatchCount !== 1 ? 's' : ''} saved from
-          before you signed in. They&rsquo;re safely stored and will be available to add to your account soon.
+          before you signed in.{' '}
+          <Link href="/account/sell/claim" className="font-medium underline underline-offset-2">
+            Continue Saved Batch
+          </Link>
         </div>
       )}
 
@@ -159,6 +203,26 @@ export function SellCaptureFlow({
         <h1 className="text-2xl font-bold text-gray-900">Sell Your Collectibles</h1>
         <p className="mt-1 text-sm text-gray-500">Take a photo to identify your item.</p>
       </div>
+
+      {preselected && (
+        <section aria-labelledby="preselected-heading" className="rounded-lg border border-gray-200 bg-white p-3">
+          <h2 id="preselected-heading" className="text-sm font-semibold text-gray-900 mb-2">Add This Model</h2>
+          <div className="flex items-center justify-between gap-3">
+            <p className="font-medium text-gray-900 truncate">
+              {preselected.brand} {preselected.name}
+              {preselected.year && <span className="text-gray-500 font-normal"> ({preselected.year})</span>}
+            </p>
+            <button
+              type="button"
+              onClick={() => confirmCandidate(preselected.id)}
+              disabled={addPendingId === preselected.id}
+              className="shrink-0 rounded-md bg-gray-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-700 disabled:opacity-40 transition-colors"
+            >
+              {addPendingId === preselected.id ? 'Adding…' : 'Confirm & Add'}
+            </button>
+          </div>
+        </section>
+      )}
 
       <form action={recognizeAction} className="flex flex-col gap-3">
         <label htmlFor="sell-image" className="block text-sm font-medium text-gray-700">Photo</label>
@@ -320,6 +384,29 @@ export function SellCaptureFlow({
           </ul>
         )}
       </section>
+
+      {items.length > 0 && (
+        <section>
+          {submitError && <p role="alert" className="text-sm text-red-600 mb-2">{submitError}</p>}
+          {isAuthenticated ? (
+            <button
+              type="button"
+              onClick={handleSubmitBatch}
+              disabled={submitPending}
+              className="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-40 transition-colors"
+            >
+              {submitPending ? 'Submitting…' : 'Submit Items for Sale'}
+            </button>
+          ) : (
+            <Link
+              href="/account/sell/claim"
+              className="inline-block rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700 transition-colors"
+            >
+              Continue to Sell
+            </Link>
+          )}
+        </section>
+      )}
     </div>
   )
 }

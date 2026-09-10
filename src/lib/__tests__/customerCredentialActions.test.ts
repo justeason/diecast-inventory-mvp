@@ -235,6 +235,18 @@ describe('loginWithPassword: returnTo', () => {
       })),
     ).rejects.toThrow('NEXT_REDIRECT:/account')
   })
+
+  it('19C: a guest seller signing in with password and returnTo=/account/sell/claim lands on the claim page — password login has no postVerify channel at all, so returnTo is the only mechanism that can carry claim intent through it', async () => {
+    ;(prisma.customerProfile.findUnique as Mock).mockResolvedValue({ id: 'p1' })
+    ;(prisma.customerCredential.findUnique as Mock).mockResolvedValue({ passwordHash: 'hashed:pw' })
+
+    await expect(
+      loginWithPassword({ status: 'idle' }, fd({
+        identifier: 'bob@example.com', password: 'pw',
+        returnTo: '/account/sell/claim',
+      })),
+    ).rejects.toThrow('NEXT_REDIRECT:/account/sell/claim')
+  })
 })
 
 // ── setPassword ──────────────────────────────────────────────────────────────────

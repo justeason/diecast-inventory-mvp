@@ -16,19 +16,19 @@ export type CustomerNavItem = { key: CustomerNavKey; label: string; href: string
 //                    canonical shopping entry point. /market is a secondary
 //                    merchandising/discovery page, left reachable by direct link,
 //                    not primary nav; its domain logic is untouched.)
-//   Sell         -> /account/sell ("Sell Requests" — the "start selling" entry
-//                    point; no separate public start-selling page exists yet, and
-//                    16A does not build one (that is 16R scope). For an anonymous
-//                    visitor it already renders the existing email-access form
-//                    (BuyerOrderAccessForm), exactly as before — 16A does not add or
-//                    change that gate. Distinct from Account > Selling below, which
-//                    is for tracking selling ALREADY in progress.)
+//   Sell         -> /sell (19C: the camera-first, no-login-required start-selling
+//                    entry point — anonymous visitors build a batch immediately,
+//                    no login wall. /account/sell remains a SEPARATE, distinct
+//                    route: authenticated selling activity/history, not
+//                    repurposed and not linked from primary nav. Distinct from
+//                    Account > Selling below, which is for tracking selling
+//                    ALREADY in progress via SellerPortfolio.)
 //   Community    -> /community (public; distinct from /account/community, which is
 //                    a private community PROFILE SETTINGS page, not the public feed)
 //   Order Status -> /order-status (unchanged, already public)
 export const CUSTOMER_PRIMARY_NAV: CustomerNavItem[] = [
   { key: 'shop', label: 'Shop', href: '/browse' },
-  { key: 'sell', label: 'Sell', href: '/account/sell' },
+  { key: 'sell', label: 'Sell', href: '/sell' },
   { key: 'community', label: 'Community', href: '/community' },
   { key: 'orderStatus', label: 'Order Status', href: '/order-status' },
 ]
@@ -67,11 +67,14 @@ export const CUSTOMER_ACCOUNT_LINKS: CustomerAccountLink[] = [
 export const CUSTOMER_ACCOUNT_ANONYMOUS_HREF = '/account'
 
 // Part 17 (16A) / Part D/9 (16B) — active-primary-section resolution. Sell's own
-// subtree (/account/sell/*, including its /new and /capture children) is checked
-// FIRST and short-circuits, so it is the one deliberate exception; every other
-// /account/* route (including the bare /account overview) resolves to Account.
+// subtree (/sell and /account/sell/*, including its /new and /capture children)
+// is checked FIRST and short-circuits, so it is the one deliberate exception;
+// every other /account/* route (including the bare /account overview) resolves
+// to Account. 19C: /account/sell/* still resolves to 'sell' too (bookmarked
+// links into the authenticated history route should still highlight the same
+// tab), even though primary nav's own Sell link now points at /sell.
 const SECTION_PREFIXES: { key: CustomerNavKey; prefixes: string[] }[] = [
-  { key: 'sell', prefixes: ['/account/sell'] },
+  { key: 'sell', prefixes: ['/sell', '/account/sell'] },
   { key: 'account', prefixes: ['/account'] },
   { key: 'shop', prefixes: ['/browse', '/market'] },
   { key: 'community', prefixes: ['/community'] },
