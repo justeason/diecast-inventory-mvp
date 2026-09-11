@@ -65,6 +65,15 @@ export default async function CatalogDiscoveryPage({
 
       <CatalogSearchBar q={q} brand={brand} year={year} availableNow={availableNow} brands={result.brands} />
 
+      {/* 20B §23: small, query-echoing result-context line — plain text, no
+          HTML injection (q is rendered as normal React text), no relevance
+          badges. Only shown when a search was actually performed. */}
+      {q?.trim() && (
+        <p className="mb-4 text-sm text-gray-500">
+          {result.totalCount} {result.totalCount === 1 ? 'model' : 'models'} for &ldquo;{q.trim()}&rdquo;
+        </p>
+      )}
+
       {result.models.length === 0 ? (
         <div className="py-12 text-center space-y-2">
           {availableNow ? (

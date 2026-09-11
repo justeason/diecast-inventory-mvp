@@ -40,7 +40,7 @@ export default async function HomePage() {
             href="/market"
             className="inline-block rounded-md border border-gray-300 px-6 py-3 text-sm font-medium text-gray-700 hover:border-gray-500 transition-colors"
           >
-            Marketplace →
+            Market Trends →
           </Link>
         </div>
       </section>

@@ -8,8 +8,14 @@ import type { TrendingModel, FastMoverModel, PriceMoverModel } from '@/lib/marke
 
 export const dynamic = 'force-dynamic'
 
+// 20B §34: copy-only naming clarification — nav "Market" now points at
+// /catalog, so this page's own "Marketplace" self-description read as a
+// second, confusingly similar concept. URL, query logic, and layout are
+// completely unchanged; only the customer-visible label moves to "Market
+// Trends" (matches what this page actually shows: Trending/Fast Movers/
+// Recently Sold/Top Price Movers).
 export const metadata: Metadata = {
-  title: 'Marketplace | CollectNTrades',
+  title: 'Market Trends | CollectNTrades',
   description: 'Trending, recently listed, fast movers, and top price movers from the CollectNTrades marketplace.',
 }
 
@@ -48,7 +54,7 @@ export default async function MarketPage() {
   return (
     <div className="space-y-12">
       <div>
-        <h1 className="text-2xl font-bold text-gray-900">Marketplace</h1>
+        <h1 className="text-2xl font-bold text-gray-900">Market Trends</h1>
         <p className="text-sm text-gray-500 mt-1">Rankings based on real CollectNTrades activity.</p>
       </div>
 

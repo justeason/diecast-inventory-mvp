@@ -137,12 +137,13 @@ describe('20A: Available Now filter (§17/§20/§22/§37)', () => {
     expect(whereStr).toContain('items')
   })
 
-  it('search mode (q set) may still be restricted by Available Now — single tier, availableWhere used instead of baseWhere', async () => {
+  it('20B: search mode (q set) + Available Now uses 3 relevance leaf tiers (Exact/Prefix/Broad), all available-only — no Unavailable tier counted/fetched at all', async () => {
     setupTiers(['a1'], ['u1'])
     await getCatalogDiscovery({ availableNow: true, q: 'model' })
-    expect((prisma.catalogModel.count as Mock).mock.calls.length).toBe(1)
-    const call = (prisma.catalogModel.findMany as Mock).mock.calls.find((c) => !c[0].distinct)!
-    expect(isAvailableWhere(call[0].where)).toBe(true)
+    expect((prisma.catalogModel.count as Mock).mock.calls.length).toBe(3)
+    for (const call of (prisma.catalogModel.count as Mock).mock.calls) {
+      expect(isAvailableWhere(call[0].where)).toBe(true)
+    }
   })
 
   it('resets to page 1 when combined with an out-of-range requested page against the smaller available-only total', async () => {
@@ -153,18 +154,21 @@ describe('20A: Available Now filter (§17/§20/§22/§37)', () => {
   })
 })
 
-describe('20A: search mode (q non-empty, no Available Now) keeps existing single-tier order — no availability tiering applied (§20/§23)', () => {
-  it('issues exactly one count() and one non-distinct findMany() call — same shape as pre-20A', async () => {
+// 20B: search mode now applies deterministic relevance tiering (Exact/Prefix/
+// Broad, each split into Available/Unavailable) instead of 20A's flat
+// single-tier query — see catalogSearchRelevance.test.ts for tier-content
+// coverage. This block now only proves the call-COUNT shape (6 leaf tiers,
+// each independently counted/fetched), not tier semantics.
+describe('20B: search mode (q non-empty, no Available Now) uses up to 6 relevance leaf tiers', () => {
+  it('issues 6 count() calls and up to 6 non-distinct findMany() calls — bounded by tier count, not catalog size', async () => {
     setupTiers(['a1'], ['u1'])
     await getCatalogDiscovery({ q: 'model' })
-    expect((prisma.catalogModel.count as Mock).mock.calls.length).toBe(1)
-    const findManyCalls = (prisma.catalogModel.findMany as Mock).mock.calls.filter((c) => !c[0].distinct)
-    expect(findManyCalls.length).toBe(1)
+    expect((prisma.catalogModel.count as Mock).mock.calls.length).toBe(6)
   })
 
   it('does not restrict the query to only available models — unavailable matches still appear', async () => {
     setupTiers(['a1'], ['u1'])
     const result = await getCatalogDiscovery({ q: 'model' })
-    expect(result.models.map((m) => m.id)).toEqual(['a1', 'u1'])
+    expect(result.models.map((m) => m.id)).toEqual(expect.arrayContaining(['a1', 'u1']))
   })
 })

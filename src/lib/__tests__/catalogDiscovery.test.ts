@@ -57,6 +57,16 @@ function baseCountWhere(mock: Mock, invocationIndex = 0): WhereNode {
   return baseCalls[invocationIndex][0].where
 }
 
+// 20B: in search mode (q non-empty), every leaf-tier where clause is
+// `{ AND: [tierWhere, { items: {...} }] }`, and tierWhere itself is
+// `{ AND: [baseWhere, ...relevance-specific clauses] }` — so baseWhere (the
+// unchanged brand/year/token predicate, §2) is always exactly two AND-levels
+// deep, regardless of which of the up-to-6 leaf tiers a given call belongs to.
+function searchBaseWhere(mock: Mock, callIndex = 0): WhereNode {
+  const call = mock.mock.calls[callIndex][0].where as WhereNode
+  return (call.AND![0] as WhereNode).AND![0] as WhereNode
+}
+
 // Evaluates a Prisma-shaped where clause (AND/OR/contains/equality leaves only —
 // the exact shape getCatalogDiscovery produces) against a plain object, so
 // multi-token AND/OR semantics can be proven without a real database.
@@ -213,8 +223,8 @@ describe('16J: search — case-insensitive text match across identity fields onl
 
     await getCatalogDiscovery({ q: 'mazda' })
 
-    const where = (prisma.catalogModel.count as Mock).mock.calls[0][0].where
-    const orClauses = where.AND[0].OR
+    const where = searchBaseWhere(prisma.catalogModel.count as Mock)
+    const orClauses = where.AND![0].OR
     expect(orClauses).toContainEqual({ brand: { contains: 'mazda', mode: 'insensitive' } })
     expect(orClauses).toContainEqual({ name: { contains: 'mazda', mode: 'insensitive' } })
     expect(orClauses).toContainEqual({ series: { contains: 'mazda', mode: 'insensitive' } })
@@ -233,8 +243,8 @@ describe('16J: search — case-insensitive text match across identity fields onl
 
     await getCatalogDiscovery({ q: '2022' })
 
-    const where = (prisma.catalogModel.count as Mock).mock.calls[0][0].where
-    const orClauses = where.AND[0].OR
+    const where = searchBaseWhere(prisma.catalogModel.count as Mock)
+    const orClauses = where.AND![0].OR
     expect(orClauses).toContainEqual({ year: 2022 })
   })
 
@@ -244,8 +254,8 @@ describe('16J: search — case-insensitive text match across identity fields onl
 
     await getCatalogDiscovery({ q: '22' })
 
-    const where = (prisma.catalogModel.count as Mock).mock.calls[0][0].where
-    const orClauses = where.AND[0].OR
+    const where = searchBaseWhere(prisma.catalogModel.count as Mock)
+    const orClauses = where.AND![0].OR!
     expect(orClauses.some((c: Record<string, unknown>) => 'year' in c)).toBe(false)
   })
 
@@ -265,8 +275,8 @@ describe('16J: search — case-insensitive text match across identity fields onl
 
     await getCatalogDiscovery({ q: 'x'.repeat(500) })
 
-    const where = (prisma.catalogModel.count as Mock).mock.calls[0][0].where
-    const clause = where.AND[0].OR[0] as { brand: { contains: string } }
+    const where = searchBaseWhere(prisma.catalogModel.count as Mock)
+    const clause = where.AND![0].OR![0] as { brand: { contains: string } }
     expect(clause.brand.contains.length).toBe(100)
   })
 })
@@ -281,7 +291,10 @@ describe('16J-verify: cross-field multi-token search semantics', () => {
     mockPage([])
     ;(prisma.catalogModel.count as Mock).mockResolvedValue(0)
     await getCatalogDiscovery({ q })
-    return (prisma.catalogModel.count as Mock).mock.calls.at(-1)![0].where as WhereNode
+    // 20B: baseWhere (the unchanged token/filter predicate) is embedded
+    // identically inside every relevance tier's count() call — grab it from
+    // the first one rather than the (now tier-shaped, NOT-bearing) last call.
+    return searchBaseWhere(prisma.catalogModel.count as Mock)
   }
 
   it('single-token q="mazda" matches via name alone', async () => {
@@ -354,7 +367,7 @@ describe('16J-verify: q combines with brand/year filters using AND semantics', (
     mockPage([])
     ;(prisma.catalogModel.count as Mock).mockResolvedValue(0)
     await getCatalogDiscovery(params)
-    return (prisma.catalogModel.count as Mock).mock.calls.at(-1)![0].where as WhereNode
+    return searchBaseWhere(prisma.catalogModel.count as Mock)
   }
 
   it('q=mazda&brand=Hot Wheels → matches', async () => {
@@ -391,8 +404,13 @@ describe('16J-verify: a matching zero-Listing model still appears under multi-to
     expect(result.models.map((m) => m.id)).toContain('catZ')
     expect(result.availabilityByModel.get('catZ')).toEqual({ count: 0, lowestPrice: null })
 
-    const modelQueryCall = (prisma.catalogModel.count as Mock).mock.calls[0][0]
-    expect(JSON.stringify(modelQueryCall.where)).not.toMatch(/listing|item/i)
+    // 20B: the underlying token/filter predicate itself still has no
+    // Listing-existence requirement baked in (unchanged from 16J) — the
+    // `items` relation filter that DOES now appear in every tier call is
+    // 20B's own available/unavailable split, added on top, never replacing
+    // the zero-listing-discoverable base query.
+    const baseWhere = searchBaseWhere(prisma.catalogModel.count as Mock)
+    expect(JSON.stringify(baseWhere)).not.toMatch(/listing|item/i)
   })
 })
 
@@ -458,10 +476,10 @@ describe('16J: structured filters — brand and year only', () => {
 
     await getCatalogDiscovery({ q: 'mazda', brand: 'Hot Wheels', year: '2022' })
 
-    const where = (prisma.catalogModel.count as Mock).mock.calls[0][0].where
+    const where = searchBaseWhere(prisma.catalogModel.count as Mock)
     expect(where.AND).toContainEqual({ brand: 'Hot Wheels' })
     expect(where.AND).toContainEqual({ year: 2022 })
-    expect(where.AND.some((c: Record<string, unknown>) => 'OR' in c)).toBe(true)
+    expect(where.AND!.some((c: Record<string, unknown>) => 'OR' in c)).toBe(true)
   })
 
   it('no price/condition/carded-loose filter exists — those are Listing attributes, not CatalogModel identity', () => {

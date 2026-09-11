@@ -163,9 +163,9 @@ describe('20A: accessibility — siblings, not nested; accessible names on every
     expect(cardSrc).toContain('ariaLabel={`I Own It — ${modelName}`}')
   })
 
-  it('Sell and Owned links carry plain aria-label props', () => {
+  it('Sell and Owned links carry plain aria-label props — 20B: Owned retains quantity in its accessible name even though mobile hides the digits visually', () => {
     expect(cardSrc).toContain('aria-label={`Sell this item — ${modelName}`}')
-    expect(cardSrc).toContain('aria-label={`View owned ${modelName}`}')
+    expect(cardSrc).toContain('aria-label={ownedQuantity !== null ? `Owned, quantity ${ownedQuantity} — ${modelName}` : `View owned ${modelName}`}')
   })
 
   it('image alt text is the model name', () => {

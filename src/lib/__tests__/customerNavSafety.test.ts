@@ -31,7 +31,7 @@ describe('Part 30 — route/deep-link preservation: every route file still exist
     ['Community profile settings', 'src/app/(store)/account/community/page.tsx'],
     ['Order Status', 'src/app/(store)/order-status/page.tsx'],
     ['Browse (Shop)', 'src/app/(store)/browse/page.tsx'],
-    ['Marketplace', 'src/app/(store)/market/page.tsx'],
+    ['Market Trends (20B: was "Marketplace")', 'src/app/(store)/market/page.tsx'],
     ['Portfolios', 'src/app/(store)/account/portfolios/page.tsx'],
     ['Cart', 'src/app/(store)/cart/page.tsx'],
   ]
