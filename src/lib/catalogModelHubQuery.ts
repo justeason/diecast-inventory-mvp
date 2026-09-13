@@ -53,6 +53,7 @@ export type CatalogModelHubData = {
 export async function getCatalogModelHub(
   catalogModelId: string,
   cursor?: string,
+  marketVariantId?: string,
 ): Promise<CatalogModelHubData | null> {
   const model = await prisma.catalogModel.findUnique({
     where: { id: catalogModelId },
@@ -65,8 +66,9 @@ export async function getCatalogModelHub(
 
   // Same purchasable-Listing predicate /browse's own query uses, scoped to this model.
   // 16J: extracted to a shared helper (listingEligibility.ts) — reused unchanged by
-  // catalogDiscoveryQuery.ts's availability aggregation.
-  const listingWhere = eligibleListingWhere(catalogModelId)
+  // catalogDiscoveryQuery.ts's availability aggregation. 24B: optional marketVariantId
+  // narrows to a selected packaging bucket — strict, never a broader fallback.
+  const listingWhere = eligibleListingWhere(catalogModelId, marketVariantId)
 
   const [listingCount, priceAgg, rows] = await Promise.all([
     prisma.listing.count({ where: listingWhere }),

@@ -296,26 +296,33 @@ describe('16H: truthful zero-Listing empty state', () => {
   })
 })
 
-// ── Valuation (Part N, O) ────────────────────────────────────────────────────────
+// ── Valuation (24B: migrated to 23B getValuation) ───────────────────────────────
 
-describe('16H: valuation is truthful, single model-level call, never $0 for unknown', () => {
-  it('calls getCatalogValuation exactly once (14C, already batched — no per-Listing valuation)', () => {
-    const matches = [...hubSrc.matchAll(/getCatalogValuation\(/g)]
+describe('24B: legacy valuation engines removed from this page — getValuation is the sole customer-facing EMV source', () => {
+  it('calls getValuation exactly once (never per-Listing)', () => {
+    const matches = [...hubSrc.matchAll(/getValuation\(/g)]
     expect(matches.length).toBe(1)
   })
 
-  it('unknown/insufficient valuation renders a truthful label, never a fabricated $0', () => {
-    expect(hubSrc).toContain("'Not enough sales data yet'")
-    expect(hubSrc).not.toMatch(/estimatedValue\s*\?\?\s*0/)
+  it('no longer imports getCatalogValuation, AdvancedValuation/AdvancedConfidence, resaleEstimator, or pricingIntelligence for customer EMV', () => {
+    expect(hubSrc).not.toMatch(/getCatalogValuation|AdvancedConfidence|from '@\/lib\/advancedValuation'|resaleEstimator|pricingIntelligence/)
   })
 
-  it('uses the exact existing centsToDisplay-equivalent cents-based formatting (integer cents / 100, .toFixed(2)) — no JS float accumulation', () => {
-    expect(hubSrc).toContain('function centsToDisplay(cents: number): string')
-    expect(hubSrc).toContain('(cents / 100).toFixed(2)')
+  it('imports getValuation from the canonical 23B module', () => {
+    expect(hubSrc).toContain("import { getValuation } from '@/lib/marketValuation'")
   })
 
-  it('confidence label reuses the existing AdvancedConfidence type/terminology, not invented wording', () => {
-    expect(hubSrc).toContain("import type { AdvancedConfidence } from '@/lib/advancedValuation'")
+  it('unknown/insufficient valuation renders a truthful label, never a fabricated $0 — delegated to MarketSnapshot', () => {
+    const snapshotSrc = readSrc('src/components/store/MarketSnapshot.tsx')
+    expect(snapshotSrc).toContain('Not enough direct sales data yet.')
+    expect(snapshotSrc).not.toMatch(/estimatedValueCents\s*\?\?\s*0/)
+  })
+
+  it('other 23C-deferred consumers of the old engines are untouched (advancedValuationQuery.ts/pricingIntelligence.ts still exist and are used elsewhere)', () => {
+    expect(exists('src/lib/advancedValuationQuery.ts')).toBe(true)
+    expect(exists('src/lib/pricingIntelligence.ts')).toBe(true)
+    const collectionValuationSrc = readSrc('src/app/(store)/account/collection/valuation/page.tsx')
+    expect(collectionValuationSrc).toContain('getCollectionValuation')
   })
 })
 

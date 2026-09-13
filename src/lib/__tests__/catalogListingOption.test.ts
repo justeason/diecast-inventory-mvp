@@ -153,9 +153,9 @@ describe('16I: preserves the exact 16H eligibility predicate; no client-derived 
     expect(optionSrc).not.toMatch(/where:/)
   })
 
-  it('the eligible-Listing query predicate is semantically unchanged from 16H (16J extracted it to a shared helper, reused verbatim)', () => {
+  it('the eligible-Listing query predicate is semantically unchanged from 16H (16J extracted it to a shared helper, reused verbatim; 24B threads an optional marketVariantId through the same helper)', () => {
     expect(queryModuleSrc).toContain("import { eligibleListingWhere } from './listingEligibility'")
-    expect(queryModuleSrc).toContain('eligibleListingWhere(catalogModelId)')
+    expect(queryModuleSrc).toContain('eligibleListingWhere(catalogModelId, marketVariantId)')
   })
 
   it('AddToCartButton (unmodified) remains the sole cart-mutation authority — no client reservation/availability truth added', () => {
@@ -229,8 +229,8 @@ describe('16I: no sorting engine, no filtering, no per-Listing valuation', () =>
   })
 
   it('valuation remains a single model-level section, not duplicated inside CatalogListingOption', () => {
-    expect(optionSrc).not.toMatch(/getCatalogValuation|AdvancedConfidence/)
-    const valuationMatches = [...hubSrc.matchAll(/getCatalogValuation\(/g)]
+    expect(optionSrc).not.toMatch(/getValuation|getCatalogValuation|AdvancedConfidence/)
+    const valuationMatches = [...hubSrc.matchAll(/getValuation\(/g)]
     expect(valuationMatches.length).toBe(1)
   })
 })

@@ -25,8 +25,19 @@ describe('§31/§32 — public catalog surfaces unchanged', () => {
     expect(catalogPage).not.toMatch(/marketVariant/i)
   })
 
-  it('/catalog/[id] hub page never references MarketVariant — availability still aggregates across all ItemInstances for the model', () => {
-    expect(hubPage).not.toMatch(/marketVariant/i)
+  // 24B: the hub page now legitimately composes MarketVariant scoping (the
+  // Series-24 Carded/Loose variant selector) — this is an intentional,
+  // approved change to the 21B-era "never references MarketVariant" rule.
+  // The narrower invariant that still holds: MarketVariant is never exposed to
+  // customers as raw terminology (only "Carded"/"Loose"/"All"), and Available
+  // Copies still aggregates all eligible ItemInstances when no variant is selected.
+  it('/catalog/[id] hub page composes MarketVariant scoping only through the resolved packagingType id — never the raw "MarketVariant" term as visible customer text', () => {
+    expect(hubPage).toMatch(/marketVariantId/)
+    expect(hubPage).not.toMatch(/>\s*MarketVariant\s*</)
+  })
+
+  it('Available Copies aggregates across all eligible ItemInstances for the model when no variant is selected (marketVariantId undefined)', () => {
+    expect(hubPage).toContain('getCatalogModelHub(id, cursor, marketVariantId ?? undefined)')
   })
 })
 

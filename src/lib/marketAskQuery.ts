@@ -102,6 +102,62 @@ export async function getLowestAsk(filter: { catalogModelId: string; marketVaria
   return asks[0] ?? null
 }
 
+// ── Internal ask summary (24B) — Lowest/Median Ask + Available Copies, EXACT
+// regardless of eligible population size. getInternalAsks is intentionally
+// bounded (DEFAULT_ASK_LIMIT/MAX_ASK_LIMIT) with no hasMore signal, so a median
+// computed over its truncated result would silently be wrong once eligible
+// supply exceeds the limit. Instead: an exact count(), then only the 1-2
+// specific ordered rows the median actually needs (price ASC, id ASC — same
+// deterministic order as getInternalAsks) — never a full/bounded fetch-then-
+// median. Internal-only; external asks never contribute (same rule as Lowest Ask).
+export type InternalAskSummary = {
+  lowestAskCents: number | null
+  medianAskCents: number | null
+  availableCopies: number
+}
+
+const ASK_SUMMARY_ORDER_BY: Prisma.ListingOrderByWithRelationInput[] = [{ price: 'asc' }, { id: 'asc' }]
+
+export async function getInternalAskSummary(filter: {
+  catalogModelId: string
+  marketVariantId?: string
+}): Promise<InternalAskSummary> {
+  const where = buildInternalAskWhere(filter)
+
+  const availableCopies = await prisma.listing.count({ where })
+  if (availableCopies === 0) {
+    return { lowestAskCents: null, medianAskCents: null, availableCopies: 0 }
+  }
+
+  const lowest = await prisma.listing.findFirst({ where, orderBy: ASK_SUMMARY_ORDER_BY, select: { price: true } })
+  const lowestAskCents = lowest ? internalPriceToCents(lowest.price) : null
+
+  let medianAskCents: number | null
+  if (availableCopies === 1) {
+    medianAskCents = lowestAskCents
+  } else if (availableCopies % 2 === 1) {
+    const mid = await prisma.listing.findFirst({
+      where,
+      orderBy: ASK_SUMMARY_ORDER_BY,
+      skip: (availableCopies - 1) / 2,
+      select: { price: true },
+    })
+    medianAskCents = mid ? internalPriceToCents(mid.price) : null
+  } else {
+    const pair = await prisma.listing.findMany({
+      where,
+      orderBy: ASK_SUMMARY_ORDER_BY,
+      skip: availableCopies / 2 - 1,
+      take: 2,
+      select: { price: true },
+    })
+    medianAskCents =
+      pair.length === 2 ? Math.round((internalPriceToCents(pair[0].price) + internalPriceToCents(pair[1].price)) / 2) : null
+  }
+
+  return { lowestAskCents, medianAskCents, availableCopies }
+}
+
 // ── External asks — matched active_ask observations, never purchasable here ─
 
 export type ExternalAskInput = ExternalComparableInput & {
