@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client'
+import { PACKAGING_TYPES } from '../src/lib/marketVariant'
 
 const prisma = new PrismaClient()
 
@@ -41,22 +42,40 @@ async function main() {
     }),
   ])
 
+  // 21B: every CatalogModel gets exactly Carded + Loose MarketVariant rows.
+  const catalogModels = [camaro, twinMill, fordF100, deoraII, viper, camaro67, jeep]
+  const variantsByCatalog = new Map<string, Record<(typeof PACKAGING_TYPES)[number], string>>()
+  for (const cm of catalogModels) {
+    const created = await Promise.all(
+      PACKAGING_TYPES.map((packagingType) =>
+        prisma.marketVariant.create({ data: { catalogModelId: cm.id, packagingType } })
+      )
+    )
+    variantsByCatalog.set(cm.id, {
+      carded: created.find((v) => v.packagingType === 'carded')!.id,
+      loose:  created.find((v) => v.packagingType === 'loose')!.id,
+    })
+  }
+  function variantId(catalogId: string, packaging: 'carded' | 'loose'): string {
+    return variantsByCatalog.get(catalogId)![packaging]
+  }
+
   await prisma.itemInstance.createMany({
     data: [
-      { sku: 'HW-001', catalogId: camaro.id,   locationId: locA.id, cardedOrLoose: 'carded', condition: 'mint',     purchasePrice: 4.00, listPrice: 8.00,  status: 'available'   },
-      { sku: 'HW-002', catalogId: twinMill.id, locationId: locA.id, cardedOrLoose: 'loose',  condition: 'good',     purchasePrice: 2.00, listPrice: 4.00,  status: 'available'   },
-      { sku: 'MB-001', catalogId: fordF100.id, locationId: locB.id, cardedOrLoose: 'carded', condition: 'near_mint',purchasePrice: 6.00, listPrice: 12.00, status: 'available'   },
-      { sku: 'HW-003', catalogId: deoraII.id,  locationId: locB.id, cardedOrLoose: 'loose',  condition: 'fair',     purchasePrice: 1.50, listPrice: 3.00,  status: 'available'   },
-      { sku: 'MB-002', catalogId: viper.id,    locationId: locC.id, cardedOrLoose: 'carded', condition: 'mint',     purchasePrice: 5.00, listPrice: 10.00, status: 'available'   },
-      { sku: 'HW-004', catalogId: camaro67.id, locationId: locA.id, cardedOrLoose: 'carded', condition: 'near_mint',purchasePrice: 4.50, listPrice: 9.00,  status: 'draft'       },
-      { sku: 'MB-003', catalogId: jeep.id,     locationId: locC.id, cardedOrLoose: 'loose',  condition: 'poor',     purchasePrice: 1.00, listPrice: null,  status: 'not_for_sale'},
-      { sku: 'HW-005', catalogId: camaro.id,   locationId: locB.id, cardedOrLoose: 'loose',  condition: 'damaged',  purchasePrice: 0.75, listPrice: 1.50,  status: 'draft'       },
-      { sku: 'HW-006', catalogId: twinMill.id, locationId: locC.id, cardedOrLoose: 'carded', condition: 'good',     purchasePrice: 2.50, listPrice: 5.00,  status: 'reserved'    },
-      { sku: 'MB-004', catalogId: fordF100.id, locationId: locA.id, cardedOrLoose: 'carded', condition: 'mint',     purchasePrice: 7.50, listPrice: 15.00, status: 'sold'        },
+      { sku: 'HW-001', catalogId: camaro.id,   marketVariantId: variantId(camaro.id, 'carded'),   locationId: locA.id, cardedOrLoose: 'carded', condition: 'mint',     purchasePrice: 4.00, listPrice: 8.00,  status: 'available'   },
+      { sku: 'HW-002', catalogId: twinMill.id, marketVariantId: variantId(twinMill.id, 'loose'),  locationId: locA.id, cardedOrLoose: 'loose',  condition: 'good',     purchasePrice: 2.00, listPrice: 4.00,  status: 'available'   },
+      { sku: 'MB-001', catalogId: fordF100.id, marketVariantId: variantId(fordF100.id, 'carded'), locationId: locB.id, cardedOrLoose: 'carded', condition: 'near_mint',purchasePrice: 6.00, listPrice: 12.00, status: 'available'   },
+      { sku: 'HW-003', catalogId: deoraII.id,  marketVariantId: variantId(deoraII.id, 'loose'),   locationId: locB.id, cardedOrLoose: 'loose',  condition: 'fair',     purchasePrice: 1.50, listPrice: 3.00,  status: 'available'   },
+      { sku: 'MB-002', catalogId: viper.id,    marketVariantId: variantId(viper.id, 'carded'),    locationId: locC.id, cardedOrLoose: 'carded', condition: 'mint',     purchasePrice: 5.00, listPrice: 10.00, status: 'available'   },
+      { sku: 'HW-004', catalogId: camaro67.id, marketVariantId: variantId(camaro67.id, 'carded'), locationId: locA.id, cardedOrLoose: 'carded', condition: 'near_mint',purchasePrice: 4.50, listPrice: 9.00,  status: 'draft'       },
+      { sku: 'MB-003', catalogId: jeep.id,     marketVariantId: variantId(jeep.id, 'loose'),      locationId: locC.id, cardedOrLoose: 'loose',  condition: 'poor',     purchasePrice: 1.00, listPrice: null,  status: 'not_for_sale'},
+      { sku: 'HW-005', catalogId: camaro.id,   marketVariantId: variantId(camaro.id, 'loose'),    locationId: locB.id, cardedOrLoose: 'loose',  condition: 'damaged',  purchasePrice: 0.75, listPrice: 1.50,  status: 'draft'       },
+      { sku: 'HW-006', catalogId: twinMill.id, marketVariantId: variantId(twinMill.id, 'carded'), locationId: locC.id, cardedOrLoose: 'carded', condition: 'good',     purchasePrice: 2.50, listPrice: 5.00,  status: 'reserved'    },
+      { sku: 'MB-004', catalogId: fordF100.id, marketVariantId: variantId(fordF100.id, 'carded'), locationId: locA.id, cardedOrLoose: 'carded', condition: 'mint',     purchasePrice: 7.50, listPrice: 15.00, status: 'sold'        },
     ],
   })
 
-  console.log('Seeded: 3 locations, 7 catalog models, 10 item instances')
+  console.log('Seeded: 3 locations, 7 catalog models, 14 market variants, 10 item instances')
 }
 
 main()

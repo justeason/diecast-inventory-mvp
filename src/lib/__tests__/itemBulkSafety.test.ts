@@ -194,7 +194,9 @@ describe('one authoritative storage-mutation rule — every real caller delegate
   it('items.ts writes locationId in exactly one place: toMutableDbData, called from exactly one itemInstance.update site (only reachable after validateItemStorageMove passes)', () => {
     const updateCalls = [...itemsActionsSrc.matchAll(/tx\.itemInstance\.update\(/g)].length
     expect(updateCalls).toBe(1)
-    expect(itemsActionsSrc).toContain('data: toMutableDbData(result.data)')
+    // 21B: marketVariantId is resolved fresh and folded into the same combined
+    // write — toMutableDbData itself still owns locationId exclusively.
+    expect(itemsActionsSrc).toContain('data: { marketVariantId, ...toMutableDbData(result.data) }')
   })
 
   it('condition enum is shared: items.ts imports ITEM_CONDITIONS from itemMutations.ts rather than re-declaring the list', () => {

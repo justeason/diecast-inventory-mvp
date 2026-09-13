@@ -8,6 +8,7 @@ import { getPricingIntelligence } from '@/lib/pricingIntelligenceQuery'
 import { checkRiskGate, consumeApprovedRiskGate, markApprovalConsumed, type RiskGateCheckResult } from '@/lib/actions/riskApprovals'
 import type { ItemCatalogReassignmentContext } from '@/lib/riskPolicy'
 import { ITEM_CONDITIONS, validateItemStorageMove, buildItemCatalogReassignmentContext } from '@/lib/itemMutations'
+import { resolvePackagingMarketVariant } from '@/lib/marketVariant'
 
 function isValidNonNegativePrice(v: string | undefined): boolean {
   if (!v || !v.trim()) return true
@@ -90,10 +91,14 @@ export async function createItemInstance(
   if (locationId && !location) return { errors: { locationId: ['Storage location not found.'] } }
 
   try {
+    // 21B: resolved server-side from catalogId + cardedOrLoose — never a client-
+    // supplied marketVariantId. catalog existence and cardedOrLoose validity are
+    // already confirmed above.
+    const marketVariantId = await resolvePackagingMarketVariant(prisma, catalogId, result.data.cardedOrLoose)
     // sku is assigned here, exactly once — this is the ONLY itemInstance.create call
     // site for this admin form (see itemIdentitySafety.test.ts for the codebase-wide
     // invariant that ItemInstance.create only ever happens here or at intake conversion).
-    await prisma.itemInstance.create({ data: { sku, ...toMutableDbData(result.data) } })
+    await prisma.itemInstance.create({ data: { sku, marketVariantId, ...toMutableDbData(result.data) } })
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
       return { errors: { sku: ['SKU is already in use.'] } }
@@ -184,9 +189,16 @@ export async function updateItemInstance(
         if (!consumed.ok) { txError = { errors: { _form: [consumed.error] } }; throw new Error('TX_VALIDATION') }
       }
 
+      // 21B: always re-resolved fresh from the submitted catalogId + cardedOrLoose —
+      // this form always resubmits both together as one combined write, so a
+      // condition-only edit naturally resolves to the SAME variant (unchanged),
+      // while a catalogId or cardedOrLoose change resolves to a different one, in
+      // the same mutation. Never a client-supplied marketVariantId.
+      const marketVariantId = await resolvePackagingMarketVariant(tx, catalogId, result.data.cardedOrLoose)
+
       // The one, single, combined write — storage/condition/catalog/status/price/
       // notes all commit together or not at all.
-      await tx.itemInstance.update({ where: { id }, data: toMutableDbData(result.data) })
+      await tx.itemInstance.update({ where: { id }, data: { marketVariantId, ...toMutableDbData(result.data) } })
 
       if (catalogChanging && gate!.decision === 'consume_approved') {
         await markApprovalConsumed(tx, gate!.approvalRequestId)

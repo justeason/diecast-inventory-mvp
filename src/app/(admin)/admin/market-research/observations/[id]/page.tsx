@@ -5,6 +5,7 @@ import { getObservationById } from '@/lib/externalMarketResearchQuery'
 import { unmatchObservation, restoreObservation } from '@/lib/actions/externalMarketResearch'
 import { MatchForm } from '@/components/admin/market-research/MatchForm'
 import { RejectForm } from '@/components/admin/market-research/RejectForm'
+import { VariantForm } from '@/components/admin/market-research/VariantForm'
 
 export const dynamic = 'force-dynamic'
 export const metadata: Metadata = { title: 'Observation Detail | Admin' }
@@ -115,6 +116,7 @@ export default async function ObservationDetailPage({
                 Unmatch
               </button>
             </form>
+            <VariantForm observationId={obs.id} updatedAt={obs.updatedAt.toISOString()} packagingType={obs.packagingType} />
           </div>
         )}
 

@@ -113,6 +113,17 @@ function makeTx(dupeId: string, canonicalId: string, dupeWants: Want[], canonica
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
       count:      vi.fn().mockResolvedValue(0),
     },
+    // 21B: no MarketVariant rows by default — reconcileMarketVariantMerge's
+    // findMany calls both resolve empty, so its per-variant updates/deleteMany
+    // are simply never reached in the clean path.
+    marketVariant: {
+      findMany:   vi.fn().mockResolvedValue([]),
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      count:      vi.fn().mockResolvedValue(0),
+    },
+    // 21B: OrderItem now has a direct catalogModelId identity pointer and a
+    // marketVariantId child reference, both reconciled during merge.
+    orderItem: { updateMany: vi.fn().mockResolvedValue({ count: 0 }), count: vi.fn().mockResolvedValue(0) },
     catalogModelMergeAudit: { create: vi.fn().mockResolvedValue({}) },
     ...overrides,
   }

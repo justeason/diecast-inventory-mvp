@@ -70,6 +70,12 @@ function makeTx(initial: Record<string, unknown>, overrides: Record<string, unkn
       create: vi.fn().mockResolvedValue({ id: 'cat-new', brand: 'Hot Wheels', name: 'Porsche 911' }),
     },
     storageLocation: { findUnique: vi.fn().mockResolvedValue({ id: 'loc1', label: 'B-14-03' }) },
+    // 21B: resolvePackagingMarketVariant/ensurePackagingMarketVariants both go
+    // through this — a resolved variant always exists by default.
+    marketVariant: {
+      findUnique: vi.fn().mockResolvedValue({ id: 'variant1' }),
+      create: vi.fn().mockResolvedValue({ id: 'variant-new' }),
+    },
     sellerInboundShipment: { findUnique: vi.fn().mockResolvedValue({ receivedQuantity: null }) },
     sellerAgreement: { findMany: vi.fn().mockResolvedValue([{ id: 'agr1', type: 'consignment', status: 'accepted', agreedBuyoutAmount: null, sellerPortfolioId: 'port1', acceptedItemCount: 5 }]) },
     sellerSubmission: { findUnique: vi.fn().mockResolvedValue({ profileId: 'prof1' }) },

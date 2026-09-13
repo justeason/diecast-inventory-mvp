@@ -7,6 +7,7 @@ import { isAdminAuthenticated } from '@/lib/adminAuth'
 import { ingestCsvImport, type ImportBatchResult } from '@/lib/externalMarketImport'
 import { normalizeError } from '@/lib/errors'
 import { getRequestId } from '@/lib/requestId'
+import { isValidPackagingType, findPackagingMarketVariant } from '@/lib/marketVariant'
 
 export type ImportActionState = {
   errors?: Record<string, string[]>
@@ -84,6 +85,10 @@ export async function matchObservationToCatalog(
           catalogModelId:  parsed.data.catalogModelId,
           matchMethod:     'manual',
           rejectionReason: null,
+          // 21B: a variant only ever belongs to the model it was assigned against —
+          // (re)matching to a model always clears any prior classification rather
+          // than risk it silently pointing at a different CatalogModel's variant.
+          marketVariantId: null,
         },
       })
       await tx.externalMarketObservationAudit.create({
@@ -122,7 +127,9 @@ export async function unmatchObservation(observationId: string, updatedAt: strin
 
       await tx.externalMarketObservation.update({
         where: { id: observationId },
-        data: { matchStatus: 'unmatched', catalogModelId: null, matchMethod: null },
+        // 21B: a variant classification is only meaningful while matched to the
+        // model it belongs to — unmatching clears it, same as catalogModelId.
+        data: { matchStatus: 'unmatched', catalogModelId: null, matchMethod: null, marketVariantId: null },
       })
       await tx.externalMarketObservationAudit.create({
         data: {
@@ -215,6 +222,73 @@ export async function restoreObservation(observationId: string, updatedAt: strin
       })
     })
   } catch { /* redirect still occurs; page shows current state */ }
+
+  redirect(`/admin/market-research/observations/${observationId}`)
+}
+
+// 21B §16/§36: narrow admin-only action to assign/clear a MATCHED observation's
+// packaging classification. packagingType is null to clear (→ "Unclassified",
+// meaning marketVariantId = null — never a fabricated "Unspecified" MarketVariant
+// row). Accepts (observationId, packagingType) and resolves the MarketVariant
+// server-side against the observation's OWN matched catalogModelId — never trusts
+// a client-supplied marketVariantId, and a variant belonging to a different
+// CatalogModel can never be assigned.
+export type AssignVariantActionState = { errors?: Record<string, string[]> } | null
+
+const assignVariantSchema = z.object({
+  packagingType: z.string().optional(),
+  updatedAt:     z.string().min(1, 'Missing updatedAt'),
+})
+
+export async function assignObservationVariant(
+  observationId: string,
+  _prev: AssignVariantActionState,
+  formData: FormData,
+): Promise<AssignVariantActionState> {
+  if (!await isAdminAuthenticated()) return { errors: { form: ['Unauthorized'] } }
+
+  const parsed = assignVariantSchema.safeParse({
+    packagingType: formData.get('packagingType') || undefined,
+    updatedAt:     formData.get('updatedAt'),
+  })
+  if (!parsed.success) return { errors: parsed.error.flatten().fieldErrors }
+
+  const raw = parsed.data.packagingType?.trim() || null
+  if (raw !== null && !isValidPackagingType(raw)) {
+    return { errors: { packagingType: ['Packaging must be Carded, Loose, or left unclassified.'] } }
+  }
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      const obs = await tx.externalMarketObservation.findUnique({ where: { id: observationId } })
+      if (!obs) throw new Error('NOT_FOUND')
+      if (obs.updatedAt.toISOString() !== parsed.data.updatedAt) throw new Error('STALE')
+      if (obs.matchStatus !== 'matched' || !obs.catalogModelId) throw new Error('NOT_MATCHED')
+
+      const before = { marketVariantId: obs.marketVariantId }
+      let marketVariantId: string | null = null
+      if (raw) {
+        const variant = await findPackagingMarketVariant(tx, obs.catalogModelId, raw)
+        if (!variant) throw new Error('NOT_FOUND')
+        marketVariantId = variant.id
+      }
+
+      await tx.externalMarketObservation.update({ where: { id: observationId }, data: { marketVariantId } })
+      await tx.externalMarketObservationAudit.create({
+        data: {
+          observationId,
+          action: marketVariantId ? 'variant_assigned' : 'variant_cleared',
+          beforeSnapshot: before,
+          afterSnapshot: { marketVariantId },
+        },
+      })
+    })
+  } catch (e) {
+    if (e instanceof Error && e.message === 'NOT_FOUND') return { errors: { form: ['Observation or catalog model not found'] } }
+    if (e instanceof Error && e.message === 'STALE') return { errors: { form: ['Observation was modified by another admin. Please refresh.'] } }
+    if (e instanceof Error && e.message === 'NOT_MATCHED') return { errors: { form: ['Observation must be matched to a catalog model before assigning a packaging variant.'] } }
+    throw e
+  }
 
   redirect(`/admin/market-research/observations/${observationId}`)
 }

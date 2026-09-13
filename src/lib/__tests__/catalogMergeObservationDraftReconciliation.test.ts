@@ -107,6 +107,17 @@ function makeTx(overrides: Record<string, unknown> = {}) {
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
       count:      vi.fn().mockResolvedValue(0),
     },
+    // 21B: no MarketVariant rows by default — reconcileMarketVariantMerge's
+    // findMany calls both resolve empty, so its per-variant updates/deleteMany
+    // are simply never reached in the clean path.
+    marketVariant: {
+      findMany:   vi.fn().mockResolvedValue([]),
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      count:      vi.fn().mockResolvedValue(0),
+    },
+    // 21B: OrderItem now has a direct catalogModelId identity pointer and a
+    // marketVariantId child reference, both reconciled during merge.
+    orderItem: { updateMany: vi.fn().mockResolvedValue({ count: 0 }), count: vi.fn().mockResolvedValue(0) },
     catalogModelMergeAudit: { create: vi.fn().mockResolvedValue({}) },
     ...overrides,
   }
@@ -159,7 +170,7 @@ describe('18C: ExternalMarketObservation retarget (20/8/9)', () => {
 
   it('a currently matched observation remains matched — the merge is not an unmatch/re-match workflow (structural: no matchStatus write anywhere in the reconciliation function)', () => {
     const src = readSrc('src/lib/actions/catalog.ts')
-    const fnSrc = src.slice(src.indexOf('async function reconcileExternalMarketObservationMerge'), src.indexOf('// 15F-review'))
+    const fnSrc = src.slice(src.indexOf('async function reconcileExternalMarketObservationMerge'), src.indexOf('async function reconcileMarketVariantMerge'))
     expect(fnSrc).not.toContain('matchStatus')
     expect(fnSrc).not.toContain('matchMethod')
     expect(fnSrc).not.toContain('rejectionReason')
@@ -167,7 +178,7 @@ describe('18C: ExternalMarketObservation retarget (20/8/9)', () => {
 
   it('no P2002/dedupe/delete+recreate workaround — plain identity correction only', () => {
     const src = readSrc('src/lib/actions/catalog.ts')
-    const fnSrc = src.slice(src.indexOf('async function reconcileExternalMarketObservationMerge'), src.indexOf('// 15F-review'))
+    const fnSrc = src.slice(src.indexOf('async function reconcileExternalMarketObservationMerge'), src.indexOf('async function reconcileMarketVariantMerge'))
     expect(fnSrc).not.toContain('P2002')
     expect(fnSrc).not.toMatch(/externalMarketObservation\.(delete|create)\(/)
   })
@@ -206,7 +217,7 @@ describe('18C: ExternalMarketObservation audit trail (21/4/6/7)', () => {
 
   it('the audit write happens BEFORE the observation update — audit and retarget are atomic within the same reconciliation function/transaction', () => {
     const src = readSrc('src/lib/actions/catalog.ts')
-    const fnSrc = src.slice(src.indexOf('async function reconcileExternalMarketObservationMerge'), src.indexOf('// 15F-review'))
+    const fnSrc = src.slice(src.indexOf('async function reconcileExternalMarketObservationMerge'), src.indexOf('async function reconcileMarketVariantMerge'))
     const auditIdx = fnSrc.indexOf('externalMarketObservationAudit.createMany')
     const updateIdx = fnSrc.indexOf('externalMarketObservation.updateMany')
     expect(auditIdx).toBeGreaterThan(-1)
@@ -223,7 +234,7 @@ describe('18C: ExternalMarketObservation audit trail (21/4/6/7)', () => {
 
   it('no per-observation loop — one lock query + one createMany + one updateMany, never per-row', () => {
     const src = readSrc('src/lib/actions/catalog.ts')
-    const fnSrc = src.slice(src.indexOf('async function reconcileExternalMarketObservationMerge'), src.indexOf('// 15F-review'))
+    const fnSrc = src.slice(src.indexOf('async function reconcileExternalMarketObservationMerge'), src.indexOf('async function reconcileMarketVariantMerge'))
     expect((fnSrc.match(/\$queryRaw/g) ?? []).length).toBe(1)
     expect((fnSrc.match(/externalMarketObservationAudit\.createMany/g) ?? []).length).toBe(1)
     expect((fnSrc.match(/externalMarketObservation\.updateMany/g) ?? []).length).toBe(1)
@@ -252,7 +263,7 @@ describe('18C: multiple observations — several to A, several already to B (22)
 
   it('no uniqueness handling code exists — proven safe by [provider, externalId] and fingerprint both excluding catalogModelId, verified against schema', () => {
     const src = readSrc('src/lib/actions/catalog.ts')
-    const fnSrc = src.slice(src.indexOf('async function reconcileExternalMarketObservationMerge'), src.indexOf('// 15F-review'))
+    const fnSrc = src.slice(src.indexOf('async function reconcileExternalMarketObservationMerge'), src.indexOf('async function reconcileMarketVariantMerge'))
     expect(fnSrc).not.toContain('survivor')
 
     const schema = readSrc('prisma/schema.prisma')
@@ -268,14 +279,14 @@ describe('18C: multiple observations — several to A, several already to B (22)
 describe('18C final: ExternalMarketObservation rows are explicitly row-locked before audit/update (race fix)', () => {
   it('uses a parameterized SELECT ... FOR UPDATE via $queryRaw — no user-controlled SQL interpolation, dupeId is a bound template value', () => {
     const src = readSrc('src/lib/actions/catalog.ts')
-    const fnSrc = src.slice(src.indexOf('async function reconcileExternalMarketObservationMerge'), src.indexOf('// 15F-review'))
+    const fnSrc = src.slice(src.indexOf('async function reconcileExternalMarketObservationMerge'), src.indexOf('async function reconcileMarketVariantMerge'))
     expect(fnSrc).toContain('FOR UPDATE')
     expect(fnSrc).toContain('SELECT id FROM "ExternalMarketObservation" WHERE "catalogModelId" = ${dupeId} FOR UPDATE')
   })
 
   it('the row lock is acquired BEFORE any audit row is generated — locked set drives the audit, not an unlocked snapshot', () => {
     const src = readSrc('src/lib/actions/catalog.ts')
-    const fnSrc = src.slice(src.indexOf('async function reconcileExternalMarketObservationMerge'), src.indexOf('// 15F-review'))
+    const fnSrc = src.slice(src.indexOf('async function reconcileExternalMarketObservationMerge'), src.indexOf('async function reconcileMarketVariantMerge'))
     const lockIdx = fnSrc.indexOf('$queryRaw')
     const auditIdx = fnSrc.indexOf('externalMarketObservationAudit.createMany')
     expect(lockIdx).toBeGreaterThan(-1)
@@ -320,7 +331,7 @@ describe('18C final: ExternalMarketObservation rows are explicitly row-locked be
 
   it('structural: a count mismatch throws before the function returns — the mismatch check exists and precedes the return statement', () => {
     const src = readSrc('src/lib/actions/catalog.ts')
-    const fnSrc = src.slice(src.indexOf('async function reconcileExternalMarketObservationMerge'), src.indexOf('// 15F-review'))
+    const fnSrc = src.slice(src.indexOf('async function reconcileExternalMarketObservationMerge'), src.indexOf('async function reconcileMarketVariantMerge'))
     const mismatchIdx = fnSrc.indexOf('migrated.count !== lockedIds.length')
     const returnIdx = fnSrc.lastIndexOf('return { migrated:')
     expect(mismatchIdx).toBeGreaterThan(-1)
@@ -416,7 +427,7 @@ describe('18C: final pre-delete integrity guard catches observation/draft blocke
 
   it('final integrity check includes both new counts, unfiltered', () => {
     const src = readSrc('src/lib/actions/catalog.ts')
-    const idx = src.indexOf('const [ri, rc, rs, rsub, rp, rw, rae, raf, rfp, reo, rid, rmc, rgsi]')
+    const idx = src.indexOf('const [ri, rc, rs, rsub, rp, rw, rae, raf, rfp, reo, rid, rmc, rgsi, rmv, roi, rivar, ridvar, reovar, roivar]')
     const block = src.slice(idx, src.indexOf('])', idx))
     expect(block).toContain('tx.externalMarketObservation.count({ where: { catalogModelId: dupeId } })')
     expect(block).toContain('tx.intakeDraft.count({ where: { catalogModelId: dupeId } })')

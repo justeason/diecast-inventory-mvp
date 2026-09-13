@@ -10,6 +10,7 @@ import { DUPLICATE_SCORE_THRESHOLD } from '@/lib/catalogMatching'
 import { computeImpactCounts, type MergeImpactSummary } from '@/lib/catalogDataQualityQuery'
 import { checkRiskGate, consumeApprovedRiskGate, markApprovalConsumed } from '@/lib/actions/riskApprovals'
 import type { CatalogModelMergeContext } from '@/lib/riskPolicy'
+import { ensurePackagingMarketVariants } from '@/lib/marketVariant'
 
 // 18A: WantedCatalogModel.catalogModel uses onDelete: Cascade — without this
 // reconciliation, a customer's Want on the duplicate model would be silently
@@ -138,6 +139,62 @@ async function reconcileExternalMarketObservationMerge(
   }
 
   return { migrated: migrated.count }
+}
+
+// 21B: MarketVariant adds a new CatalogModel relation the merge must reconcile.
+// Uniqueness is only [catalogModelId, packagingType] — so the duplicate's own
+// Carded/Loose rows can NEVER be re-pointed to canonicalId directly (canonical
+// already has its own Carded/Loose rows; that would collide). Instead: map
+// duplicate variant id -> canonical variant id by matching packagingType,
+// re-point every child FK (ItemInstance/IntakeDraft/ExternalMarketObservation/
+// OrderItem) from the duplicate's variant id to canonical's, THEN delete the
+// now-orphaned duplicate MarketVariant rows explicitly (never left for cascade —
+// ItemInstance.marketVariantId is a required, RESTRICT relation, so deleting
+// before repoint would fail with a raw FK error).
+//
+// Locking: called only after the caller has already locked every CatalogModel row
+// in the merge (canonical + all duplicates) in sorted-id order — see the lock
+// comment on the merge action below. MarketVariant rows are locked here, strictly
+// after that, in a deterministic (packagingType, id) order, never touching any
+// unrelated parent/session row.
+async function reconcileMarketVariantMerge(
+  tx: Prisma.TransactionClient,
+  dupeId: string,
+  canonicalId: string,
+): Promise<{ migrated: number; dupeVariantIds: string[] }> {
+  const [dupeVariants, canonicalVariants] = await Promise.all([
+    tx.marketVariant.findMany({ where: { catalogModelId: dupeId }, select: { id: true, packagingType: true } }),
+    tx.marketVariant.findMany({ where: { catalogModelId: canonicalId }, select: { id: true, packagingType: true } }),
+  ])
+
+  const lockTargets = [...dupeVariants, ...canonicalVariants]
+    .sort((a, b) => a.packagingType.localeCompare(b.packagingType) || a.id.localeCompare(b.id))
+  for (const v of lockTargets) {
+    await tx.$queryRaw`SELECT id FROM "MarketVariant" WHERE id = ${v.id} FOR UPDATE`
+  }
+
+  const canonicalByPackaging = new Map(canonicalVariants.map((v) => [v.packagingType, v.id]))
+  const dupeVariantIds = dupeVariants.map((v) => v.id)
+
+  let migrated = 0
+  for (const dupeVariant of dupeVariants) {
+    const canonicalVariantId = canonicalByPackaging.get(dupeVariant.packagingType)
+    if (!canonicalVariantId) continue // unreachable — every CatalogModel has both packaging variants
+
+    const [items, drafts, observations, orderItems] = await Promise.all([
+      tx.itemInstance.updateMany({ where: { marketVariantId: dupeVariant.id }, data: { marketVariantId: canonicalVariantId } }),
+      tx.intakeDraft.updateMany({ where: { marketVariantId: dupeVariant.id }, data: { marketVariantId: canonicalVariantId } }),
+      tx.externalMarketObservation.updateMany({ where: { marketVariantId: dupeVariant.id }, data: { marketVariantId: canonicalVariantId } }),
+      // Identity pointer only — never touches OrderItem's immutable
+      // snapshotPackagingType/snapshotCondition sale-fact fields.
+      tx.orderItem.updateMany({ where: { marketVariantId: dupeVariant.id }, data: { marketVariantId: canonicalVariantId } }),
+    ])
+    migrated += items.count + drafts.count + observations.count + orderItems.count
+  }
+
+  await tx.marketVariant.deleteMany({ where: { catalogModelId: dupeId } })
+
+  return { migrated, dupeVariantIds }
 }
 
 // 15F-review (catalog-merge pass): approvalRequestId is set only when a risk gate
@@ -413,7 +470,10 @@ export async function createCatalogModel(
     }
   }
 
-  await prisma.catalogModel.create({ data: toDbData(result.data) })
+  await prisma.$transaction(async (tx) => {
+    const created = await tx.catalogModel.create({ data: toDbData(result.data) })
+    await ensurePackagingMarketVariants(tx, created.id)
+  })
   redirect('/admin/catalog')
 }
 
@@ -659,6 +719,8 @@ export async function mergeCatalogModels(
           , , , , , // buyerAlertEvent/buyerAlertFanout/catalogPhotoFingerprint/observation/intakeDraft — counts unused here
           mobileCapture,
           guestSeller,
+          , // orderItem.catalogModelId direct repoint — count unused here
+          marketVariant,
         ] = await Promise.all([
           tx.itemInstance.updateMany({ where: { catalogId: dupeId }, data: { catalogId: canonicalId } }),
           tx.collectionItem.updateMany({ where: { catalogId: dupeId }, data: { catalogId: canonicalId } }),
@@ -694,6 +756,16 @@ export async function mergeCatalogModels(
           // 19B: only expired (already-inaccessible) rows ever reach here — an
           // active reference already aborted the merge above.
           reconcileGuestSellerItemMerge(tx, dupeId, gsiClassification),
+          // 21B: OrderItem now also carries a direct catalogModelId identity pointer
+          // (in addition to the pre-existing itemId -> ItemInstance -> catalogId
+          // path) — must be explicitly repointed. Never touches the immutable
+          // snapshotPackagingType/snapshotCondition sale-fact fields.
+          tx.orderItem.updateMany({ where: { catalogModelId: dupeId }, data: { catalogModelId: canonicalId } }),
+          // 21B: MarketVariant reconciliation — repoints ItemInstance/IntakeDraft/
+          // ExternalMarketObservation/OrderItem.marketVariantId child references from
+          // the duplicate's Carded/Loose rows to canonical's, then deletes the
+          // duplicate's now-orphaned MarketVariant rows. See reconcileMarketVariantMerge.
+          reconcileMarketVariantMerge(tx, dupeId, canonicalId),
         ])
 
         // No CatalogModelMergeAudit column exists for Wanted counts (no schema change
@@ -713,7 +785,12 @@ export async function mergeCatalogModels(
         const guestSellerNote = guestSeller.staleDeleted > 0
           ? `GuestSeller: ${guestSeller.staleDeleted} expired guest item(s) removed`
           : null
-        const adminNote = [wantedNote, mobileCaptureNote, guestSellerNote].filter(Boolean).join(' | ') || null
+        // 21B: no CatalogModelMergeAudit column for MarketVariant counts either —
+        // same adminNote convention as the others above.
+        const marketVariantNote = marketVariant.migrated > 0
+          ? `MarketVariant: ${marketVariant.migrated} child reference(s) repointed (Carded/Loose)`
+          : null
+        const adminNote = [wantedNote, mobileCaptureNote, guestSellerNote, marketVariantNote].filter(Boolean).join(' | ') || null
 
         await tx.catalogModelMergeAudit.create({
           data: {
@@ -752,7 +829,14 @@ export async function mergeCatalogModels(
         // 19B: also guestSellerItem — active rows already aborted the merge above,
         // so a nonzero count here means an expired row's deletion above was
         // incomplete; abort rather than let the required-FK delete below fail.
-        const [ri, rc, rs, rsub, rp, rw, rae, raf, rfp, reo, rid, rmc, rgsi] = await Promise.all([
+        // 21B: also marketVariant (should be zero — reconcileMarketVariantMerge
+        // explicitly deletes the duplicate's Carded/Loose rows above) and
+        // orderItem.catalogModelId direct pointer, plus every child table's
+        // marketVariantId still pointing at one of the duplicate's now-deleted
+        // variant ids (should be zero — reconcileMarketVariantMerge repoints every
+        // one of these before deleting the variant rows).
+        const dupeVariantIds = marketVariant.dupeVariantIds
+        const [ri, rc, rs, rsub, rp, rw, rae, raf, rfp, reo, rid, rmc, rgsi, rmv, roi, rivar, ridvar, reovar, roivar] = await Promise.all([
           tx.itemInstance.count({ where: { catalogId: dupeId } }),
           tx.collectionItem.count({ where: { catalogId: dupeId } }),
           tx.catalogSuggestion.count({ where: { approvedCatalogId: dupeId } }),
@@ -766,8 +850,14 @@ export async function mergeCatalogModels(
           tx.intakeDraft.count({ where: { catalogModelId: dupeId } }),
           tx.mobileCaptureItem.count({ where: { catalogModelId: dupeId } }),
           tx.guestSellerItem.count({ where: { catalogModelId: dupeId } }),
+          tx.marketVariant.count({ where: { catalogModelId: dupeId } }),
+          tx.orderItem.count({ where: { catalogModelId: dupeId } }),
+          dupeVariantIds.length > 0 ? tx.itemInstance.count({ where: { marketVariantId: { in: dupeVariantIds } } }) : 0,
+          dupeVariantIds.length > 0 ? tx.intakeDraft.count({ where: { marketVariantId: { in: dupeVariantIds } } }) : 0,
+          dupeVariantIds.length > 0 ? tx.externalMarketObservation.count({ where: { marketVariantId: { in: dupeVariantIds } } }) : 0,
+          dupeVariantIds.length > 0 ? tx.orderItem.count({ where: { marketVariantId: { in: dupeVariantIds } } }) : 0,
         ])
-        const remaining = ri + rc + rs + rsub + rp + rw + rae + raf + rfp + reo + rid + rmc + rgsi
+        const remaining = ri + rc + rs + rsub + rp + rw + rae + raf + rfp + reo + rid + rmc + rgsi + rmv + roi + rivar + ridvar + reovar + roivar
         if (remaining > 0) {
           mergeError = {
             errors: {

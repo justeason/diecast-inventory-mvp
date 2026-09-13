@@ -32,9 +32,30 @@ model CatalogModel {
   buyerAlertFanouts    BuyerAlertFanout[]
   intakeDrafts         IntakeDraft[]
   guestSellerItems     GuestSellerItem[]
+  marketVariants       MarketVariant[]
+  orderItems           OrderItem[]
 
   @@index([brand])
   @@index([name])
+}
+
+model MarketVariant {
+  id             String       @id @default(cuid())
+  catalogModelId String
+  catalogModel   CatalogModel @relation(fields: [catalogModelId], references: [id], onDelete: Cascade)
+
+  packagingType  String
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  items          ItemInstance[]
+  intakeDrafts   IntakeDraft[]
+  observations   ExternalMarketObservation[]
+  orderItems     OrderItem[]
+
+  @@unique([catalogModelId, packagingType])
+  @@index([catalogModelId])
 }
 
 model CatalogModelMergeAudit {
@@ -97,6 +118,8 @@ model ItemInstance {
   sku                     String                 @unique
   catalogId               String
   catalog                 CatalogModel           @relation(fields: [catalogId], references: [id])
+  marketVariantId         String
+  marketVariant           MarketVariant          @relation(fields: [marketVariantId], references: [id])
   locationId              String?
   location                StorageLocation?       @relation(fields: [locationId], references: [id])
   cardedOrLoose           String
@@ -132,6 +155,7 @@ model ItemInstance {
   @@index([sourceType])
   @@index([sellerPortfolioId])
   @@index([sellerInboundShipmentId])
+  @@index([marketVariantId])
 }
 
 model Photo {
@@ -428,7 +452,23 @@ model OrderItem {
   price     Float
   createdAt DateTime     @default(now())
 
+  // 21B: mutable identity pointers — a later admin CatalogModel merge MAY
+  // re-point these. Never re-derive from the current ItemInstance after creation.
+  catalogModelId  String?
+  catalogModel    CatalogModel?  @relation(fields: [catalogModelId], references: [id])
+  marketVariantId String?
+  marketVariant   MarketVariant? @relation(fields: [marketVariantId], references: [id])
+
+  // 21B: immutable sale-time physical facts, captured once from the authoritative
+  // ItemInstance at order-item creation. Never rewritten by merge/correction logic —
+  // silent physical-fact drift is not allowed, only deliberate identity re-pointing.
+  snapshotPackagingType String?
+  snapshotCondition     String?
+
   sellerPayoutLine SellerPayoutLine?
+
+  @@index([catalogModelId])
+  @@index([marketVariantId])
 }
 
 model CollectionItem {
@@ -633,6 +673,13 @@ model IntakeDraft {
   // convertDraft.
   catalogModelId String?
   catalogModel   CatalogModel? @relation(fields: [catalogModelId], references: [id], onDelete: SetNull)
+
+  // 21B: nullable — legitimately unknown pre-classification (catalogModelId and/or
+  // cardedOrLoose not yet known). Auto-resolved server-side whenever both become
+  // known; cleared to null whenever either becomes unknown again. Never a client-
+  // supplied value, never an "Unspecified" placeholder.
+  marketVariantId String?
+  marketVariant   MarketVariant? @relation(fields: [marketVariantId], references: [id], onDelete: SetNull)
 
   // 15D: explicit shipment lineage — the exact SellerInboundShipment this physical
   // item's workbench intake was started from. Set once when the workbench creates the
@@ -1120,6 +1167,9 @@ model ExternalMarketObservation {
   fingerprint     String    @unique
   observationType String
   catalogModelId  String?
+  // 21B: nullable, admin-assigned only — a matched observation MAY optionally be
+  // classified Carded/Loose; never forced, never auto-classified from title text.
+  marketVariantId String?
   matchStatus     String    @default("unmatched")
   matchMethod     String?
   title           String
@@ -1138,14 +1188,16 @@ model ExternalMarketObservation {
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
-  importBatch  ExternalMarketImportBatch?       @relation(fields: [importBatchId], references: [id])
-  catalogModel CatalogModel?                    @relation(fields: [catalogModelId], references: [id])
-  audits       ExternalMarketObservationAudit[]
+  importBatch   ExternalMarketImportBatch?       @relation(fields: [importBatchId], references: [id])
+  catalogModel  CatalogModel?                    @relation(fields: [catalogModelId], references: [id])
+  marketVariant MarketVariant?                   @relation(fields: [marketVariantId], references: [id], onDelete: SetNull)
+  audits        ExternalMarketObservationAudit[]
 
   @@unique([provider, externalId])
   @@index([provider])
   @@index([observationType])
   @@index([catalogModelId])
+  @@index([marketVariantId])
   @@index([observedAt])
   @@index([soldAt])
   @@index([matchStatus])

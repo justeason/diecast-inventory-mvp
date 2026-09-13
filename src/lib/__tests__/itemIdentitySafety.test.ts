@@ -189,7 +189,11 @@ describe('updateItemInstance — behavioral: a malicious/browser-submitted sku f
     // 15I: the combined write now happens inside prisma.$transaction (Part 4) —
     // no storage change is proposed here, so validateItemStorageMove is never
     // invoked; the tx only needs itemInstance.update.
-    const tx = { itemInstance: { update: vi.fn().mockResolvedValue({}) } }
+    // 21B: resolvePackagingMarketVariant goes through this on every update.
+    const tx = {
+      itemInstance: { update: vi.fn().mockResolvedValue({}) },
+      marketVariant: { findUnique: vi.fn().mockResolvedValue({ id: 'variant1' }) },
+    }
     ;(prisma.$transaction as Mock).mockImplementationOnce(async (cb: (tx: unknown) => unknown) => cb(tx))
 
     const fd = new FormData()

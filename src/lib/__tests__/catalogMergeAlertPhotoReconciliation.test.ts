@@ -94,6 +94,17 @@ function makeTx(overrides: Record<string, unknown> = {}) {
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
       count:      vi.fn().mockResolvedValue(0),
     },
+    // 21B: no MarketVariant rows by default — reconcileMarketVariantMerge's
+    // findMany calls both resolve empty, so its per-variant updates/deleteMany
+    // are simply never reached in the clean path.
+    marketVariant: {
+      findMany:   vi.fn().mockResolvedValue([]),
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      count:      vi.fn().mockResolvedValue(0),
+    },
+    // 21B: OrderItem now has a direct catalogModelId identity pointer and a
+    // marketVariantId child reference, both reconciled during merge.
+    orderItem: { updateMany: vi.fn().mockResolvedValue({ count: 0 }), count: vi.fn().mockResolvedValue(0) },
     catalogModelMergeAudit: { create: vi.fn().mockResolvedValue({}) },
     ...overrides,
   }
@@ -301,7 +312,7 @@ describe('18B: final pre-delete integrity guard (34/10)', () => {
 
   it('final integrity check counts BuyerAlertFanout with NO status filter — every status counts against it, unlike the retarget step', () => {
     const src = readSrc('src/lib/actions/catalog.ts')
-    const idx = src.indexOf('const [ri, rc, rs, rsub, rp, rw, rae, raf, rfp, reo, rid, rmc, rgsi]')
+    const idx = src.indexOf('const [ri, rc, rs, rsub, rp, rw, rae, raf, rfp, reo, rid, rmc, rgsi, rmv, roi, rivar, ridvar, reovar, roivar]')
     const block = src.slice(idx, src.indexOf('])', idx))
     expect(block).toContain('tx.buyerAlertFanout.count({ where: { catalogModelId: dupeId } })')
     expect(block).not.toMatch(/buyerAlertFanout\.count\(\{[^}]*status/)
@@ -309,7 +320,7 @@ describe('18B: final pre-delete integrity guard (34/10)', () => {
 
   it('final integrity check also counts buyerAlertEvent and catalogPhotoFingerprint', () => {
     const src = readSrc('src/lib/actions/catalog.ts')
-    const idx = src.indexOf('const [ri, rc, rs, rsub, rp, rw, rae, raf, rfp, reo, rid, rmc, rgsi]')
+    const idx = src.indexOf('const [ri, rc, rs, rsub, rp, rw, rae, raf, rfp, reo, rid, rmc, rgsi, rmv, roi, rivar, ridvar, reovar, roivar]')
     const block = src.slice(idx, src.indexOf('])', idx))
     expect(block).toContain('tx.buyerAlertEvent.count({ where: { catalogModelId: dupeId } })')
     expect(block).toContain('tx.catalogPhotoFingerprint.count({ where: { catalogModelId: dupeId } })')

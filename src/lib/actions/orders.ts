@@ -48,6 +48,11 @@ export async function createOrder(
       status: 'active',
       item: { status: 'available' },
     },
+    include: {
+      // 21B: read once here, snapshotted onto the new OrderItem at creation below —
+      // the authoritative source for the immutable sale-time facts.
+      item: { select: { catalogId: true, marketVariantId: true, cardedOrLoose: true, condition: true } },
+    },
   })
 
   if (listings.length !== listingIds.length) {
@@ -94,6 +99,12 @@ export async function createOrder(
           itemId: listing.itemId,
           listingId: listing.id,
           price: listing.price,
+          // 21B: mutable identity pointers + immutable sale-time snapshot, both
+          // copied from the authoritative ItemInstance in this same creation flow.
+          catalogModelId: listing.item.catalogId,
+          marketVariantId: listing.item.marketVariantId,
+          snapshotPackagingType: listing.item.cardedOrLoose,
+          snapshotCondition: listing.item.condition,
         },
       })
 

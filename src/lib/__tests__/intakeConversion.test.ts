@@ -39,6 +39,13 @@ function makeTx(draftRow: ReturnType<typeof makeDraftRow>, overrides: Record<str
       create: vi.fn().mockResolvedValue({ id: 'cat-new', brand: 'Hot Wheels', name: 'Porsche 911' }),
     },
     storageLocation: { findUnique: vi.fn().mockResolvedValue({ id: 'loc1' }) },
+    // 21B: resolvePackagingMarketVariant/ensurePackagingMarketVariants both go
+    // through this — a resolved variant always exists by default (every
+    // CatalogModel has both packaging variants).
+    marketVariant: {
+      findUnique: vi.fn().mockResolvedValue({ id: 'variant1' }),
+      create: vi.fn().mockResolvedValue({ id: 'variant-new' }),
+    },
     itemInstance: {
       findUnique: vi.fn().mockResolvedValue(null),
       findFirst: vi.fn().mockResolvedValue(null),

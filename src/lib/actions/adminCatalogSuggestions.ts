@@ -5,6 +5,7 @@ import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { redirect } from 'next/navigation'
 import { revalidatePath } from 'next/cache'
+import { ensurePackagingMarketVariants } from '@/lib/marketVariant'
 
 // Admin suggestion actions rely on the (admin) route group middleware for auth,
 // consistent with all other admin server actions in this repo (catalog.ts, items.ts, etc.).
@@ -99,6 +100,7 @@ export async function approveSuggestion(
           scale:  approvedScale  ?? undefined,
         },
       })
+      await ensurePackagingMarketVariants(tx, catalog.id)
 
       await tx.catalogSuggestion.update({
         where: { id },

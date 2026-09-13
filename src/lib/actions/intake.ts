@@ -9,6 +9,7 @@ import { revalidatePath } from 'next/cache'
 import { prisma } from '@/lib/prisma'
 import { convertIntakeDraft } from '@/lib/intakeConversion'
 import { ensureSellerLifecycleEvent } from '@/lib/actions/sellerLifecycle'
+import { computeMarketVariantId } from '@/lib/marketVariant'
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -130,7 +131,7 @@ export async function updateIntakeDraft(
   _prev: IntakeActionState,
   formData: FormData
 ): Promise<IntakeActionState> {
-  const draft = await prisma.intakeDraft.findUnique({ where: { id }, select: { status: true } })
+  const draft = await prisma.intakeDraft.findUnique({ where: { id }, select: { status: true, catalogModelId: true } })
   if (!draft) return { errors: { form: ['Draft not found.'] } }
   if (draft.status === 'converted' || draft.status === 'rejected') {
     return { errors: { form: ['This draft can no longer be edited.'] } }
@@ -141,7 +142,13 @@ export async function updateIntakeDraft(
     return { errors: result.error.flatten().fieldErrors as Record<string, string[]> }
   }
 
-  await prisma.intakeDraft.update({ where: { id }, data: toDraftDbData(result.data) })
+  const draftData = toDraftDbData(result.data)
+  // 21B: recomputed on every edit from THIS submission's cardedOrLoose (catalogModelId
+  // is not editable here — see selectedCatalogId at convert time). Resolves to null
+  // whenever either input is unknown/invalid — never a guessed/fabricated bucket.
+  const marketVariantId = await computeMarketVariantId(prisma, draft.catalogModelId, draftData.cardedOrLoose)
+
+  await prisma.intakeDraft.update({ where: { id }, data: { ...draftData, marketVariantId } })
   redirect(`/admin/intake/${id}/edit`)
 }
 
@@ -517,6 +524,14 @@ export async function extractDraftFields(
       if (!isNaN(yr) && yr >= 1950 && yr <= 2100) {
         updateData.year = yr
       }
+    }
+
+    // 21B: only relevant when cardedOrLoose was just filled in AND the draft
+    // already carries a resolved catalogModelId (e.g. pre-resolved by the
+    // workbench) — recompute so AI-assisted classification isn't silently left
+    // stale at null.
+    if (typeof updateData.cardedOrLoose === 'string' && draft.catalogModelId) {
+      updateData.marketVariantId = await computeMarketVariantId(prisma, draft.catalogModelId, updateData.cardedOrLoose)
     }
 
     await prisma.intakeDraft.update({ where: { id }, data: updateData })

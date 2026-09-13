@@ -122,6 +122,12 @@ function makeTx(overrides: Record<string, unknown> = {}) {
     catalogModel: {
       findUnique: vi.fn().mockResolvedValue({ id: 'cat1', brand: 'Hot Wheels', name: 'Porsche 911' }),
     },
+    // 21B: resolvePackagingMarketVariant/computeMarketVariantId both go through
+    // this — a resolved variant always exists by default.
+    marketVariant: {
+      findUnique: vi.fn().mockResolvedValue({ id: 'variant1' }),
+      create: vi.fn().mockResolvedValue({ id: 'variant-new' }),
+    },
     storageLocation: {
       findUnique: vi.fn().mockResolvedValue({ id: 'loc1', label: 'B-14-03' }),
     },

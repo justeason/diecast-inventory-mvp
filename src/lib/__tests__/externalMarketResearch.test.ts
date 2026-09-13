@@ -819,3 +819,100 @@ describe('valuation page — external market integration', () => {
     expect(valuationPage).not.toMatch(/getCollectionValuation\(.*extSummar/)
   })
 })
+
+// ── 21B §16/§36: assignObservationVariant ─────────────────────────────────────
+
+describe('actions/externalMarketResearch.ts — assignObservationVariant (21B)', () => {
+  it('exports assignObservationVariant', () => {
+    expect(actionsSrc).toContain('export async function assignObservationVariant')
+  })
+
+  it('calls isAdminAuthenticated before any write', () => {
+    const fnStart  = actionsSrc.indexOf('async function assignObservationVariant')
+    const authCall = actionsSrc.indexOf('isAdminAuthenticated', fnStart)
+    expect(authCall).toBeGreaterThan(fnStart)
+  })
+
+  it('accepts (observationId, packagingType) and resolves the MarketVariant server-side — never trusts a client-supplied marketVariantId', () => {
+    const fnStart = actionsSrc.indexOf('async function assignObservationVariant')
+    const fnEnd   = actionsSrc.indexOf('\n}', fnStart)
+    const block   = actionsSrc.slice(fnStart, fnEnd)
+    expect(block).toContain("formData.get('packagingType')")
+    expect(block).not.toContain("formData.get('marketVariantId')")
+    expect(block).toContain('findPackagingMarketVariant(tx, obs.catalogModelId')
+  })
+
+  it('requires the observation to already be matched to a catalogModelId', () => {
+    const fnStart = actionsSrc.indexOf('async function assignObservationVariant')
+    const fnEnd   = actionsSrc.indexOf('\n}', fnStart)
+    const block   = actionsSrc.slice(fnStart, fnEnd)
+    expect(block).toMatch(/matchStatus !== 'matched' \|\| !obs\.catalogModelId/)
+  })
+
+  it('clearing (packagingType empty/omitted) sets marketVariantId to null — never a fabricated "Unspecified" MarketVariant row', () => {
+    const fnStart = actionsSrc.indexOf('async function assignObservationVariant')
+    const fnEnd   = actionsSrc.indexOf('\n}', fnStart)
+    const block   = actionsSrc.slice(fnStart, fnEnd)
+    expect(block).toMatch(/let marketVariantId: string \| null = null/)
+    expect(block).not.toMatch(/Unspecified/i)
+  })
+
+  it('validates packagingType against isValidPackagingType — rejects a third value rather than silently ignoring it', () => {
+    expect(actionsSrc).toContain('isValidPackagingType(raw)')
+  })
+
+  it('writes an audit event distinguishing assign from clear', () => {
+    const fnStart = actionsSrc.indexOf('async function assignObservationVariant')
+    const block   = actionsSrc.slice(fnStart, actionsSrc.indexOf('\n}', fnStart))
+    expect(block).toContain("'variant_assigned'")
+    expect(block).toContain("'variant_cleared'")
+  })
+
+  it('uses $transaction + STALE guard, matching the other mutation actions', () => {
+    const fnStart = actionsSrc.indexOf('async function assignObservationVariant')
+    const block   = actionsSrc.slice(fnStart, actionsSrc.indexOf('\n}', fnStart))
+    expect(block).toContain('$transaction')
+    expect(block).toContain('STALE')
+  })
+})
+
+describe('actions/externalMarketResearch.ts — match/unmatch clear any prior variant classification (21B)', () => {
+  it('matchObservationToCatalog sets marketVariantId: null in the same update — a variant only ever belongs to the model it was assigned against', () => {
+    const fnStart = actionsSrc.indexOf('async function matchObservationToCatalog')
+    const fnEnd   = actionsSrc.indexOf('\n}', fnStart)
+    const block   = actionsSrc.slice(fnStart, fnEnd)
+    expect(block).toMatch(/matchStatus:\s*'matched'[\s\S]*?marketVariantId:\s*null/)
+  })
+
+  it('unmatchObservation clears marketVariantId alongside catalogModelId/matchMethod', () => {
+    const fnStart = actionsSrc.indexOf('async function unmatchObservation')
+    const fnEnd   = actionsSrc.indexOf('\n}', fnStart)
+    const block   = actionsSrc.slice(fnStart, fnEnd)
+    expect(block).toMatch(/matchStatus:\s*'unmatched'[\s\S]*?marketVariantId:\s*null/)
+  })
+
+  it('rejectObservation/restoreObservation do not touch marketVariantId — reject/restore semantics are unchanged by 21B', () => {
+    const rejectStart  = actionsSrc.indexOf('async function rejectObservation')
+    const rejectBlock  = actionsSrc.slice(rejectStart, actionsSrc.indexOf('\n}', rejectStart))
+    expect(rejectBlock).not.toContain('marketVariantId')
+
+    const restoreStart = actionsSrc.indexOf('async function restoreObservation')
+    const restoreBlock = actionsSrc.slice(restoreStart, actionsSrc.indexOf('\n}', restoreStart))
+    expect(restoreBlock).not.toContain('marketVariantId')
+  })
+})
+
+describe('externalMarketResearchQuery.ts — MarketVariant fields (21B)', () => {
+  it('getObservationById selects marketVariantId and the resolved packagingType', () => {
+    expect(querySrc).toContain('marketVariantId: true')
+    expect(querySrc).toContain("marketVariant: { select: { packagingType: true } }")
+  })
+
+  it('ObservationDetail type exposes marketVariantId and packagingType', () => {
+    const typeStart = querySrc.indexOf('export type ObservationDetail')
+    const typeEnd   = querySrc.indexOf('\n}', typeStart)
+    const block     = querySrc.slice(typeStart, typeEnd)
+    expect(block).toContain('marketVariantId: string | null')
+    expect(block).toContain('packagingType: string | null')
+  })
+})

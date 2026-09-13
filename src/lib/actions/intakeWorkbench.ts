@@ -15,6 +15,7 @@ import { resolveConversionEligibility } from '@/lib/sellerAgreementInventory'
 import { convertIntakeDraft } from '@/lib/intakeConversion'
 import { ensureSellerLifecycleEvent } from '@/lib/actions/sellerLifecycle'
 import { getPricingIntelligence } from '@/lib/pricingIntelligenceQuery'
+import { computeMarketVariantId } from '@/lib/marketVariant'
 import {
   MAX_WORKBENCH_BATCH_QUANTITY,
   WORKBENCH_LEASE_TTL_MS,
@@ -322,6 +323,9 @@ export async function confirmWorkbenchItem(input: ConfirmWorkbenchItemInput): Pr
       }
 
       if (exceptionCode) {
+        // 21B: catalog may be null here (e.g. unknown_model exception) — resolves
+        // to null in that case, never a guessed bucket.
+        const exceptionMarketVariantId = await computeMarketVariantId(tx, catalog?.id ?? null, input.cardedOrLoose)
         // One IntakeDraft PER physical unit — a quantity=5 batch routed to exception
         // contributes 5, not 1, to the exception count (section 5).
         for (const token of unitTokens) {
@@ -331,6 +335,7 @@ export async function confirmWorkbenchItem(input: ConfirmWorkbenchItemInput): Pr
               sellerInboundShipmentId: input.shipmentId,
               sellerSubmissionId: shipment.sellerSubmissionId,
               catalogModelId: catalog?.id ?? null,
+              marketVariantId: exceptionMarketVariantId,
               condition: input.condition, cardedOrLoose: input.cardedOrLoose,
               conditionNotes: input.conditionNotes, storageLocationId: location?.id ?? null,
               notes: input.notes, workbenchClientToken: token,
@@ -352,6 +357,9 @@ export async function confirmWorkbenchItem(input: ConfirmWorkbenchItemInput): Pr
       // persisted row, status 'reviewed' — the workbench's per-unit checks above ARE
       // its review step), THEN hand it to the one authoritative conversion primitive.
       // Exactly one ItemInstance per physical unit; never one item with quantity=N. ──
+      // 21B: for data-completeness only — convertIntakeDraft resolves the
+      // ItemInstance's own marketVariantId independently moments later.
+      const normalMarketVariantId = await computeMarketVariantId(tx, catalog!.id, input.cardedOrLoose)
       for (const token of unitTokens) {
         const draft = await tx.intakeDraft.create({
           data: {
@@ -359,6 +367,7 @@ export async function confirmWorkbenchItem(input: ConfirmWorkbenchItemInput): Pr
             sellerInboundShipmentId: input.shipmentId,
             sellerSubmissionId: shipment.sellerSubmissionId,
             catalogModelId: catalog!.id,
+            marketVariantId: normalMarketVariantId,
             condition: input.condition, cardedOrLoose: input.cardedOrLoose,
             conditionNotes: input.conditionNotes, storageLocationId: location!.id,
             notes: input.notes, workbenchClientToken: token,

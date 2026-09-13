@@ -35,6 +35,8 @@ function makeTx(overrides: Record<string, unknown> = {}) {
     $queryRaw: vi.fn().mockResolvedValue([]),
     itemInstance: { findUnique: vi.fn(), update: vi.fn().mockResolvedValue({}) },
     storageLocation: { findUnique: vi.fn() },
+    // 21B: resolvePackagingMarketVariant goes through this on every update.
+    marketVariant: { findUnique: vi.fn().mockResolvedValue({ id: 'variant1' }) },
     sellerLifecycleCase: { findFirst: vi.fn().mockResolvedValue(null) },
     riskApprovalRequest: { findUnique: vi.fn() },
     ...overrides,

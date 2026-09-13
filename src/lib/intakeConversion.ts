@@ -12,6 +12,7 @@
 import { Prisma } from '@prisma/client'
 import { resolveConversionEligibility, validateConversionConfirmation } from '@/lib/sellerAgreementInventory'
 import { buildBuyoutSourceKey, calculateBuyoutPayoutSnapshot } from '@/lib/sellerPayoutCalculation'
+import { ensurePackagingMarketVariants, resolvePackagingMarketVariant } from '@/lib/marketVariant'
 
 type TxClient = Prisma.TransactionClient
 
@@ -178,9 +179,14 @@ export async function convertIntakeDraft(
         },
         select: { id: true, brand: true, name: true },
       })
+      await ensurePackagingMarketVariants(tx, found.id)
     }
     catalog = found
   }
+
+  // 21B: resolved server-side from catalog.id + draft.cardedOrLoose — both already
+  // validated required above (never a client-supplied marketVariantId).
+  const marketVariantId = await resolvePackagingMarketVariant(tx, catalog.id, draft.cardedOrLoose!)
 
   // ── SKU: admin-typed (manual, re-validated for uniqueness) or auto-generated
   // (workbench). Either way, immutable and written exactly once here. ─────────────
@@ -219,6 +225,7 @@ export async function convertIntakeDraft(
     data: {
       sku,
       catalogId: catalog.id,
+      marketVariantId,
       locationId: options.locationId,
       cardedOrLoose: draft.cardedOrLoose!,
       condition: draft.condition!,

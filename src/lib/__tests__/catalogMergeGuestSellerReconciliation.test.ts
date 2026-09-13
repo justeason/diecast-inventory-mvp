@@ -91,6 +91,17 @@ function makeTx(opts: { guestLocked?: LockedGuestRow[]; overrides?: Record<strin
       deleteMany: vi.fn().mockResolvedValue({ count: guestLocked.length }),
       count:      vi.fn().mockResolvedValue(0),
     },
+    // 21B: no MarketVariant rows by default — reconcileMarketVariantMerge's
+    // findMany calls both resolve empty, so its per-variant updates/deleteMany
+    // are simply never reached in the clean path.
+    marketVariant: {
+      findMany:   vi.fn().mockResolvedValue([]),
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      count:      vi.fn().mockResolvedValue(0),
+    },
+    // 21B: OrderItem now has a direct catalogModelId identity pointer and a
+    // marketVariantId child reference, both reconciled during merge.
+    orderItem: { updateMany: vi.fn().mockResolvedValue({ count: 0 }), count: vi.fn().mockResolvedValue(0) },
     catalogModelMergeAudit: { create: vi.fn().mockResolvedValue({}) },
     ...overrides,
   }
@@ -204,7 +215,7 @@ describe('19B: final integrity check includes GuestSellerItem, unfiltered', () =
 
   it('the final integrity check array includes rgsi (guestSellerItem.count) unfiltered', () => {
     const src = readSrc('src/lib/actions/catalog.ts')
-    const idx = src.indexOf('const [ri, rc, rs, rsub, rp, rw, rae, raf, rfp, reo, rid, rmc, rgsi]')
+    const idx = src.indexOf('const [ri, rc, rs, rsub, rp, rw, rae, raf, rfp, reo, rid, rmc, rgsi, rmv, roi, rivar, ridvar, reovar, roivar]')
     expect(idx).toBeGreaterThan(-1)
     const block = src.slice(idx, src.indexOf('])', idx))
     expect(block).toContain('tx.guestSellerItem.count({ where: { catalogModelId: dupeId } })')

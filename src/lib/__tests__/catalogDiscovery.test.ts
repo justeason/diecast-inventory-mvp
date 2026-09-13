@@ -96,7 +96,7 @@ beforeEach(() => vi.resetAllMocks())
 describe('16J: eligibility predicate — no CatalogModel status/public field exists', () => {
   it('CatalogModel schema has no active/inactive/deleted/suppressed/public field (only identity fields)', () => {
     const schema = readSrc('prisma/schema.prisma')
-    const modelBlock = schema.slice(schema.indexOf('model CatalogModel {'), schema.indexOf('model CatalogModelMergeAudit'))
+    const modelBlock = schema.slice(schema.indexOf('model CatalogModel {'), schema.indexOf('model MarketVariant'))
     expect(modelBlock).not.toMatch(/status|isPublic|isActive|deletedAt|suppressed/i)
   })
 
@@ -818,7 +818,7 @@ describe('16J: 16H/16I hub behavior preserved', () => {
 describe('16J: zero schema/migration changes', () => {
   it('CatalogModel model definition is unchanged (no new fields)', () => {
     const schema = readSrc('prisma/schema.prisma')
-    const modelBlock = schema.slice(schema.indexOf('model CatalogModel {'), schema.indexOf('model CatalogModelMergeAudit'))
+    const modelBlock = schema.slice(schema.indexOf('model CatalogModel {'), schema.indexOf('model MarketVariant'))
     expect(modelBlock).toContain('@@index([brand])')
     expect(modelBlock).toContain('@@index([name])')
     // no third index was added

@@ -57,6 +57,8 @@ export type ObservationDetail = {
   rejectionReason: string | null
   catalogModelId: string | null
   catalogModelName: string | null
+  marketVariantId: string | null
+  packagingType: string | null
   updatedAt: Date
   audits: Array<{
     id: string
@@ -196,6 +198,8 @@ export async function getObservationById(id: string): Promise<ObservationDetail 
       soldAt: true, listedAt: true, observedAt: true, condition: true, locationText: true,
       rawSnapshot: true, rejectionReason: true, catalogModelId: true,
       catalogModel: { select: { brand: true, name: true } },
+      marketVariantId: true,
+      marketVariant: { select: { packagingType: true } },
       updatedAt: true,
       audits: {
         orderBy: { createdAt: 'desc' },
@@ -233,6 +237,8 @@ export async function getObservationById(id: string): Promise<ObservationDetail 
     catalogModelName: row.catalogModel
       ? `${row.catalogModel.brand} ${row.catalogModel.name}`
       : null,
+    marketVariantId: row.marketVariantId,
+    packagingType:   row.marketVariant?.packagingType ?? null,
     updatedAt: row.updatedAt,
     audits:    row.audits,
     createdAt: row.createdAt,

@@ -314,7 +314,10 @@ describe('15F-review section 2: complete runtime write-path audit — no alterna
     const files = ['intakeOperations.ts', 'sellerLifecycle.ts', 'orders.ts', 'intakeWorkbench.ts', 'intakeExceptions.ts', 'sellerPayouts.ts']
     for (const f of files) {
       const src = readSrc(`src/lib/actions/${f}`)
-      expect(src).not.toMatch(/catalogId:\s*\w/) // no write assigning a new catalogId value
+      // `catalogId: true` is a read-only Prisma `select` shape (21B: orders.ts reads
+      // it once to snapshot onto the new OrderItem) — excluded here since it can
+      // never assign a new catalogId value.
+      expect(src).not.toMatch(/catalogId:\s*(?!true\b)\w/) // no write assigning a new catalogId value
     }
   })
 })

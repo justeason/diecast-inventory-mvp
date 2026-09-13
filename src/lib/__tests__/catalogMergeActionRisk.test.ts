@@ -90,6 +90,17 @@ function makeTx(overrides: Record<string, unknown> = {}) {
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
       count:      vi.fn().mockResolvedValue(0),
     },
+    // 21B: no MarketVariant rows by default — reconcileMarketVariantMerge's
+    // findMany calls both resolve empty, so its per-variant updates/deleteMany
+    // are simply never reached in the clean path.
+    marketVariant: {
+      findMany:   vi.fn().mockResolvedValue([]),
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      count:      vi.fn().mockResolvedValue(0),
+    },
+    // 21B: OrderItem now has a direct catalogModelId identity pointer and a
+    // marketVariantId child reference, both reconciled during merge.
+    orderItem: { updateMany: vi.fn().mockResolvedValue({ count: 0 }), count: vi.fn().mockResolvedValue(0) },
     catalogModelMergeAudit: { create: vi.fn().mockResolvedValue({}) },
     ...overrides,
   }
@@ -205,12 +216,26 @@ describe('mergeCatalogModels — catalog_model_merge gate integration (section 2
 })
 
 describe('mergeCatalogModels — history integrity (section 5, structural)', () => {
-  it('the merge mutation never touches OrderItem, SellerPayoutLine, or ItemInstance.sku — only catalogId reassignment and the duplicate CatalogModel delete', async () => {
+  it('the merge mutation never touches SellerPayoutLine or ItemInstance.sku', async () => {
     const fs = await import('fs')
     const path = await import('path')
     const src = fs.readFileSync(path.join(process.cwd(), 'src/lib/actions/catalog.ts'), 'utf-8')
-    expect(src).not.toMatch(/orderItem\.(update|updateMany|delete)/)
     expect(src).not.toMatch(/sellerPayoutLine\./)
     expect(src).not.toMatch(/sku:/)
+  })
+
+  // 21B: OrderItem now carries a direct catalogModelId identity pointer AND a
+  // marketVariantId child reference — both are legitimately retargeted by a
+  // merge (mutable identity). The two IMMUTABLE sale-fact snapshot fields
+  // (snapshotPackagingType/snapshotCondition) must never appear on the same
+  // side of an assignment/update the merge performs.
+  it('only ever repoints OrderItem.catalogModelId/marketVariantId — never writes snapshotPackagingType or snapshotCondition', async () => {
+    const fs = await import('fs')
+    const path = await import('path')
+    const src = fs.readFileSync(path.join(process.cwd(), 'src/lib/actions/catalog.ts'), 'utf-8')
+    expect(src).toMatch(/tx\.orderItem\.updateMany\(\{ where: \{ catalogModelId: dupeId \}, data: \{ catalogModelId: canonicalId \} \}\)/)
+    expect(src).not.toMatch(/snapshotPackagingType\s*:/)
+    expect(src).not.toMatch(/snapshotCondition\s*:/)
+    expect(src).not.toMatch(/orderItem\.delete/)
   })
 })
