@@ -160,6 +160,7 @@ describe('mergeCatalogModels — MarketVariant reconciliation (21B)', () => {
       const data = call[0].data
       expect(data).not.toHaveProperty('snapshotPackagingType')
       expect(data).not.toHaveProperty('snapshotCondition')
+      expect(data).not.toHaveProperty('snapshotProvenance') // 21C
     }
   })
 

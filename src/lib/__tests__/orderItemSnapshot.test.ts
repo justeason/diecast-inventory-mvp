@@ -66,7 +66,7 @@ describe('createOrder — OrderItem snapshot (21B)', () => {
     ;(prisma.customerProfile.upsert as Mock).mockResolvedValue({ id: 'prof1' })
   })
 
-  it('copies catalogModelId, marketVariantId, snapshotPackagingType, and snapshotCondition from the authoritative ItemInstance at creation', async () => {
+  it('copies catalogModelId, marketVariantId, snapshotPackagingType, and snapshotCondition from the authoritative ItemInstance at creation, tagged sale_time (21C)', async () => {
     ;(prisma.listing.findMany as Mock).mockResolvedValue([listingRow()])
     ;(prisma.customerProfile.upsert as Mock).mockResolvedValue({ id: 'prof1' })
     const tx = makeTx()
@@ -84,8 +84,19 @@ describe('createOrder — OrderItem snapshot (21B)', () => {
         marketVariantId: 'variant1',
         snapshotPackagingType: 'carded',
         snapshotCondition: 'mint',
+        snapshotProvenance: 'sale_time',
       },
     })
+  })
+
+  it('21C: snapshotProvenance is always the literal "sale_time" — never caller-supplied, never derived from formData', async () => {
+    ;(prisma.listing.findMany as Mock).mockResolvedValue([listingRow()])
+    const tx = makeTx()
+    mockTransaction(tx)
+    const fd = formData()
+    fd.set('snapshotProvenance', 'legacy_model_only') // malicious/stray field — must be ignored
+    await expect(createOrder(null, fd)).resolves.toEqual({ success: true, orderId: 'order1' })
+    expect((tx.orderItem.create as Mock).mock.calls[0][0].data.snapshotProvenance).toBe('sale_time')
   })
 
   it('reads item.catalogId/marketVariantId/cardedOrLoose/condition via an include on the listings fetch — never a second query', async () => {
@@ -155,7 +166,7 @@ describe('OrderItem.create — exactly one production call site (structural)', (
     expect(matches).toEqual([path.join(libDir, 'actions/orders.ts')])
   })
 
-  it('the OrderItem.create payload includes all four 21B fields (source inspection)', () => {
+  it('the OrderItem.create payload includes all four 21B fields plus the 21C provenance literal (source inspection)', () => {
     const src = readSrc('src/lib/actions/orders.ts')
     const idx = src.indexOf('await tx.orderItem.create(')
     const block = src.slice(idx, src.indexOf('})', idx))
@@ -163,5 +174,6 @@ describe('OrderItem.create — exactly one production call site (structural)', (
     expect(block).toContain('marketVariantId: listing.item.marketVariantId')
     expect(block).toContain('snapshotPackagingType: listing.item.cardedOrLoose')
     expect(block).toContain('snapshotCondition: listing.item.condition')
+    expect(block).toContain("snapshotProvenance: 'sale_time'")
   })
 })

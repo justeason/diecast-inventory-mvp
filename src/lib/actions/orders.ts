@@ -105,6 +105,9 @@ export async function createOrder(
           marketVariantId: listing.item.marketVariantId,
           snapshotPackagingType: listing.item.cardedOrLoose,
           snapshotCondition: listing.item.condition,
+          // 21C: every NEW OrderItem is captured live from the authoritative
+          // ItemInstance — never caller-supplied, never anything but 'sale_time'.
+          snapshotProvenance: 'sale_time',
         },
       })
 

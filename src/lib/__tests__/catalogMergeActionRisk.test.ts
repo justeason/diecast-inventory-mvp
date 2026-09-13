@@ -238,4 +238,13 @@ describe('mergeCatalogModels — history integrity (section 5, structural)', () 
     expect(src).not.toMatch(/snapshotCondition\s*:/)
     expect(src).not.toMatch(/orderItem\.delete/)
   })
+
+  // 21C: snapshotProvenance is a third immutable sale-fact-adjacent field —
+  // merge must never write it either, same reasoning as the two snapshot fields.
+  it('never writes OrderItem.snapshotProvenance', async () => {
+    const fs = await import('fs')
+    const path = await import('path')
+    const src = fs.readFileSync(path.join(process.cwd(), 'src/lib/actions/catalog.ts'), 'utf-8')
+    expect(src).not.toMatch(/snapshotProvenance\s*:/)
+  })
 })

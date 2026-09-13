@@ -465,6 +465,15 @@ model OrderItem {
   snapshotPackagingType String?
   snapshotCondition     String?
 
+  // 21C: where the physical-fact snapshot above came from — 'sale_time'
+  // (captured live from the authoritative ItemInstance at creation),
+  // 'intake_declared' (reconstructed from the immutable converted IntakeDraft
+  // for a legacy sale — proves intake-time declared state, not zero drift
+  // since), or 'legacy_model_only' (legacy sale with trustworthy catalogModelId/
+  // price/soldAt but no recoverable packaging/condition evidence). Null means
+  // not yet normalized. Never a confidence score — answers "where," not "how sure."
+  snapshotProvenance String?
+
   sellerPayoutLine SellerPayoutLine?
 
   @@index([catalogModelId])

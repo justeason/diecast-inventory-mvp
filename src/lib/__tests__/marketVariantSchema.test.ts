@@ -128,8 +128,8 @@ describe('migration — exactly one new migration, ordered per spec', () => {
   const migrationsDir = path.join(root, 'prisma/migrations')
   const dirs = fs.readdirSync(migrationsDir).filter((d) => fs.statSync(path.join(migrationsDir, d)).isDirectory())
 
-  it('migration count is exactly 51', () => {
-    expect(dirs.length).toBe(51)
+  it('migration count is at least 51 (21B) — exact current count is asserted in orderItemProvenanceSchema.test.ts (21C)', () => {
+    expect(dirs.length).toBeGreaterThanOrEqual(51)
   })
 
   it('the new migration exists and is the packaging MarketVariant migration', () => {
