@@ -1298,10 +1298,12 @@ describe('16E: valuation stays on its own dedicated page — no per-card or per-
     expect(src_).not.toMatch(/getCollectionValuation|getCatalogValuations|getCatalogValuation\(/)
   })
 
-  it('unknown valuation on the dedicated valuation page is rendered as "—", never $0', () => {
-    const src_ = src('src/app/(store)/account/collection/valuation/page.tsx')
-    expect(src_).toContain('<span className="text-gray-300">—</span>')
-    expect(src_).not.toMatch(/hasVal \? centsToDisplay\(item\.estimatedSubtotal!\) : .*\$0/)
+  // 25B: the dedicated valuation page is retired (redirects to /account/collection);
+  // unknown-value truthfulness now lives in the merged Collection+Portfolio page.
+  it('unknown Portfolio totals on the merged Collection page are rendered as "—", never $0', () => {
+    const src_ = src('src/app/(store)/account/collection/page.tsx')
+    expect(src_).toContain("!== null ? centsToDisplay(portfolio.estimatedPortfolioValueCents) : '—'")
+    expect(src_).not.toMatch(/estimatedPortfolioValueCents\s*\?\?\s*0/)
   })
 
   it('getCollectionValuation batches comparable-sales/active-asks lookups (no per-item valuation query)', () => {

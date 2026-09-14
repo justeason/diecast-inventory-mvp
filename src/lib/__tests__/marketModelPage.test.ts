@@ -365,9 +365,9 @@ describe('24B: no schema/migration/package changes; Collection/Seller/Admin valu
     expect(marketVariantSrc).not.toMatch(/CREATE TABLE|ALTER TABLE/)
   })
 
-  it('Collection valuation page still uses the legacy engine, untouched by 24B', () => {
-    const collectionSrc = readSrc('src/app/(store)/account/collection/valuation/page.tsx')
-    expect(collectionSrc).toContain('getCollectionValuation')
+  it('Collection valuation was untouched by 24B (24B only migrated the catalog page); 25B later migrated it off the legacy engine — confirmed by its own test suite', () => {
+    const redirectSrc = readSrc('src/app/(store)/account/collection/valuation/page.tsx')
+    expect(redirectSrc).toContain("redirect('/account/collection')")
   })
 
   it('Seller pricing guidance and admin resale-estimator/pricing-intelligence remain on legacy engines', () => {

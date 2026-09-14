@@ -14,18 +14,12 @@
 // No asks, no trend, no velocity, no supply/demand, no condition/variant
 // multipliers, no seller-offer logic — all deliberately out of scope for V1.
 import { prisma } from '@/lib/prisma'
-import { getMarketSaleHistory } from '@/lib/marketSaleQuery'
+import { getMarketSaleHistory, getMarketSaleHistoryForModels } from '@/lib/marketSaleQuery'
 import { ITEM_CONDITIONS } from '@/lib/itemMutations'
 import { subtractMonths } from '@/lib/externalMarketResearch'
 import {
-  median,
-  applyOutlierFilter,
-  computeMarketRange,
-  isHighDispersion,
   selectTier,
-  splitSourceCounts,
-  latestSoldAt,
-  deriveConfidence,
+  assembleValuedResult,
   type SpecificityTier,
   type ValuationConfidence,
 } from '@/lib/marketValuationMath'
@@ -244,58 +238,110 @@ export async function getValuation(input: ValuationInput): Promise<ValuationResu
     }
   }
 
-  const rawObservations = selection.observations
-  const rawSampleCount = rawObservations.length
-  const { used } = applyOutlierFilter(rawObservations)
-  const usedSampleCount = used.length
-  const excludedOutlierCount = rawSampleCount - usedSampleCount
-
-  const usedSortedPrices = used.map((o) => o.priceCents).sort((a, b) => a - b)
-  const estimatedValueCents = median(usedSortedPrices)
-  const { low: marketRangeLowCents, high: marketRangeHighCents } = computeMarketRange(usedSortedPrices)
-
-  const { internal: internalSampleCount, external: externalSampleCount } = splitSourceCounts(used)
-  const latestUsedSaleAt = latestSoldAt(used)
-
-  const confidence = deriveConfidence({
-    usedSampleCount,
-    latestSaleAt: latestUsedSaleAt,
-    asOf,
-    isPrimarySpecificity: selection.specificity === primarySpecificity,
-    extendedHistoryUsed,
-    isHighDispersion: isHighDispersion(marketRangeLowCents, marketRangeHighCents, estimatedValueCents),
-  })
-
-  return {
-    status: 'valued',
+  return assembleValuedResult({
     catalogModelId: input.catalogModelId,
     marketVariantId,
     condition,
-
-    estimatedValueCents,
-    marketRangeLowCents,
-    marketRangeHighCents,
-
-    confidence,
     specificity: selection.specificity,
     primarySpecificity,
-
-    rawSampleCount,
-    usedSampleCount,
-    excludedOutlierCount,
-
-    internalSampleCount,
-    externalSampleCount,
-
+    observations: selection.observations,
     asOf,
     windowStart,
     extendedHistoryUsed,
     sampleTruncated,
-
-    method: 'median_sales',
-    outlierMethod: rawSampleCount >= 5 ? 'iqr_1_5' : 'none',
     fallbackReason,
+  })
+}
 
-    latestSaleAt: latestUsedSaleAt,
+// ── Batch composition (25B — Portfolio V1) ──────────────────────────────────
+// Produces a ValuationResult per requested CatalogModel, semantically
+// IDENTICAL to calling getValuation({catalogModelId, asOf}) individually for
+// each one — same canonical 22B evidence eligibility, same assembleValuedResult
+// math, same 24-month-then-extended-history resolution. Portfolio requests are
+// always model-level only (no marketVariantId/condition), so the tier
+// resolution collapses to its simplest case: the 'model' tier IS the broad
+// fetch itself, so unlike the single-model API's variant/condition path, a
+// batch request never needs a targeted narrower-tier query — only "primary
+// window" then, if empty, "extended/all-time", both fetched batched across
+// many models via getMarketSaleHistoryForModels (chunked/paginated IN-clause
+// queries, never one query per model, and never a shared/global row budget —
+// each model's own observations are bucketed and bounded to the canonical
+// 500-row limit independently, exactly like the single-model API).
+export type ValuationBatchInput = {
+  catalogModelIds: string[]
+  asOf?: Date
+}
+
+export async function getValuationsBatch(input: ValuationBatchInput): Promise<Map<string, ValuationResult>> {
+  const asOf = input.asOf ?? new Date()
+  const windowStart = subtractMonths(asOf, PRIMARY_WINDOW_MONTHS)
+  const uniqueIds = [...new Set(input.catalogModelIds)]
+
+  const results = new Map<string, ValuationResult>()
+  if (uniqueIds.length === 0) return results
+
+  const primaryByModel = await getMarketSaleHistoryForModels({
+    catalogModelIds: uniqueIds,
+    startDate: windowStart,
+    endDate: asOf,
+    limit: HISTORY_LIMIT,
+  })
+
+  const needsExtension: string[] = []
+  for (const id of uniqueIds) {
+    const bucket = primaryByModel.get(id) ?? { observations: [], hasMore: false }
+    if (bucket.observations.length === 0) {
+      needsExtension.push(id)
+      continue
+    }
+    results.set(
+      id,
+      assembleValuedResult({
+        catalogModelId: id,
+        marketVariantId: null,
+        condition: null,
+        specificity: 'model',
+        primarySpecificity: 'model',
+        observations: bucket.observations,
+        asOf,
+        windowStart,
+        extendedHistoryUsed: false,
+        sampleTruncated: bucket.hasMore,
+        fallbackReason: null,
+      }),
+    )
   }
+
+  if (needsExtension.length > 0) {
+    const extendedByModel = await getMarketSaleHistoryForModels({
+      catalogModelIds: needsExtension,
+      endDate: asOf,
+      limit: HISTORY_LIMIT,
+    })
+    for (const id of needsExtension) {
+      const bucket = extendedByModel.get(id) ?? { observations: [], hasMore: false }
+      if (bucket.observations.length === 0) {
+        results.set(id, { status: 'insufficient_data', catalogModelId: id, marketVariantId: null, condition: null, asOf, reason: 'no_sales' })
+        continue
+      }
+      results.set(
+        id,
+        assembleValuedResult({
+          catalogModelId: id,
+          marketVariantId: null,
+          condition: null,
+          specificity: 'model',
+          primarySpecificity: 'model',
+          observations: bucket.observations,
+          asOf,
+          windowStart,
+          extendedHistoryUsed: true,
+          sampleTruncated: bucket.hasMore,
+          fallbackReason: 'no_recent_sales',
+        }),
+      )
+    }
+  }
+
+  return results
 }

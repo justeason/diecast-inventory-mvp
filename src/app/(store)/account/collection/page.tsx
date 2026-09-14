@@ -5,6 +5,8 @@ import { BuyerOrderAccessForm } from '@/components/store/BuyerOrderAccessForm'
 import { AccountNav } from '@/components/store/AccountNav'
 import { prisma } from '@/lib/prisma'
 import { toggleCollectionItemPublic } from '@/lib/actions/collectionItems'
+import { getPortfolio, type PortfolioHolding } from '@/lib/portfolioQuery'
+import { centsToDisplay } from '@/lib/marketModelPageDisplay'
 
 export const dynamic = 'force-dynamic'
 
@@ -40,6 +42,21 @@ const CARDED_LOOSE_COLORS: Record<string, string> = {
 
 const VALID_CONDITIONS = new Set(Object.keys(CONDITION_LABELS))
 const VALID_TYPES = new Set(['carded', 'loose'])
+
+const CONFIDENCE_LABELS: Record<'high' | 'medium' | 'low', string> = {
+  high: 'High confidence',
+  medium: 'Medium confidence',
+  low: 'Low confidence',
+}
+
+function formatPercent(ratio: number): string {
+  const pct = ratio * 100
+  return `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`
+}
+
+function formatCoverage(covered: number, total: number): string {
+  return `Covers ${covered} of ${total} cop${total === 1 ? 'y' : 'ies'}`
+}
 
 function displayName(item: {
   brand: string | null
@@ -112,7 +129,14 @@ export default async function CollectionListPage({
       : {}),
   }
 
-  const [qtyAgg, distinctModelGroups, freeformCount, matchingCount, rows] = await Promise.all([
+  // 25B: one Portfolio snapshot over the ENTIRE collection (never the visible
+  // cursor page) — a single asOf shared across every model valuation in the
+  // batch. The paginated card list below stays responsible for the visible
+  // rows only; this same result also supplies their per-row value/cost/gain
+  // fields, so market valuation is computed exactly once, not duplicated.
+  const asOf = new Date()
+
+  const [qtyAgg, distinctModelGroups, freeformCount, matchingCount, rows, portfolio] = await Promise.all([
     // 16E Final: CollectionItem.quantity is the number of owned physical copies a
     // row represents (schema default 1, NOT NULL) — SUM(quantity), not row count,
     // is the true "items" total. A single row with quantity=5 is 5 owned items.
@@ -151,7 +175,10 @@ export default async function CollectionListPage({
         photos: { orderBy: { sortOrder: 'asc' }, take: 1, select: { url: true } },
       },
     }),
+    getPortfolio(session.profileId, asOf),
   ])
+
+  const holdingByItemId = new Map<string, PortfolioHolding>(portfolio.holdings.map((h) => [h.collectionItemId, h]))
 
   const itemCount = qtyAgg._sum.quantity ?? 0
   const entryCount = distinctModelGroups.length + freeformCount
@@ -167,10 +194,6 @@ export default async function CollectionListPage({
           <h1 className="text-2xl font-bold text-gray-900">My Collection</h1>
           <p className="text-sm text-gray-500 mt-1">
             {itemCount} item{itemCount !== 1 ? 's' : ''} · {entryCount} entr{entryCount !== 1 ? 'ies' : 'y'}
-            {' · '}
-            <Link href="/account/collection/valuation" className="underline underline-offset-2 hover:text-gray-700">
-              Estimate value →
-            </Link>
           </p>
         </div>
         <div className="flex gap-2 shrink-0">
@@ -188,6 +211,48 @@ export default async function CollectionListPage({
           </Link>
         </div>
       </div>
+
+      {itemCount > 0 && (
+        <section className="mb-8 rounded-md border border-gray-200 bg-gray-50 px-4 py-3 space-y-4">
+          <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Portfolio</h2>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div>
+              <p className="text-[11px] font-medium text-gray-500 uppercase tracking-wide">Estimated Portfolio Value</p>
+              <p className="text-lg font-semibold text-gray-900">
+                {portfolio.estimatedPortfolioValueCents !== null ? centsToDisplay(portfolio.estimatedPortfolioValueCents) : '—'}
+              </p>
+              <p className="text-xs text-gray-500 mt-0.5">
+                {formatCoverage(portfolio.marketValueCoverage.valuedCopies, portfolio.marketValueCoverage.totalCopies)}
+              </p>
+            </div>
+            <div>
+              <p className="text-[11px] font-medium text-gray-500 uppercase tracking-wide">Recorded Cost</p>
+              <p className="text-lg font-semibold text-gray-900">
+                {portfolio.recordedCostCents !== null ? centsToDisplay(portfolio.recordedCostCents) : '—'}
+              </p>
+              <p className="text-xs text-gray-500 mt-0.5">
+                {formatCoverage(portfolio.costCoverage.knownCostCopies, portfolio.costCoverage.totalCopies)}
+              </p>
+            </div>
+            <div>
+              <p className="text-[11px] font-medium text-gray-500 uppercase tracking-wide">Unrealized Gain/Loss</p>
+              <p className="text-lg font-semibold text-gray-900">
+                {portfolio.unrealizedGainLossCents !== null ? centsToDisplay(portfolio.unrealizedGainLossCents) : '—'}
+              </p>
+              <p className="text-xs text-gray-500 mt-0.5">
+                {formatCoverage(portfolio.gainLossCoverage.comparableCopies, portfolio.gainLossCoverage.totalCopies)}
+              </p>
+            </div>
+          </div>
+
+          <div className="border-t border-gray-200 pt-3 space-y-1 text-xs text-gray-500">
+            <p>Estimated values are not guaranteed sale proceeds — they reflect executed CollectNTrades and tracked external marketplace sales for this exact model only. Some items may show limited market data.</p>
+            <p>Recorded Cost uses purchase prices you recorded where the cost can be interpreted safely. Multi-copy historical purchase-cost tracking is limited.</p>
+            <p>Unrealized Gain/Loss is estimated market value minus recorded purchase cost for currently owned items where both values are available. Not an amount you can necessarily realize immediately.</p>
+          </div>
+        </section>
+      )}
 
       {(itemCount > 0 || isFiltered) && (
         <form method="GET" action="/account/collection" className="flex flex-wrap items-end gap-3 mb-6">
@@ -282,6 +347,7 @@ export default async function CollectionListPage({
               const photoUrl = ownPhoto?.url ?? catalogPhoto?.url ?? null
               const isRefImage = !ownPhoto && !!catalogPhoto
               const name = displayName(item)
+              const holding = holdingByItemId.get(item.id) ?? null
 
               return (
                 <div key={item.id} className="rounded-md border border-gray-200 bg-white px-4 py-4">
@@ -352,6 +418,49 @@ export default async function CollectionListPage({
                             </button>
                           </form>
                         </div>
+
+                        {holding && (
+                          <div className="mt-2 text-xs text-gray-700 space-y-0.5">
+                            {holding.valuationStatus === 'valued' ? (
+                              <p>
+                                Est. value/copy: <span className="font-medium">{centsToDisplay(holding.estimatedUnitValueCents!)}</span>
+                                {item.quantity > 1 && (
+                                  <> · Holding value: <span className="font-medium">{centsToDisplay(holding.estimatedHoldingValueCents!)}</span></>
+                                )}
+                                {holding.confidence && <> · {CONFIDENCE_LABELS[holding.confidence]}</>}
+                              </p>
+                            ) : holding.valuationStatus === 'no_catalog_match' ? (
+                              <p className="text-gray-400">No catalog match — market value unavailable</p>
+                            ) : holding.valuationStatus === 'invalid_quantity' ? (
+                              <p className="text-red-500">Invalid quantity — excluded from Portfolio totals</p>
+                            ) : (
+                              <p className="text-gray-400">Not enough market data yet</p>
+                            )}
+
+                            {holding.costStatus === 'known' ? (
+                              <p>
+                                Recorded Cost: <span className="font-medium">{centsToDisplay(holding.recordedCostCents!)}</span>
+                                {holding.unrealizedGainLossCents !== null && (
+                                  <>
+                                    {' · '}Unrealized: <span className="font-medium">{centsToDisplay(holding.unrealizedGainLossCents)}</span>
+                                    {holding.unrealizedGainLossPercent !== null && ` (${formatPercent(holding.unrealizedGainLossPercent)})`}
+                                  </>
+                                )}
+                              </p>
+                            ) : holding.costStatus === 'ambiguous_quantity' ? (
+                              <p className="text-gray-400">Recorded purchase price needs review for multi-copy holding</p>
+                            ) : holding.costStatus === 'invalid' ? (
+                              <p className="text-gray-400">Recorded purchase price is invalid</p>
+                            ) : (
+                              <Link
+                                href={`/account/collection/${item.id}/edit#purchasePrice`}
+                                className="text-gray-500 hover:text-gray-900 underline underline-offset-2"
+                              >
+                                Add purchase price
+                              </Link>
+                            )}
+                          </div>
+                        )}
 
                         <div className="mt-2 flex flex-wrap items-center gap-4 text-xs">
                           {item.catalogId && (

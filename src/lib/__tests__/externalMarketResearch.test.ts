@@ -21,6 +21,7 @@ const researchSrc  = readSrc('src/lib/externalMarketResearch.ts')
 const querySrc     = readSrc('src/lib/externalMarketResearchQuery.ts')
 const actionsSrc   = readSrc('src/lib/actions/externalMarketResearch.ts')
 const valuationPage = readSrc('src/app/(store)/account/collection/valuation/page.tsx')
+const collectionListPage = readSrc('src/app/(store)/account/collection/page.tsx')
 
 // ── parseCsv ──────────────────────────────────────────────────────────────────
 
@@ -776,47 +777,26 @@ describe('actions/externalMarketResearch.ts — optimistic concurrency', () => {
   })
 })
 
-describe('valuation page — external market integration', () => {
-  it('imports getExternalMarketSummaries', () => {
-    expect(valuationPage).toContain('getExternalMarketSummaries')
+// 25B: the dedicated valuation page (with its "Ext. ref." reference column) is
+// retired — it now only redirects to /account/collection. Portfolio V1
+// deliberately excludes external-reference/Ext.-ref. context (spec §66) — that
+// debug/reference field has no place in the merged Collection+Portfolio page.
+// getExternalMarketSummaries itself is untouched and still used by other
+// consumers (e.g. admin pricing intelligence) — only the retired page's use of
+// it is gone.
+describe('valuation page — retired; external-reference context intentionally excluded from Portfolio (25B)', () => {
+  it('the retired /account/collection/valuation route only redirects — no external-market-summary call', () => {
+    expect(valuationPage).not.toContain('getExternalMarketSummaries')
+    expect(valuationPage).toContain("redirect('/account/collection')")
   })
 
-  it('shows external data column (Ext. ref.)', () => {
-    expect(valuationPage).toContain('Ext. ref.')
+  it('the merged Collection+Portfolio page does not render an Ext. ref. column or call getExternalMarketSummaries', () => {
+    expect(collectionListPage).not.toContain('Ext. ref.')
+    expect(collectionListPage).not.toContain('getExternalMarketSummaries')
   })
 
-  it('only shows external data as reference — not included in estimated value', () => {
-    expect(valuationPage).toContain('not included in estimated value')
-  })
-
-  it('external data never passes through first-party valuation computation', () => {
-    expect(valuationPage).not.toContain('getExternalMarketSummaries.*getCollectionValuation')
-    expect(valuationPage).toContain('await getCollectionValuation')
-    expect(valuationPage).toContain('await getExternalMarketSummaries')
-  })
-
-  it('uses .soldSummary (new type field), not .soldStatsAll or .soldStats365', () => {
-    expect(valuationPage).toContain('soldSummary')
-    expect(valuationPage).not.toContain('soldStatsAll')
-    expect(valuationPage).not.toContain('soldStats365')
-  })
-
-  it('uses .researchFreshness', () => {
-    expect(valuationPage).toContain('researchFreshness')
-  })
-
-  it('guards ext column behind extSold && check (never renders $0 for missing data)', () => {
-    expect(valuationPage).toContain('extSold &&')
-  })
-
-  it('fetches external summaries separately (first-party separation)', () => {
-    // extSummaries is derived after getCollectionValuation — not fed back into it
-    const firstPartyCall = valuationPage.indexOf('await getCollectionValuation')
-    const extCall        = valuationPage.indexOf('await getExternalMarketSummaries')
-    expect(firstPartyCall).toBeGreaterThan(-1)
-    expect(extCall).toBeGreaterThan(-1)
-    // extSummaries is not passed into getCollectionValuation args (single-line check)
-    expect(valuationPage).not.toMatch(/getCollectionValuation\(.*extSummar/)
+  it('getExternalMarketSummaries itself remains defined and usable by other consumers', () => {
+    expect(researchSrc).toContain('export async function getExternalMarketSummaries')
   })
 })
 

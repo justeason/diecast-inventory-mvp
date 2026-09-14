@@ -318,11 +318,11 @@ describe('24B: legacy valuation engines removed from this page — getValuation 
     expect(snapshotSrc).not.toMatch(/estimatedValueCents\s*\?\?\s*0/)
   })
 
-  it('other 23C-deferred consumers of the old engines are untouched (advancedValuationQuery.ts/pricingIntelligence.ts still exist and are used elsewhere)', () => {
+  it('other legacy-engine modules still exist (seller/admin remain on them; 25B migrated Collection off getCollectionValuation)', () => {
     expect(exists('src/lib/advancedValuationQuery.ts')).toBe(true)
     expect(exists('src/lib/pricingIntelligence.ts')).toBe(true)
-    const collectionValuationSrc = readSrc('src/app/(store)/account/collection/valuation/page.tsx')
-    expect(collectionValuationSrc).toContain('getCollectionValuation')
+    const sellPageSrc = readSrc('src/app/(store)/account/sell/[id]/page.tsx')
+    expect(sellPageSrc).toMatch(/computeEstimate|getPricingIntelligence/)
   })
 })
 

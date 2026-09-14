@@ -200,9 +200,13 @@ const INTERNAL_SALE_SELECT = {
 // getMarketSaleHistory — this single line is what keeps DB count() exactly
 // equal to "rows normalizeInternalSale would accept" with no drift risk,
 // since both read from the same SNAPSHOT_PROVENANCE constant.
-function buildInternalWhere(filter: BaseFilter): Prisma.OrderItemWhereInput {
+// 25B: catalogModelId is widened to accept an id array for the batch path
+// (getMarketSaleHistoryForModels) below — every other clause is unchanged and
+// model-independent, so this never alters per-model eligibility. Single-model
+// callers (BaseFilter.catalogModelId: string) are unaffected.
+function buildInternalWhere(filter: Omit<BaseFilter, 'catalogModelId'> & { catalogModelId: string | string[] }): Prisma.OrderItemWhereInput {
   return {
-    catalogModelId: filter.catalogModelId,
+    catalogModelId: Array.isArray(filter.catalogModelId) ? { in: filter.catalogModelId } : filter.catalogModelId,
     ...(filter.marketVariantId !== undefined ? { marketVariantId: filter.marketVariantId } : {}),
     ...(filter.condition !== undefined ? { snapshotCondition: filter.condition } : {}),
     snapshotProvenance: { in: [...(filter.internalProvenance ?? SNAPSHOT_PROVENANCE)] },
@@ -227,9 +231,9 @@ const EXTERNAL_SALE_SELECT = {
   price: true,
 } as const
 
-function buildExternalWhere(filter: BaseFilter): Prisma.ExternalMarketObservationWhereInput {
+function buildExternalWhere(filter: Omit<BaseFilter, 'catalogModelId'> & { catalogModelId: string | string[] }): Prisma.ExternalMarketObservationWhereInput {
   return {
-    catalogModelId: filter.catalogModelId,
+    catalogModelId: Array.isArray(filter.catalogModelId) ? { in: filter.catalogModelId } : filter.catalogModelId,
     matchStatus: 'matched',
     observationType: 'sold',
     currency: 'USD',
@@ -293,6 +297,88 @@ export async function getMarketSaleHistory(
     observations: observations.slice(0, take),
     hasMore: observations.length > take,
   }
+}
+
+// ── getMarketSaleHistoryForModels (25B — Portfolio batch evidence) ──────────
+// Fetches canonical sale evidence for MANY CatalogModels in a bounded number
+// of queries — never one query per model, and never a shared/global row
+// budget across models (a single high-volume model must never crowd out
+// another model's evidence, unlike a naive shared take+N approach). Mirrors
+// the proven technique already used by the legacy batch engine
+// (advancedValuationQuery.ts's fetchComparableSalesBatch): a single IN-filtered
+// query per source, keyset-paginated until exhausted, model ids chunked to
+// bound query-plan size — then bucketed per model in memory, each bucket
+// independently sorted (compareMarketSaleObservations) and independently
+// truncated to the canonical bound with its own hasMore, exactly as if that
+// model had been queried alone via getMarketSaleHistory. Same 22B eligibility
+// (buildInternalWhere/buildExternalWhere, unmodified) — no weakened predicate.
+const MODEL_CHUNK_SIZE = 50
+const BATCH_PAGE_SIZE = 2000
+
+export type MarketSaleHistoryBatchFilter = {
+  catalogModelIds: string[]
+  startDate?: Date
+  endDate?: Date
+  limit?: number
+}
+
+function chunk<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = []
+  for (let i = 0; i < items.length; i += size) chunks.push(items.slice(i, i + size))
+  return chunks
+}
+
+export async function getMarketSaleHistoryForModels(
+  filter: MarketSaleHistoryBatchFilter,
+): Promise<Map<string, { observations: MarketSaleObservation[]; hasMore: boolean }>> {
+  const take = Math.min(filter.limit ?? DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT)
+  const byModel = new Map<string, MarketSaleObservation[]>()
+  for (const id of filter.catalogModelIds) byModel.set(id, [])
+
+  for (const idChunk of chunk(filter.catalogModelIds, MODEL_CHUNK_SIZE)) {
+    const baseWhere = { catalogModelId: idChunk, startDate: filter.startDate, endDate: filter.endDate }
+
+    let internalCursor: string | undefined
+    for (;;) {
+      const rows = await prisma.orderItem.findMany({
+        where: buildInternalWhere(baseWhere),
+        select: INTERNAL_SALE_SELECT,
+        orderBy: { id: 'asc' },
+        take: BATCH_PAGE_SIZE,
+        ...(internalCursor ? { skip: 1, cursor: { id: internalCursor } } : {}),
+      })
+      for (const row of rows) {
+        const obs = toInternalMarketSale(row)
+        if (obs) byModel.get(obs.catalogModelId)?.push(obs)
+      }
+      if (rows.length < BATCH_PAGE_SIZE) break
+      internalCursor = rows[rows.length - 1].id
+    }
+
+    let externalCursor: string | undefined
+    for (;;) {
+      const rows = await prisma.externalMarketObservation.findMany({
+        where: buildExternalWhere(baseWhere),
+        select: EXTERNAL_SALE_SELECT,
+        orderBy: { id: 'asc' },
+        take: BATCH_PAGE_SIZE,
+        ...(externalCursor ? { skip: 1, cursor: { id: externalCursor } } : {}),
+      })
+      for (const row of rows) {
+        const obs = toExternalMarketSale(row)
+        if (obs) byModel.get(obs.catalogModelId)?.push(obs)
+      }
+      if (rows.length < BATCH_PAGE_SIZE) break
+      externalCursor = rows[rows.length - 1].id
+    }
+  }
+
+  const result = new Map<string, { observations: MarketSaleObservation[]; hasMore: boolean }>()
+  for (const [id, observations] of byModel) {
+    observations.sort(compareMarketSaleObservations)
+    result.set(id, { observations: observations.slice(0, take), hasMore: observations.length > take })
+  }
+  return result
 }
 
 // ── getLatestSale ────────────────────────────────────────────────────────────

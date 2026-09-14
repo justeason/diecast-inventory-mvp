@@ -927,51 +927,50 @@ describe('advancedValuation.ts: read-only — no external data or AI', () => {
 
 // ── Collection valuation page — structural ────────────────────────────────────
 
-describe('collection/valuation/page.tsx: authenticated and private', () => {
-  it('requires buyer session (notFound if unauthenticated)', () => {
-    expect(valuationPage).toContain('getBuyerSession')
-    expect(valuationPage).toContain('notFound()')
+// 25B: /account/collection/valuation retired as a standalone rendered page —
+// Portfolio (Estimated Portfolio Value / Recorded Cost / Unrealized Gain/Loss)
+// now lives inline at the top of /account/collection, sourced from
+// getPortfolio (23B getValuationsBatch), never getCollectionValuation/
+// AdvancedValuation. The old describe block's assertions (session/robots/
+// disclaimer text/getCollectionValuation call) described the retired page's
+// own rendering, which no longer exists — replaced below.
+describe('collection/valuation/page.tsx: retired, redirects (25B)', () => {
+  it('redirects to /account/collection rather than rendering or 404ing', () => {
+    expect(valuationPage).toContain("redirect('/account/collection')")
   })
 
-  it('is force-dynamic (no static caching of private data)', () => {
-    expect(valuationPage).toContain("export const dynamic = 'force-dynamic'")
-  })
-
-  it('has noindex robots meta (private page)', () => {
-    expect(valuationPage).toContain('index: false')
-  })
-
-  it('calls getCollectionValuation with session.profileId (not browser input)', () => {
-    expect(valuationPage).toContain('getCollectionValuation(session.profileId)')
+  it('performs no data fetch/mutation of its own', () => {
+    expect(valuationPage).not.toContain('getCollectionValuation')
+    expect(valuationPage).not.toContain('getBuyerSession')
+    expect(valuationPage).not.toContain('.create(')
+    expect(valuationPage).not.toContain('.update(')
   })
 
   it('does not expose purchase price or private notes', () => {
     expect(valuationPage).not.toContain('purchasePrice')
     expect(valuationPage).not.toContain('item.notes')
   })
+})
 
-  it('does not expose customer profile ID or order IDs', () => {
-    expect(valuationPage).not.toContain('customerProfileId')
-    expect(valuationPage).not.toContain('orderId')
+describe('/account/collection (merged Collection + Portfolio, 25B)', () => {
+  it('sources Portfolio value from getPortfolio (23B getValuationsBatch), never getCollectionValuation/AdvancedValuation', () => {
+    expect(collectionPage).toContain("import { getPortfolio")
+    expect(collectionPage).not.toContain('getCollectionValuation')
+    expect(collectionPage).not.toMatch(/AdvancedValuation|AdvancedConfidence/)
   })
 
-  it('performs no server-action mutations (page load is read-only)', () => {
-    expect(valuationPage).not.toContain("'use server'")
-    expect(valuationPage).not.toContain('.create(')
-    expect(valuationPage).not.toContain('.update(')
+  it('is still authenticated/private (session-gated) and force-dynamic', () => {
+    expect(collectionPage).toContain('getBuyerSession')
+    expect(collectionPage).toContain("export const dynamic = 'force-dynamic'")
   })
 
-  it('clearly labels active asks as asking prices (not sold values)', () => {
-    expect(valuationPage).toContain('ask')
+  it('shows the Unrealized Gain/Loss disclosure text', () => {
+    expect(collectionPage).toContain('Not an amount you can necessarily realize immediately.')
   })
 
-  it('shows valuation disclaimer/methodology note', () => {
-    expect(valuationPage).toContain('Not an appraisal')
-    expect(valuationPage).toContain('completed CollectNTrades sales')
-  })
-
-  it('link from collection page exists', () => {
-    expect(collectionPage).toContain('/account/collection/valuation')
+  it('no longer links to a separate /account/collection/valuation destination', () => {
+    expect(collectionPage).not.toContain('href="/account/collection/valuation"')
+    expect(collectionPage).not.toContain('Estimate value')
   })
 })
 

@@ -130,6 +130,110 @@ export function latestSoldAt(observations: Array<{ soldAt: Date }>): Date | null
   return new Date(Math.max(...observations.map((o) => o.soldAt.getTime())))
 }
 
+// ── Assembly ───────────────────────────────────────────────────────────────────
+// 25B: the single pure "raw observations -> valued result" step shared by both
+// the single-model orchestration (marketValuation.ts::getValuation) and the
+// Portfolio batch composition (marketValuation.ts::getValuationsBatch) — the
+// only difference between single and batch is HOW the observation bucket for
+// one model was fetched; once fetched, both must run through this exact same
+// median/outlier/range/confidence assembly. No second valuation algorithm.
+export type ValuedAssemblyInput = {
+  catalogModelId: string
+  marketVariantId: string | null
+  condition: string | null
+  specificity: SpecificityTier
+  primarySpecificity: SpecificityTier
+  observations: MarketSaleObservation[]
+  asOf: Date
+  windowStart: Date
+  extendedHistoryUsed: boolean
+  sampleTruncated: boolean
+  fallbackReason: 'no_sales_at_requested_specificity' | 'no_recent_sales' | null
+}
+
+export type ValuedAssemblyResult = {
+  status: 'valued'
+  catalogModelId: string
+  marketVariantId: string | null
+  condition: string | null
+  estimatedValueCents: number
+  marketRangeLowCents: number | null
+  marketRangeHighCents: number | null
+  confidence: ValuationConfidence
+  specificity: SpecificityTier
+  primarySpecificity: SpecificityTier
+  rawSampleCount: number
+  usedSampleCount: number
+  excludedOutlierCount: number
+  internalSampleCount: number
+  externalSampleCount: number
+  asOf: Date
+  windowStart: Date
+  extendedHistoryUsed: boolean
+  sampleTruncated: boolean
+  method: 'median_sales'
+  outlierMethod: 'iqr_1_5' | 'none'
+  fallbackReason: 'no_sales_at_requested_specificity' | 'no_recent_sales' | null
+  latestSaleAt: Date | null
+}
+
+export function assembleValuedResult(input: ValuedAssemblyInput): ValuedAssemblyResult {
+  const rawObservations = input.observations
+  const rawSampleCount = rawObservations.length
+  const { used } = applyOutlierFilter(rawObservations)
+  const usedSampleCount = used.length
+  const excludedOutlierCount = rawSampleCount - usedSampleCount
+
+  const usedSortedPrices = used.map((o) => o.priceCents).sort((a, b) => a - b)
+  const estimatedValueCents = median(usedSortedPrices)
+  const { low: marketRangeLowCents, high: marketRangeHighCents } = computeMarketRange(usedSortedPrices)
+
+  const { internal: internalSampleCount, external: externalSampleCount } = splitSourceCounts(used)
+  const latestUsedSaleAt = latestSoldAt(used)
+
+  const confidence = deriveConfidence({
+    usedSampleCount,
+    latestSaleAt: latestUsedSaleAt,
+    asOf: input.asOf,
+    isPrimarySpecificity: input.specificity === input.primarySpecificity,
+    extendedHistoryUsed: input.extendedHistoryUsed,
+    isHighDispersion: isHighDispersion(marketRangeLowCents, marketRangeHighCents, estimatedValueCents),
+  })
+
+  return {
+    status: 'valued',
+    catalogModelId: input.catalogModelId,
+    marketVariantId: input.marketVariantId,
+    condition: input.condition,
+
+    estimatedValueCents,
+    marketRangeLowCents,
+    marketRangeHighCents,
+
+    confidence,
+    specificity: input.specificity,
+    primarySpecificity: input.primarySpecificity,
+
+    rawSampleCount,
+    usedSampleCount,
+    excludedOutlierCount,
+
+    internalSampleCount,
+    externalSampleCount,
+
+    asOf: input.asOf,
+    windowStart: input.windowStart,
+    extendedHistoryUsed: input.extendedHistoryUsed,
+    sampleTruncated: input.sampleTruncated,
+
+    method: 'median_sales',
+    outlierMethod: rawSampleCount >= 5 ? 'iqr_1_5' : 'none',
+    fallbackReason: input.fallbackReason,
+
+    latestSaleAt: latestUsedSaleAt,
+  }
+}
+
 // ── Confidence ─────────────────────────────────────────────────────────────────
 // "How strongly the available data supports this estimate" — never a
 // probability of selling at that price. Extended history is inherently stale
