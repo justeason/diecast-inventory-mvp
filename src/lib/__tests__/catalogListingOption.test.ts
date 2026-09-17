@@ -229,9 +229,9 @@ describe('16I: no sorting engine, no filtering, no per-Listing valuation', () =>
   })
 
   it('valuation remains a single model-level section, not duplicated inside CatalogListingOption', () => {
-    expect(optionSrc).not.toMatch(/getValuation|getCatalogValuation|AdvancedConfidence/)
-    const valuationMatches = [...hubSrc.matchAll(/getValuation\(/g)]
-    expect(valuationMatches.length).toBe(1)
+    expect(optionSrc).not.toMatch(/getValuation|getCatalogValuation|AdvancedConfidence|getMarketQuote/)
+    const quoteMatches = [...hubSrc.matchAll(/getMarketQuote\(/g)]
+    expect(quoteMatches.length).toBe(1)
   })
 })
 

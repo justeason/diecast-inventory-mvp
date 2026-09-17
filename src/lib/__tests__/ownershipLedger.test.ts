@@ -5,7 +5,18 @@
 // that invariant directly. No real DB; all mutating functions take a mocked
 // Prisma.TransactionClient, mirroring this codebase's established pattern
 // (see sellerPayoutCalculation.test.ts / collectionItemConcurrency.test.ts).
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+
+type Mock = ReturnType<typeof vi.fn>
+
+// 27B: previewRecordedCostForSale reads through the module-level `prisma`
+// singleton (a read-only DB boundary, unlike every other mutating function
+// here, which takes an open `tx`) — mock it so this file never touches a
+// real connection. No other test in this file references the `prisma` import.
+vi.mock('@/lib/prisma', () => ({
+  prisma: { collectionItem: { findFirst: vi.fn() }, acquisitionLot: { findMany: vi.fn() } },
+}))
+
 import {
   compareLotsForFifo,
   resolveLegacyCostKnowledge,
@@ -15,9 +26,10 @@ import {
   reverseDisposal,
   computeRealizedGain,
   SALE_DISPOSAL_TYPES,
+  previewFifoAllocation,
+  previewRecordedCostForSale,
 } from '@/lib/ownershipLedger'
-
-type Mock = ReturnType<typeof vi.fn>
+import { prisma } from '@/lib/prisma'
 
 function makeLot(overrides: Record<string, unknown> = {}) {
   return {
@@ -675,5 +687,105 @@ describe('createDisposal — proceeds enrichment closes the consignment async-pa
     })
     expect(getStored()!.quantity).toBe(1)
     expect(getStored()!.disposedAt).toEqual(new Date('2026-01-01'))
+  })
+})
+
+// ── 27B: read-only FIFO Recorded Cost preview (§45/§46/§86) ────────────────
+
+describe('previewFifoAllocation — same ordering as real disposal allocation, never a second rule', () => {
+  it('older lot allocates first, regardless of cost knowledge (matches compareLotsForFifo exactly)', () => {
+    const oldUnknown = makeLot({ id: 'old', remainingQuantity: 2, unitRecordedCostCents: null, acquiredAt: new Date('2025-01-01'), createdAt: new Date('2025-01-01') })
+    const newKnown = makeLot({ id: 'new', remainingQuantity: 2, unitRecordedCostCents: 500, acquiredAt: new Date('2026-01-01'), createdAt: new Date('2026-01-01') })
+    // Passed out of order — the function must sort itself, same as createDisposal.
+    const result = previewFifoAllocation([newKnown, oldUnknown], 1)
+    expect(result.status).toBe('unknown') // the OLDER (unknown-cost) lot is what actually allocates
+  })
+
+  it('a known-cost holding: full coverage, exact cents', () => {
+    const lot = makeLot({ id: 'l1', remainingQuantity: 3, unitRecordedCostCents: 1500 })
+    const result = previewFifoAllocation([lot], 2)
+    expect(result).toEqual({ quantityRequested: 2, totalAllocatedCopies: 2, knownCostCopies: 2, recordedCostCents: 3000, status: 'known' })
+  })
+
+  it('mixed known/unknown across two lots -> partial, recordedCostCents null (never a partial-only sum presented as complete)', () => {
+    const known = makeLot({ id: 'k', remainingQuantity: 1, unitRecordedCostCents: 1000, acquiredAt: new Date('2026-01-01'), createdAt: new Date('2026-01-01') })
+    const unknown = makeLot({ id: 'u', remainingQuantity: 1, unitRecordedCostCents: null, acquiredAt: new Date('2026-02-01'), createdAt: new Date('2026-02-01') })
+    const result = previewFifoAllocation([known, unknown], 2)
+    expect(result.status).toBe('partial')
+    expect(result.knownCostCopies).toBe(1)
+    expect(result.recordedCostCents).toBeNull()
+  })
+
+  it('zero known-cost copies -> unknown', () => {
+    const lot = makeLot({ id: 'u', remainingQuantity: 2, unitRecordedCostCents: null })
+    const result = previewFifoAllocation([lot], 2)
+    expect(result.status).toBe('unknown')
+    expect(result.recordedCostCents).toBeNull()
+  })
+
+  it('a known $0 lot is valid — status known, recordedCostCents 0, never confused with unknown', () => {
+    const lot = makeLot({ id: 'z', remainingQuantity: 1, unitRecordedCostCents: 0 })
+    const result = previewFifoAllocation([lot], 1)
+    expect(result.status).toBe('known')
+    expect(result.recordedCostCents).toBe(0)
+  })
+
+  it('insufficient total remaining quantity -> insufficient_quantity, reports actual availability', () => {
+    const lot = makeLot({ id: 'l1', remainingQuantity: 1 })
+    const result = previewFifoAllocation([lot], 5)
+    expect(result).toEqual({ quantityRequested: 5, totalAllocatedCopies: 1, knownCostCopies: 0, recordedCostCents: null, status: 'insufficient_quantity' })
+  })
+
+  it('never mutates the input lots (read-only) — remainingQuantity on the input objects is untouched', () => {
+    const lot = makeLot({ id: 'l1', remainingQuantity: 5, unitRecordedCostCents: 1000 })
+    previewFifoAllocation([lot], 3)
+    expect(lot.remainingQuantity).toBe(5)
+  })
+})
+
+describe('previewRecordedCostForSale — profile-scoped, read-only DB boundary (§44/§53/§61)', () => {
+  beforeEach(() => {
+    vi.resetAllMocks()
+  })
+
+  it('returns null when the CollectionItem does not belong to this profile — never leaks existence of another customer\'s item', async () => {
+    ;(prisma.collectionItem.findFirst as Mock).mockResolvedValue(null)
+    const result = await previewRecordedCostForSale('p1', 'ci-not-mine', 1)
+    expect(result).toBeNull()
+    expect(prisma.acquisitionLot.findMany).not.toHaveBeenCalled()
+  })
+
+  it('scopes the ownership check to { id: collectionItemId, profileId }', async () => {
+    ;(prisma.collectionItem.findFirst as Mock).mockResolvedValue({ id: 'ci1' })
+    ;(prisma.acquisitionLot.findMany as Mock).mockResolvedValue([])
+    await previewRecordedCostForSale('p1', 'ci1', 1)
+    const call = (prisma.collectionItem.findFirst as Mock).mock.calls[0][0]
+    expect(call.where).toEqual({ id: 'ci1', profileId: 'p1' })
+  })
+
+  it('only fetches lots with remainingQuantity > 0, scoped to this collectionItemId', async () => {
+    ;(prisma.collectionItem.findFirst as Mock).mockResolvedValue({ id: 'ci1' })
+    ;(prisma.acquisitionLot.findMany as Mock).mockResolvedValue([])
+    await previewRecordedCostForSale('p1', 'ci1', 1)
+    const call = (prisma.acquisitionLot.findMany as Mock).mock.calls[0][0]
+    expect(call.where).toEqual({ collectionItemId: 'ci1', remainingQuantity: { gt: 0 } })
+  })
+
+  it('returns the correct preview for an owned item with known-cost lots', async () => {
+    ;(prisma.collectionItem.findFirst as Mock).mockResolvedValue({ id: 'ci1' })
+    ;(prisma.acquisitionLot.findMany as Mock).mockResolvedValue([
+      makeLot({ id: 'l1', remainingQuantity: 2, unitRecordedCostCents: 1000 }),
+    ])
+    const result = await previewRecordedCostForSale('p1', 'ci1', 2)
+    expect(result).toEqual({ quantityRequested: 2, totalAllocatedCopies: 2, knownCostCopies: 2, recordedCostCents: 2000, status: 'known' })
+  })
+
+  it('never calls acquisitionLot.updateMany/collectionDisposal.create/collectionItem.update — purely read-only, no ledger mutation', async () => {
+    ;(prisma.collectionItem.findFirst as Mock).mockResolvedValue({ id: 'ci1' })
+    ;(prisma.acquisitionLot.findMany as Mock).mockResolvedValue([])
+    await previewRecordedCostForSale('p1', 'ci1', 1)
+    const prismaMock = prisma as unknown as Record<string, Record<string, unknown>>
+    expect(prismaMock.acquisitionLot.updateMany).toBeUndefined()
+    expect(prismaMock.collectionDisposal).toBeUndefined()
   })
 })

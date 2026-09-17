@@ -299,17 +299,21 @@ describe('16H: truthful zero-Listing empty state', () => {
 // ── Valuation (24B: migrated to 23B getValuation) ───────────────────────────────
 
 describe('24B: legacy valuation engines removed from this page — getValuation is the sole customer-facing EMV source', () => {
-  it('calls getValuation exactly once (never per-Listing)', () => {
-    const matches = [...hubSrc.matchAll(/getValuation\(/g)]
+  it('27B: calls getMarketQuote (which internally calls getValuation exactly once) exactly once — never per-Listing', () => {
+    const matches = [...hubSrc.matchAll(/getMarketQuote\(/g)]
     expect(matches.length).toBe(1)
+    const quoteSrc = fs.readFileSync(path.join(root, 'src/lib/marketQuoteQuery.ts'), 'utf-8')
+    expect([...quoteSrc.matchAll(/getValuation\(/g)].length).toBe(1)
   })
 
   it('no longer imports getCatalogValuation, AdvancedValuation/AdvancedConfidence, resaleEstimator, or pricingIntelligence for customer EMV', () => {
     expect(hubSrc).not.toMatch(/getCatalogValuation|AdvancedConfidence|from '@\/lib\/advancedValuation'|resaleEstimator|pricingIntelligence/)
   })
 
-  it('imports getValuation from the canonical 23B module', () => {
-    expect(hubSrc).toContain("import { getValuation } from '@/lib/marketValuation'")
+  it('27B: the page imports getMarketQuote (which internally sources EMV from the canonical 23B getValuation)', () => {
+    expect(hubSrc).toContain("import { getMarketQuote } from '@/lib/marketQuoteQuery'")
+    const quoteSrc = fs.readFileSync(path.join(root, 'src/lib/marketQuoteQuery.ts'), 'utf-8')
+    expect(quoteSrc).toContain("import { getValuation, type ValuationInput, type ValuationResult } from '@/lib/marketValuation'")
   })
 
   it('unknown/insufficient valuation renders a truthful label, never a fabricated $0 — delegated to MarketSnapshot', () => {
@@ -318,11 +322,14 @@ describe('24B: legacy valuation engines removed from this page — getValuation 
     expect(snapshotSrc).not.toMatch(/estimatedValueCents\s*\?\?\s*0/)
   })
 
-  it('other legacy-engine modules still exist (seller/admin remain on them; 25B migrated Collection off getCollectionValuation)', () => {
+  // 27B legitimately migrated the customer seller route off these legacy
+  // engines too (see sellerLegacyMigration.test.ts) — the narrower invariant
+  // that still holds is that the files themselves remain, since admin/
+  // automation consumers still depend on them.
+  it('other legacy-engine modules still exist (admin/automation remain on them; 25B migrated Collection, 27B migrated the customer seller route off them)', () => {
     expect(exists('src/lib/advancedValuationQuery.ts')).toBe(true)
     expect(exists('src/lib/pricingIntelligence.ts')).toBe(true)
-    const sellPageSrc = readSrc('src/app/(store)/account/sell/[id]/page.tsx')
-    expect(sellPageSrc).toMatch(/computeEstimate|getPricingIntelligence/)
+    expect(exists('src/lib/resaleEstimator.ts')).toBe(true)
   })
 })
 

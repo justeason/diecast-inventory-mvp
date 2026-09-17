@@ -11,6 +11,9 @@ import {
   searchModelsForSell, submitSellBatch,
   type SellItemResult,
 } from '@/lib/actions/sellCapture'
+import { getGuestMarketQuote } from '@/lib/actions/guestMarketQuote'
+import type { ValuationResult } from '@/lib/marketValuation'
+import { centsToDisplay } from '@/lib/marketModelPageDisplay'
 import type { CatalogMatchResult } from '@/lib/catalogMatching'
 
 export type PreselectedModel = { id: string; brand: string; name: string; year: number | null }
@@ -73,6 +76,10 @@ export function SellCaptureFlow({
 
   const [addPendingId, setAddPendingId] = useState<string | null>(null)
   const [addError, setAddError] = useState<string | null>(null)
+  // 27B §11: model-level EMV, fetched the moment a CatalogModel is confirmed —
+  // public market context only, never gated on authentication. Keyed by
+  // catalogModelId since one guest batch can include multiple distinct models.
+  const [quotesByModelId, setQuotesByModelId] = useState<Record<string, ValuationResult>>({})
   // 19B Final Runtime Reconciliation §4: `addPendingId` (React state) is what
   // drives the button's visual `disabled` prop, but state updates are batched/
   // async — a fast double-click can fire this handler twice before React
@@ -127,6 +134,13 @@ export function SellCaptureFlow({
       })
       if (!result.ok) { setAddError(result.error); return }
       setItems((prev) => [...prev, result.data])
+      // Fire-and-forget — a slow/failed quote never blocks the add or the rest
+      // of the flow; the item simply shows no market-value line yet.
+      if (!(catalogModelId in quotesByModelId)) {
+        getGuestMarketQuote(catalogModelId).then((quoteResult) => {
+          if (quoteResult.ok) setQuotesByModelId((prev) => ({ ...prev, [catalogModelId]: quoteResult.valuation }))
+        })
+      }
     } finally {
       addInFlightRef.current.delete(catalogModelId)
       setAddPendingId(null)
@@ -360,6 +374,19 @@ export function SellCaptureFlow({
                         {item.saleTypePreference && <> · {SALE_TYPE_LABELS[item.saleTypePreference] ?? item.saleTypePreference}</>}
                       </p>
                       {item.notes && <p className="text-xs text-gray-400 mt-0.5 truncate">{item.notes}</p>}
+                      {(() => {
+                        const quote = quotesByModelId[item.catalogModelId]
+                        if (!quote) return null
+                        if (quote.status === 'valued') {
+                          return (
+                            <p className="text-xs text-gray-500 mt-1">
+                              Estimated Market Value: <span className="font-medium text-gray-700">{centsToDisplay(quote.estimatedValueCents)}</span>
+                              {' '}· Model-level estimate; more specific context may be available after item details are confirmed.
+                            </p>
+                          )
+                        }
+                        return <p className="text-xs text-gray-400 mt-1">Not enough direct sales data yet.</p>
+                      })()}
                     </div>
                     <div className="flex shrink-0 gap-2">
                       <button

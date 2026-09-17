@@ -21,12 +21,14 @@ import {
   ATTENTION_DESCRIPTIONS,
 } from '@/lib/sellerLifecycle'
 import { AddShipmentForm } from '@/components/store/AddShipmentForm'
-import { fetchComparableSales } from '@/lib/resaleEstimatorQuery'
-import { computeEstimate, type TargetModel } from '@/lib/resaleEstimator'
-import { computeGuidance, isSubmissionPricingLocked } from '@/lib/sellerPricingGuidance'
-import { PricingGuidanceForm, type SerializedGuidance, type SerializedPreference } from '@/components/store/PricingGuidanceForm'
-import { getPricingIntelligence } from '@/lib/pricingIntelligenceQuery'
-import { PricingIntelligenceSummary, type SerializedPricingIntelligence } from '@/components/store/PricingIntelligenceSummary'
+import { getMarketQuote } from '@/lib/marketQuoteQuery'
+import { computeMarketVariantId } from '@/lib/marketVariant'
+import { ITEM_CONDITIONS } from '@/lib/itemMutations'
+import { previewRecordedCostForSale } from '@/lib/ownershipLedger'
+import { findActualBuyoutOffer } from '@/lib/sellerProceedsEstimator'
+import { SellerMarketSnapshot } from '@/components/store/SellerMarketSnapshot'
+import { SellerProceedsEstimator } from '@/components/store/SellerProceedsEstimator'
+import { SellerCostContext } from '@/components/store/SellerCostContext'
 
 export const dynamic = 'force-dynamic'
 
@@ -107,19 +109,6 @@ export default async function SellRequestDetailPage({
       catalogId:          true,
       createdAt:          true,
       updatedAt:          true,
-      pricingPreference: {
-        select: {
-          strategy:               true,
-          selectedTargetPrice:    true,
-          customDesiredPrice:     true,
-          estimatedDaysToSell:    true,
-          estimatedSellerProceeds: true,
-          confidence:             true,
-          matchLevel:             true,
-          comparableCount:        true,
-          capturedAt:             true,
-        },
-      },
       photos: {
         select: { id: true, url: true, sortOrder: true },
         orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
@@ -318,76 +307,48 @@ export default async function SellRequestDetailPage({
   const itemTitle =
     [submission.brand, submission.name].filter(Boolean).join(' ') || 'Untitled item'
 
-  // Pricing guidance — computed server-side; browser never supplies these values
-  const pricingLocked = isSubmissionPricingLocked({
-    agreements: submission.agreements,
-    intakeDrafts,
-  })
-  const activeConsignmentAgreement =
-    activeAgreement?.type === 'consignment' ? activeAgreement : null
-  const consignmentTerms = activeConsignmentAgreement
-    ? {
-        commissionPercent: activeConsignmentAgreement.commissionPercent,
-        fixedFee: activeConsignmentAgreement.fixedFee,
-        minimumSellerPayout: activeConsignmentAgreement.minimumSellerPayout,
-      }
+  // 27B: canonical market valuation only (23B getValuation via the shared
+  // Core Market Quote) — legacy resaleEstimator/pricingIntelligence/
+  // computeGuidance are no longer consulted on this customer route (27A/27B
+  // migration; admin/automation consumers of those engines are untouched).
+  // Packaging is resolved LIVE server-side — never trusted from a stored
+  // marketVariantId (SellerSubmission has none) and never fabricated when it
+  // can't resolve (falls back to model-level, per §9).
+  const marketVariantId = submission.catalogId
+    ? await computeMarketVariantId(prisma, submission.catalogId, submission.cardedOrLoose)
+    : null
+  const condition =
+    marketVariantId && submission.condition && (ITEM_CONDITIONS as readonly string[]).includes(submission.condition)
+      ? submission.condition
+      : undefined
+  const requestedVariantLabel = marketVariantId
+    ? submission.cardedOrLoose === 'carded'
+      ? 'Carded'
+      : submission.cardedOrLoose === 'loose'
+        ? 'Loose'
+        : null
     : null
 
-  const pricingTargetModel: TargetModel = {
-    id: submission.catalogId ?? '__unlinked__',
-    brand: submission.brand ?? '',
-    name: submission.name ?? '',
-    series: submission.series ?? null,
-    year: submission.year ?? null,
-  }
-  const pricingComparables = await fetchComparableSales(pricingTargetModel)
-  const pricingEstimate = computeEstimate(pricingTargetModel, pricingComparables)
-  const hasEstimate = pricingEstimate.estimatedPrice !== null
+  const [marketQuote, costPreview, buyoutOffer] = await Promise.all([
+    submission.catalogId
+      ? getMarketQuote({
+          catalogModelId: submission.catalogId,
+          ...(marketVariantId ? { marketVariantId } : {}),
+          ...(condition ? { condition } : {}),
+        })
+      : Promise.resolve(null),
+    // §43/§44/§53: private, Collection-linked only — a focused FIFO preview,
+    // never the whole Portfolio, and never for a manual (non-Collection) submission.
+    submission.collectionItemId
+      ? previewRecordedCostForSale(session.profileId, submission.collectionItemId, submission.quantity)
+      : Promise.resolve(null),
+    findActualBuyoutOffer(submission.id),
+  ])
 
-  // Blended first-party + external pricing intelligence (14C) — informational only,
-  // shown alongside (not replacing) the existing sell_fast/maximize_proceeds strategy
-  // picker below. Never exposes internal cost, payout, or PII (see component docstring).
-  const pricingIntelligence: SerializedPricingIntelligence | null = submission.catalogId
-    ? await getPricingIntelligence(submission.catalogId)
-    : null
-
-  function toSerializedGuidance(g: ReturnType<typeof computeGuidance>): SerializedGuidance {
-    return {
-      targetPriceCents: g.targetPriceCents,
-      estimatedDaysToSell: g.estimatedDaysToSell,
-      estimatedSellerProceedsCents: g.estimatedSellerProceedsCents,
-      confidence: g.confidence,
-      comparableCount: g.comparableCount,
-      matchLevel: g.matchLevel,
-      warnings: g.warnings,
-    }
-  }
-
-  const sellFastGuidance = hasEstimate
-    ? toSerializedGuidance(computeGuidance({ strategy: 'sell_fast', estimateResult: pricingEstimate, consignmentTerms }))
-    : null
-  const maximizeGuidance = hasEstimate
-    ? toSerializedGuidance(computeGuidance({ strategy: 'maximize_proceeds', estimateResult: pricingEstimate, consignmentTerms }))
-    : null
-
-  const rawPref = submission.pricingPreference
-  const savedPreference: SerializedPreference = rawPref
-    ? {
-        strategy: rawPref.strategy,
-        selectedTargetPriceCents: Math.round(parseFloat(rawPref.selectedTargetPrice.toString()) * 100),
-        customDesiredPriceCents: rawPref.customDesiredPrice
-          ? Math.round(parseFloat(rawPref.customDesiredPrice.toString()) * 100)
-          : null,
-        estimatedDaysToSell: rawPref.estimatedDaysToSell,
-        estimatedSellerProceedsCents: rawPref.estimatedSellerProceeds
-          ? Math.round(parseFloat(rawPref.estimatedSellerProceeds.toString()) * 100)
-          : null,
-        confidence: rawPref.confidence,
-        matchLevel: rawPref.matchLevel,
-        comparableCount: rawPref.comparableCount,
-        capturedAt: rawPref.capturedAt.toISOString(),
-      }
-    : null
+  // Default proceeds-preview price: current EMV when available, else the
+  // seller enters their own — never the ambiguous legacy expectedPrice (§4/§6).
+  const initialProceedsPriceCents =
+    marketQuote?.valuation.status === 'valued' ? marketQuote.valuation.estimatedValueCents : null
 
   return (
     <div className="max-w-lg">
@@ -605,7 +566,7 @@ export default async function SellRequestDetailPage({
             )}
             {submission.expectedPrice != null && (
               <div className="flex gap-3">
-                <dt className="text-gray-500 w-28 shrink-0">Expected price</dt>
+                <dt className="text-gray-500 w-28 shrink-0">Price preference (reference)</dt>
                 <dd className="text-gray-900">${submission.expectedPrice.toFixed(2)}</dd>
               </div>
             )}
@@ -619,28 +580,37 @@ export default async function SellRequestDetailPage({
         </div>
       </div>
 
-      {/* Pricing intelligence (informational — see strategy picker below to act) */}
-      {pricingIntelligence && (
+      {/* 27B: canonical Market Snapshot — 23B EMV + 24B internal asks only.
+          Never shown for an unidentified (no catalogId) item (§54). */}
+      {marketQuote && submission.catalogId && (
         <div className="mb-6">
-          <h2 className="text-sm font-semibold text-gray-900 mb-3">Pricing intelligence</h2>
-          <PricingIntelligenceSummary result={pricingIntelligence} />
+          <SellerMarketSnapshot quote={marketQuote} catalogId={submission.catalogId} requestedVariantLabel={requestedVariantLabel} />
         </div>
       )}
 
-      {/* Pricing preference */}
+      {/* 27B §35/§38/§39: Estimated Seller Proceeds (consignment) — a distinct
+          concept from EMV/Market Range above (§2). Buyout amounts are never
+          computed here; see the Agreement section below for an actual offer. */}
       <div className="mb-6">
-        <h2 className="text-sm font-semibold text-gray-900 mb-3">Pricing preference</h2>
-        <PricingGuidanceForm
-          key={rawPref?.capturedAt.getTime() ?? 0}
+        <h2 className="text-sm font-semibold text-gray-900 mb-3">Estimated Seller Proceeds</h2>
+        <SellerProceedsEstimator
           submissionId={submission.id}
-          sellFastGuidance={sellFastGuidance}
-          maximizeGuidance={maximizeGuidance}
-          hasEstimate={hasEstimate}
-          savedPreference={savedPreference}
-          isLocked={pricingLocked}
-          hasConsignmentTerms={!!consignmentTerms}
+          quantity={submission.quantity}
+          initialPriceCents={initialProceedsPriceCents}
+          costPreview={costPreview}
         />
+        {!buyoutOffer && submission.saleTypePreference !== 'consignment' && (
+          <p className="text-xs text-gray-500 mt-2">Buyout offers are provided after review.</p>
+        )}
       </div>
+
+      {/* 27B §43: private Recorded Cost context — Collection-linked only,
+          visually separate from Market Snapshot. */}
+      {costPreview && costPreview.status !== 'insufficient_quantity' && (
+        <div className="mb-6">
+          <SellerCostContext costPreview={costPreview} />
+        </div>
+      )}
 
       {/* Submission photos */}
       <div className="mb-6">

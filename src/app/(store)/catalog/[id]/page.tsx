@@ -5,9 +5,8 @@ import { prisma } from '@/lib/prisma'
 import { getBuyerSession } from '@/lib/buyerSession'
 import { getCatalogRelationshipState } from '@/lib/catalogRelationshipQuery'
 import { getCatalogModelHub, LISTING_PAGE_SIZE } from '@/lib/catalogModelHubQuery'
-import { getValuation } from '@/lib/marketValuation'
-import { getMarketSaleHistory, getLatestSale } from '@/lib/marketSaleQuery'
-import { getInternalAskSummary } from '@/lib/marketAskQuery'
+import { getMarketSaleHistory } from '@/lib/marketSaleQuery'
+import { getMarketQuote } from '@/lib/marketQuoteQuery'
 import { isValidPackagingType, findPackagingMarketVariant, type PackagingType } from '@/lib/marketVariant'
 import { CatalogModelActions } from '@/components/store/CatalogModelActions'
 import { CatalogListingOption } from '@/components/store/CatalogListingOption'
@@ -79,14 +78,12 @@ export default async function CatalogModelHubPage({
   // 16H Part AB, reused: one narrowly-scoped relationship lookup for this
   // single model. §51: session and every independent market-data query run in
   // parallel; relationship state depends on session, so it follows sequentially.
-  const [session, valuation, history, lastMarketSale, lastInternalSale, askSummary] = await Promise.all([
+  const [session, quote, history] = await Promise.all([
     getBuyerSession(),
-    getValuation({ catalogModelId: id, ...variantFilter, asOf }),
+    getMarketQuote({ catalogModelId: id, ...variantFilter, asOf, includeLastSale: true }),
     getMarketSaleHistory({ catalogModelId: id, ...variantFilter, endDate: asOf, limit: HISTORY_LIMIT }),
-    getLatestSale({ catalogModelId: id, ...variantFilter, sources: ['internal', 'external'], endDate: asOf }),
-    getLatestSale({ catalogModelId: id, ...variantFilter, sources: ['internal'], endDate: asOf }),
-    getInternalAskSummary({ catalogModelId: id, ...variantFilter }),
   ])
+  const { valuation, askSummary, lastMarketSale, lastInternalSale } = quote
   const relationshipMap = session ? await getCatalogRelationshipState(session.profileId, [id]) : null
   const relationship = relationshipMap?.get(id) ?? null
 

@@ -16,6 +16,7 @@
 // becomes partial/unavailable for that disposal. Ownership correctness always
 // outranks calculable gain.
 import { Prisma } from '@prisma/client'
+import { prisma } from '@/lib/prisma'
 import { internalPriceToCents } from '@/lib/marketMoney'
 
 export type CostKnowledge = 'known' | 'ambiguous_legacy' | 'unknown'
@@ -394,4 +395,79 @@ export function computeRealizedGain(
     recordedRealizedGainLossCents: gain,
     recordedRealizedGainLossPercent: totalAllocatedCostCents > 0 ? gain / totalAllocatedCostCents : null,
   }
+}
+
+// ── 27B: read-only FIFO Recorded Cost preview ───────────────────────────────
+// Previews which remaining lot(s) a hypothetical disposal of `quantity` would
+// consume and at what cost, using the EXACT SAME ordering as createDisposal's
+// real allocation (compareLotsForFifo) — never a second, divergent allocation
+// rule. Pure/no I/O — never writes, never decrements, never creates a
+// CollectionDisposal/Allocation. An older unknown-cost lot still allocates
+// first (ownership chronology is never skipped for a prettier cost preview);
+// if any allocated unit's cost is unknown, the preview cost stays unavailable
+// (status 'partial'/'unknown'), never fabricated as $0.
+export type RecordedCostPreviewStatus = 'known' | 'partial' | 'unknown' | 'insufficient_quantity'
+
+export type RecordedCostPreview = {
+  quantityRequested: number
+  totalAllocatedCopies: number
+  knownCostCopies: number
+  // Only non-null when status === 'known' (every allocated copy has a known cost).
+  recordedCostCents: number | null
+  status: RecordedCostPreviewStatus
+}
+
+type FifoLotForCostPreview = FifoLot & { remainingQuantity: number; unitRecordedCostCents: number | null }
+
+export function previewFifoAllocation(lots: FifoLotForCostPreview[], quantity: number): RecordedCostPreview {
+  const sorted = [...lots].sort(compareLotsForFifo)
+  const totalAvailable = sorted.reduce((sum, lot) => sum + lot.remainingQuantity, 0)
+  if (totalAvailable < quantity) {
+    return { quantityRequested: quantity, totalAllocatedCopies: totalAvailable, knownCostCopies: 0, recordedCostCents: null, status: 'insufficient_quantity' }
+  }
+
+  let remaining = quantity
+  let knownCostCopies = 0
+  let knownCostCents = 0
+  let anyUnknown = false
+  for (const lot of sorted) {
+    if (remaining <= 0) break
+    const take = Math.min(lot.remainingQuantity, remaining)
+    if (lot.unitRecordedCostCents !== null) {
+      knownCostCopies += take
+      knownCostCents += lot.unitRecordedCostCents * take
+    } else {
+      anyUnknown = true
+    }
+    remaining -= take
+  }
+
+  const status: RecordedCostPreviewStatus = knownCostCopies === 0 ? 'unknown' : anyUnknown ? 'partial' : 'known'
+  return {
+    quantityRequested: quantity,
+    totalAllocatedCopies: quantity,
+    knownCostCopies,
+    recordedCostCents: status === 'known' ? knownCostCents : null,
+    status,
+  }
+}
+
+// DB-boundary wrapper: scoped to the requesting profile (never another
+// customer's CollectionItem) — returns null when the item doesn't belong to
+// this profile, rather than leaking existence. No transaction needed (no
+// writes); a focused query, never getPortfolio's whole-collection load.
+export async function previewRecordedCostForSale(
+  profileId: string,
+  collectionItemId: string,
+  quantity: number,
+): Promise<RecordedCostPreview | null> {
+  const item = await prisma.collectionItem.findFirst({ where: { id: collectionItemId, profileId }, select: { id: true } })
+  if (!item) return null
+
+  const lots = await prisma.acquisitionLot.findMany({
+    where: { collectionItemId, remainingQuantity: { gt: 0 } },
+    select: { id: true, remainingQuantity: true, unitRecordedCostCents: true, acquiredAt: true, ledgerEffectiveAt: true, createdAt: true },
+  })
+
+  return previewFifoAllocation(lots, quantity)
 }

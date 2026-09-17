@@ -64,12 +64,15 @@ describe('25B: Collection Portfolio uses ONLY 23B getValuationsBatch — no lega
     expect(stripComments(portfolioQuerySrc)).not.toMatch(/AdvancedValuation|getCollectionValuation|resaleEstimator|pricingIntelligence/)
   })
 
-  it('seller and admin legacy engines remain untouched', () => {
+  // 27B migrated the customer seller route off these legacy engine files —
+  // the files themselves remain (admin/automation still depend on them, see
+  // sellerLegacyMigration.test.ts), only this narrower claim is updated.
+  it('legacy engine files remain (admin/automation depend on them); the customer seller route no longer imports them', () => {
     expect(exists('src/lib/advancedValuationQuery.ts')).toBe(true)
     expect(exists('src/lib/resaleEstimator.ts')).toBe(true)
     expect(exists('src/lib/pricingIntelligence.ts')).toBe(true)
     const sellSrc = readSrc('src/app/(store)/account/sell/[id]/page.tsx')
-    expect(sellSrc).toMatch(/computeEstimate|getPricingIntelligence/)
+    expect(sellSrc).not.toMatch(/computeEstimate|getPricingIntelligence/)
   })
 })
 

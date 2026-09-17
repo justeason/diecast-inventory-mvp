@@ -98,17 +98,29 @@ describe('24B: Available Listings are variant-strict when a variant is selected,
 // ── Load-bearing invariant: EMV may broaden; History/Last-Sale/Asks never do ──
 
 describe('24B: EMV-fallback-vs-strictness asymmetry — the Series-24 load-bearing invariant (§8-§12/§68/§69/§77/§84/§85)', () => {
-  it('a single variantFilter is spread identically into getValuation, getMarketSaleHistory, both getLatestSale calls, and getInternalAskSummary — no divergent scoping between them', () => {
+  it('a single variantFilter is spread identically into getMarketQuote (EMV+asks+last-sale) and getMarketSaleHistory (price history) — no divergent scoping between them', () => {
     const calls = [
-      'getValuation({ catalogModelId: id, ...variantFilter, asOf })',
+      'getMarketQuote({ catalogModelId: id, ...variantFilter, asOf, includeLastSale: true })',
       'getMarketSaleHistory({ catalogModelId: id, ...variantFilter, endDate: asOf, limit: HISTORY_LIMIT })',
-      "getLatestSale({ catalogModelId: id, ...variantFilter, sources: ['internal', 'external'], endDate: asOf })",
-      "getLatestSale({ catalogModelId: id, ...variantFilter, sources: ['internal'], endDate: asOf })",
-      'getInternalAskSummary({ catalogModelId: id, ...variantFilter })',
     ]
     for (const call of calls) {
       expect(hubSrc).toContain(call)
     }
+  })
+
+  it('27B: getMarketQuote (marketQuoteQuery.ts) spreads the SAME variantFilter/conditionFilter into getValuation, getInternalAskSummary, and both getLatestSale calls — the composition never diverges internally', () => {
+    const quoteSrc = fs.readFileSync(path.join(root, 'src/lib/marketQuoteQuery.ts'), 'utf-8')
+    expect(quoteSrc).toContain('getValuation({ catalogModelId: input.catalogModelId, ...variantFilter, ...conditionFilter, asOf })')
+    expect(quoteSrc).toContain('getInternalAskSummary({ catalogModelId: input.catalogModelId, ...variantFilter })')
+    expect(quoteSrc).toContain("getLatestSale({ catalogModelId: input.catalogModelId, ...variantFilter, sources: ['internal', 'external'], endDate: asOf })")
+    expect(quoteSrc).toContain("getLatestSale({ catalogModelId: input.catalogModelId, ...variantFilter, sources: ['internal'], endDate: asOf })")
+  })
+
+  it('27B: includeLastSale defaults falsy — a consumer that omits it (the seller Market Snapshot) never issues either getLatestSale query', () => {
+    const quoteSrc = fs.readFileSync(path.join(root, 'src/lib/marketQuoteQuery.ts'), 'utf-8')
+    const idx = quoteSrc.indexOf('input.includeLastSale')
+    expect(idx).toBeGreaterThan(-1)
+    expect(quoteSrc.slice(idx, idx + 60)).toMatch(/input\.includeLastSale\s*\n\s*\?/)
   })
 
   it('getMarketSaleHistory/getLatestSale (22B) contain no specificity/tier-broadening logic — history can never silently fall back the way EMV does', () => {
@@ -370,9 +382,11 @@ describe('24B: no schema/migration/package changes; Collection/Seller/Admin valu
     expect(redirectSrc).toContain("redirect('/account/collection')")
   })
 
-  it('Seller pricing guidance and admin resale-estimator/pricing-intelligence remain on legacy engines', () => {
+  // 27B migrated the customer seller route off these legacy engines (see
+  // sellerLegacyMigration.test.ts) — admin remains untouched (§65 boundary).
+  it('admin resale-estimator remains on the legacy engine; the customer seller route no longer does', () => {
     const sellSrc = readSrc('src/app/(store)/account/sell/[id]/page.tsx')
-    expect(sellSrc).toMatch(/computeEstimate|getPricingIntelligence/)
+    expect(sellSrc).not.toMatch(/computeEstimate|getPricingIntelligence/)
     const adminEstimatorSrc = readSrc('src/app/(admin)/admin/resale-estimator/page.tsx')
     expect(adminEstimatorSrc).toContain('computeEstimate')
   })

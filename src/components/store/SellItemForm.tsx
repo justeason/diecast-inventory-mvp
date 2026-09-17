@@ -158,7 +158,7 @@ export function SellItemForm({ collectionItemId, prefill }: Props) {
 
       <div className="flex flex-col gap-1">
         <label htmlFor="sell-expected-price" className="text-sm font-medium text-gray-700">
-          Expected price{' '}
+          Desired selling price per item{' '}
           <span className="font-normal text-gray-400">(optional)</span>
         </label>
         <input
@@ -171,7 +171,7 @@ export function SellItemForm({ collectionItemId, prefill }: Props) {
           className={inputClass('expectedPrice')}
         />
         <p className="text-xs text-gray-400">
-          For reference only — does not guarantee a sale price.
+          This is your preference for review. It does not set the final listing price.
         </p>
         <FieldError message={errors.expectedPrice?.[0]} />
       </div>
