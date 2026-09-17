@@ -6,6 +6,8 @@ import { AccountNav } from '@/components/store/AccountNav'
 import { prisma } from '@/lib/prisma'
 import { toggleCollectionItemPublic } from '@/lib/actions/collectionItems'
 import { getPortfolio, type PortfolioHolding } from '@/lib/portfolioQuery'
+import { getCollectionDisposalHistory, type DisposalHistoryCursor } from '@/lib/collectionDisposalHistoryQuery'
+import { CollectionHistoryList } from '@/components/store/CollectionHistoryList'
 import { centsToDisplay } from '@/lib/marketModelPageDisplay'
 
 export const dynamic = 'force-dynamic'
@@ -68,10 +70,20 @@ function displayName(item: {
   return parts.length > 0 ? parts.join(' ') : 'Unnamed item'
 }
 
+function parseHistoryCursor(raw: string | undefined): DisposalHistoryCursor | undefined {
+  if (!raw) return undefined
+  const sep = raw.indexOf('_')
+  if (sep === -1) return undefined
+  const disposedAtMs = Number(raw.slice(0, sep))
+  const id = raw.slice(sep + 1)
+  if (!Number.isFinite(disposedAtMs) || !id) return undefined
+  return { disposedAtMs, id }
+}
+
 export default async function CollectionListPage({
   searchParams,
 }: {
-  searchParams: Promise<{ cursor?: string; q?: string; condition?: string; type?: string; sort?: string }>
+  searchParams: Promise<{ cursor?: string; q?: string; condition?: string; type?: string; sort?: string; view?: string; hcursor?: string }>
 }) {
   const session = await getBuyerSession()
 
@@ -87,12 +99,15 @@ export default async function CollectionListPage({
     )
   }
 
-  const { cursor, q: rawQ, condition: rawCondition, type: rawType, sort: rawSort } = await searchParams
+  const { cursor, q: rawQ, condition: rawCondition, type: rawType, sort: rawSort, view: rawView, hcursor } = await searchParams
   const q = rawQ?.trim() ?? ''
   const condition = rawCondition && VALID_CONDITIONS.has(rawCondition) ? rawCondition : ''
   const type = rawType && VALID_TYPES.has(rawType) ? rawType : ''
   const sortNewest = rawSort === 'newest'
   const isFiltered = !!(q || condition || type)
+  // 26C §17/§18: a simple server-rendered switch, query-param navigation,
+  // no new top-level nav item — /account/collection stays canonical.
+  const view = rawView === 'history' ? 'history' : 'owned'
 
   // Explicit query-string builder (matches account/wanted/page.tsx's established
   // ternary style) so Prev/Next pagination links preserve the active search/filter/
@@ -178,6 +193,13 @@ export default async function CollectionListPage({
     getPortfolio(session.profileId, asOf),
   ])
 
+  // 26C §19/§47: a separate, focused query, fetched only when the history
+  // view is actually being displayed — sourced exclusively from the ledger
+  // (CollectionDisposal + allocations + CollectionItem identity).
+  const historyPage = view === 'history'
+    ? await getCollectionDisposalHistory(session.profileId, parseHistoryCursor(hcursor))
+    : null
+
   const holdingByItemId = new Map<string, PortfolioHolding>(portfolio.holdings.map((h) => [h.collectionItemId, h]))
 
   const itemCount = qtyAgg._sum.quantity ?? 0
@@ -212,6 +234,35 @@ export default async function CollectionListPage({
         </div>
       </div>
 
+      {/* 26C §17/§18: server-rendered Owned/Sold switcher — query-param
+          navigation, no client fetch, no brokerage-style tabs. */}
+      <div className="flex gap-1 mb-6 border-b border-gray-200">
+        <Link
+          href="/account/collection"
+          className={`px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+            view === 'owned' ? 'border-gray-900 text-gray-900' : 'border-transparent text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          Collection
+        </Link>
+        <Link
+          href="/account/collection?view=history"
+          className={`px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+            view === 'history' ? 'border-gray-900 text-gray-900' : 'border-transparent text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          Sold / Removed
+        </Link>
+      </div>
+
+      {view === 'history' ? (
+        <CollectionHistoryList
+          rows={historyPage!.rows}
+          nextCursor={historyPage!.nextCursor}
+          isPaginated={!!hcursor}
+        />
+      ) : (
+      <>
       {itemCount > 0 && (
         <section className="mb-8 rounded-md border border-gray-200 bg-gray-50 px-4 py-3 space-y-4">
           <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Portfolio</h2>
@@ -450,6 +501,14 @@ export default async function CollectionListPage({
                             {holding.costStatus === 'known' ? (
                               <p>
                                 Recorded Cost: <span className="font-medium">{centsToDisplay(holding.recordedCostCents!)}</span>
+                                {/* 26C §7/§14: per-copy average — only at full coverage,
+                                    and only worth showing when there's more than one copy
+                                    (otherwise it's identical to the total above). */}
+                                {item.quantity > 1 && holding.averageRecordedCostCents !== null && (
+                                  <>
+                                    {' · '}Avg Recorded Cost: <span className="font-medium">{centsToDisplay(holding.averageRecordedCostCents)}/copy</span>
+                                  </>
+                                )}
                                 {holding.unrealizedGainLossCents !== null && (
                                   <>
                                     {' · '}Unrealized: <span className="font-medium">{centsToDisplay(holding.unrealizedGainLossCents)}</span>
@@ -530,6 +589,8 @@ export default async function CollectionListPage({
             )}
           </div>
         </>
+      )}
+      </>
       )}
     </div>
   )

@@ -34,6 +34,9 @@ export type PortfolioHolding = {
   recordedCostCents: number | null
   costStatus: HoldingCostStatus
   knownCostCopies: number
+  // 26C: only non-null at FULL cost coverage (costStatus==='known') — never a
+  // blended/partial average, never implies an unknown-cost copy shares it.
+  averageRecordedCostCents: number | null
 
   // Only non-null when costStatus==='known' (full coverage) AND valued.
   unrealizedGainLossCents: number | null
@@ -71,6 +74,16 @@ function classifyHoldingCost(totalCopies: number, knownCostCopies: number): Hold
   if (totalCopies === 0 || knownCostCopies === 0) return 'unknown'
   if (knownCostCopies === totalCopies) return 'known'
   return 'partial'
+}
+
+// 26C §7/§49: holding-wide Average Recorded Cost / copy — ONLY meaningful at
+// full cost coverage (costStatus==='known'); callers must gate on that
+// themselves, since $0 recordedCostCents at zero copies is not "$0/copy".
+// Integer-cent rounding matches this repo's existing per-unit-average
+// convention (see marketValuationMath.ts's median calc).
+export function computeAverageRecordedCostCents(recordedCostCents: number, copies: number): number | null {
+  if (copies <= 0) return null
+  return Math.round(recordedCostCents / copies)
 }
 
 type LotForCost = { collectionItemId: string; remainingQuantity: number; unitRecordedCostCents: number | null }
@@ -190,6 +203,8 @@ export async function getPortfolio(profileId: string, asOf: Date = new Date()): 
       hasAnyCost = true
     }
 
+    const averageRecordedCostCents = costStatus === 'known' ? computeAverageRecordedCostCents(recordedCostForRow, copies) : null
+
     let unrealizedGainLossForRow: number | null = null
     let unrealizedGainLossPercent: number | null = null
     if (costStatus === 'known' && valuationStatus === 'valued') {
@@ -214,6 +229,7 @@ export async function getPortfolio(profileId: string, asOf: Date = new Date()): 
       recordedCostCents: knownCostCopies > 0 ? recordedCostForRow : null,
       costStatus,
       knownCostCopies,
+      averageRecordedCostCents,
 
       unrealizedGainLossCents: unrealizedGainLossForRow,
       unrealizedGainLossPercent,

@@ -361,6 +361,18 @@ export async function reverseDisposal(
 
 // ── Recorded Realized Gain/Loss — pure ──────────────────────────────────────
 
+// 26C §28: a disposal's Recorded Cost — the SUM of its allocations'
+// snapshotted allocatedRecordedCostCents — ONLY when every allocated unit has
+// a known snapshot cost. Never reconstructed from current (possibly since-
+// edited) lot cost; never partial-summed and never treated as $0 when any
+// allocation's cost is unknown.
+export function computeAllocatedCostCents(
+  allocations: Array<{ allocatedRecordedCostCents: number | null }>,
+): number | null {
+  if (allocations.length === 0 || allocations.some((a) => a.allocatedRecordedCostCents === null)) return null
+  return allocations.reduce((sum, a) => sum + (a.allocatedRecordedCostCents ?? 0), 0)
+}
+
 export type RealizedGainResult =
   | { status: 'calculable'; recordedRealizedGainLossCents: number; recordedRealizedGainLossPercent: number | null }
   | { status: 'unavailable' }
@@ -374,10 +386,8 @@ export function computeRealizedGain(
   allocations: Array<{ allocatedRecordedCostCents: number | null }>,
 ): RealizedGainResult {
   if (netProceedsCents === null) return { status: 'unavailable' }
-  if (allocations.length === 0 || allocations.some((a) => a.allocatedRecordedCostCents === null)) {
-    return { status: 'unavailable' }
-  }
-  const totalAllocatedCostCents = allocations.reduce((sum, a) => sum + (a.allocatedRecordedCostCents ?? 0), 0)
+  const totalAllocatedCostCents = computeAllocatedCostCents(allocations)
+  if (totalAllocatedCostCents === null) return { status: 'unavailable' }
   const gain = netProceedsCents - totalAllocatedCostCents
   return {
     status: 'calculable',

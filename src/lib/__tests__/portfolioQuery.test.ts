@@ -303,6 +303,111 @@ describe('getPortfolio — Unrealized Gain/Loss only at full remaining-cost cove
   })
 })
 
+// ── 26C: Holding Performance — Average Recorded Cost ────────────────────────
+
+describe('getPortfolio — Average Recorded Cost (26C §62 full-cost worked example)', () => {
+  it('2 remaining copies ($15 + $24), full coverage: avg $19.50, EMV $31.40/copy, holding value $62.80, unrealized +$23.80 — exact cent arithmetic', async () => {
+    ;(prisma.collectionItem.findMany as Mock).mockResolvedValue([item({ quantity: 2 })])
+    ;(prisma.acquisitionLot.findMany as Mock).mockResolvedValue([
+      lot({ remainingQuantity: 1, unitRecordedCostCents: 1500 }),
+      lot({ remainingQuantity: 1, unitRecordedCostCents: 2400 }),
+    ])
+    ;(getValuationsBatch as Mock).mockResolvedValue(new Map([['cat1', valued({ estimatedValueCents: 3140 })]]))
+    const result = await getPortfolio('p1', ASOF)
+    const h = result.holdings[0]
+    expect(h.recordedCostCents).toBe(3900)
+    expect(h.averageRecordedCostCents).toBe(1950)
+    expect(h.estimatedUnitValueCents).toBe(3140)
+    expect(h.estimatedHoldingValueCents).toBe(6280)
+    expect(h.unrealizedGainLossCents).toBe(2380)
+  })
+})
+
+describe('getPortfolio — Average Recorded Cost (26C §63 partial-cost holding)', () => {
+  it('1 known $20 + 1 unknown: recorded cost $20, coverage 1 of 2, average UNAVAILABLE, unrealized UNAVAILABLE — never implies the unknown copy also cost $20', async () => {
+    ;(prisma.collectionItem.findMany as Mock).mockResolvedValue([item({ quantity: 2 })])
+    ;(prisma.acquisitionLot.findMany as Mock).mockResolvedValue([
+      lot({ remainingQuantity: 1, unitRecordedCostCents: 2000 }),
+      lot({ remainingQuantity: 1, unitRecordedCostCents: null }),
+    ])
+    ;(getValuationsBatch as Mock).mockResolvedValue(new Map([['cat1', valued({ estimatedValueCents: 3000 })]]))
+    const result = await getPortfolio('p1', ASOF)
+    const h = result.holdings[0]
+    expect(h.costStatus).toBe('partial')
+    expect(h.recordedCostCents).toBe(2000)
+    expect(h.knownCostCopies).toBe(1)
+    expect(h.averageRecordedCostCents).toBeNull()
+    expect(h.unrealizedGainLossCents).toBeNull()
+  })
+})
+
+describe('getPortfolio — Average Recorded Cost (26C §64 zero-cost holding)', () => {
+  it('a fully-covered known-$0 holding: average $0.00 (never confused with unavailable), unrealized dollar value calculable, percent unavailable', async () => {
+    ;(prisma.collectionItem.findMany as Mock).mockResolvedValue([item({ quantity: 1 })])
+    ;(prisma.acquisitionLot.findMany as Mock).mockResolvedValue([lot({ remainingQuantity: 1, unitRecordedCostCents: 0 })])
+    ;(getValuationsBatch as Mock).mockResolvedValue(new Map([['cat1', valued({ estimatedValueCents: 1000 })]]))
+    const result = await getPortfolio('p1', ASOF)
+    const h = result.holdings[0]
+    expect(h.costStatus).toBe('known')
+    expect(h.averageRecordedCostCents).toBe(0)
+    expect(h.unrealizedGainLossCents).toBe(1000)
+    expect(h.unrealizedGainLossPercent).toBeNull()
+  })
+})
+
+describe('getPortfolio — Average Recorded Cost (26C §65 uses CURRENT remaining quantity, never original quantityAcquired)', () => {
+  it('a lot originally acquired at 5 but partially sold down to remainingQuantity 2 contributes only 2 copies to the average, not 5', async () => {
+    ;(prisma.collectionItem.findMany as Mock).mockResolvedValue([item({ quantity: 2 })])
+    ;(prisma.acquisitionLot.findMany as Mock).mockResolvedValue([lot({ remainingQuantity: 2, unitRecordedCostCents: 1000 })])
+    const result = await getPortfolio('p1', ASOF)
+    const h = result.holdings[0]
+    expect(h.knownCostCopies).toBe(2)
+    expect(h.recordedCostCents).toBe(2000)
+    expect(h.averageRecordedCostCents).toBe(1000)
+  })
+})
+
+describe('getPortfolio — Average Recorded Cost (26C §43/§66 after a FIFO partial sale)', () => {
+  it('acquired 1@$15 then 2@$24; selling 1 via FIFO leaves remaining 2@$24 only — average becomes $24, never a historical blended $21', async () => {
+    // The 1@$15 lot is fully consumed (remainingQuantity 0) by the FIFO sale —
+    // getPortfolio only ever queries remainingQuantity>0 lots, so it never
+    // appears here; this row IS what "remaining lots only" looks like.
+    ;(prisma.collectionItem.findMany as Mock).mockResolvedValue([item({ quantity: 2 })])
+    ;(prisma.acquisitionLot.findMany as Mock).mockResolvedValue([lot({ remainingQuantity: 2, unitRecordedCostCents: 2400 })])
+    const result = await getPortfolio('p1', ASOF)
+    const h = result.holdings[0]
+    expect(h.averageRecordedCostCents).toBe(2400)
+    expect(h.averageRecordedCostCents).not.toBe(2100) // never the blended (1500+2400+2400)/3
+  })
+})
+
+describe('getPortfolio — Average Recorded Cost (26C §45/§67 after reversal)', () => {
+  it('a reversal restores remainingQuantity on the lot — Holding Performance immediately reflects it by reading current ledger state, no special-case correction needed', async () => {
+    // Reversal restoring remainingQuantity is exercised at the ledger level in
+    // ownershipLedger.test.ts (reverseDisposal); this proves getPortfolio needs
+    // no separate mechanism — it just reads whatever remainingQuantity currently is.
+    ;(prisma.collectionItem.findMany as Mock).mockResolvedValue([item({ quantity: 1 })])
+    ;(prisma.acquisitionLot.findMany as Mock).mockResolvedValue([lot({ remainingQuantity: 1, unitRecordedCostCents: 1500 })])
+    const result = await getPortfolio('p1', ASOF)
+    expect(result.holdings[0].averageRecordedCostCents).toBe(1500)
+    expect(result.holdings[0].knownCostCopies).toBe(1)
+  })
+})
+
+describe('getPortfolio — Average Recorded Cost (26C §68 freeform holdings)', () => {
+  it('a freeform (catalogId null) holding can still show a fully-covered average, but never EMV/holding value/unrealized', async () => {
+    ;(prisma.collectionItem.findMany as Mock).mockResolvedValue([item({ catalogId: null, quantity: 2 })])
+    ;(prisma.acquisitionLot.findMany as Mock).mockResolvedValue([lot({ remainingQuantity: 2, unitRecordedCostCents: 1000 })])
+    const result = await getPortfolio('p1', ASOF)
+    const h = result.holdings[0]
+    expect(h.averageRecordedCostCents).toBe(1000)
+    expect(h.valuationStatus).toBe('no_catalog_match')
+    expect(h.estimatedUnitValueCents).toBeNull()
+    expect(h.estimatedHoldingValueCents).toBeNull()
+    expect(h.unrealizedGainLossCents).toBeNull()
+  })
+})
+
 // ── Coverage ─────────────────────────────────────────────────────────────────
 
 describe('getPortfolio — copy-weighted coverage (adapted to the ledger-sourced cost model)', () => {

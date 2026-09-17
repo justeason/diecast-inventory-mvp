@@ -73,16 +73,15 @@ describe('26B privacy: no new admin exposure of ownership-ledger financial data'
   })
 })
 
-describe('26B scope: Holding Performance / Average Recorded Cost (26C) explicitly deferred', () => {
+// 26C legitimately introduces Average Recorded Cost / holding-performance
+// display (26C §3-14) — the narrower invariant that still holds is that no
+// annualized/CAGR-style "return" metric was introduced alongside it.
+describe('26C: Holding Performance never introduces an annualized/investment-return metric', () => {
   const portfolioQuerySrc = readSrc('src/lib/portfolioQuery.ts')
-  const collectionSrc = readSrc('src/app/(store)/account/collection/page.tsx')
 
-  it('portfolioQuery.ts computes no Average Recorded Cost / Holding Performance metric', () => {
-    expect(portfolioQuerySrc).not.toMatch(/averageRecordedCost|holdingPerformance|annualizedReturn|CAGR/i)
-  })
-
-  it('the Collection page never renders "Holding Performance" or "Average Recorded Cost" language', () => {
-    expect(collectionSrc).not.toMatch(/Holding Performance|Average Recorded Cost/i)
+  it('portfolioQuery.ts computes averageRecordedCostCents but no annualized return metric', () => {
+    expect(portfolioQuerySrc).toContain('averageRecordedCostCents')
+    expect(portfolioQuerySrc).not.toMatch(/annualizedReturn|CAGR/i)
   })
 })
 
