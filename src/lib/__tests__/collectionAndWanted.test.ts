@@ -1347,17 +1347,22 @@ describe('16E Final: pagination and cross-profile isolation cannot affect the ex
   })
 })
 
-describe('16E: Add Another routes to the existing edit flow — no second creation path', () => {
+// 26B: Add Another no longer routes to the edit form's (now ledger-disabled,
+// §20) quantity field — it routes to the item detail page's ownership section,
+// which creates a NEW AcquisitionLot (never a blind quantity bump). See
+// portfolioPage.test.ts's routing/ledger-wiring coverage for the 26B behavior.
+describe('16E->26B: Add Another routes to the ledger-backed ownership action, only when a catalog match exists', () => {
   const src_ = src('src/app/(store)/account/collection/page.tsx')
 
-  it('Add Another links to the existing /edit route with a quantity anchor, only when a catalog match exists', () => {
-    expect(src_).toContain('/account/collection/${item.id}/edit#quantity')
+  it('Add Another links to the item detail page\'s ownership section, only when a catalog match exists', () => {
+    expect(src_).toContain('/account/collection/${item.id}#add-another')
     expect(src_).toContain('{item.catalogId && (')
   })
 
-  it('the quantity field on the edit form has the matching id for the anchor to land on', () => {
-    const formSrc = src('src/components/store/CollectionItemForm.tsx')
-    expect(formSrc).toContain('id="quantity"')
+  it('the detail page has a matching #add-another anchor with a real AcquisitionLot-creating form', () => {
+    const detailSrc = src('src/app/(store)/account/collection/[id]/page.tsx')
+    expect(detailSrc).toContain('id="add-another"')
+    expect(detailSrc).toContain('AddAcquisitionForm')
   })
 
   it('Add Another performs no mutation of its own — it is a plain Link, not a form/action', () => {

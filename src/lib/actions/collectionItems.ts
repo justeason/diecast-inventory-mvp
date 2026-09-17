@@ -9,6 +9,8 @@ import { redirect } from 'next/navigation'
 import { revalidatePath } from 'next/cache'
 import { updateTag } from 'next/cache'
 import { checkRateLimit } from '@/lib/rateLimit'
+import { internalPriceToCents } from '@/lib/marketMoney'
+import { createAcquisitionLot, type AcquisitionSource } from '@/lib/ownershipLedger'
 
 // 30 new items per 10 minutes per profile (instance-local)
 const CREATE_MAX    = 30
@@ -175,15 +177,38 @@ export async function createCollectionItem(
   // @@unique([profileId, catalogId]) constraint (see schema.prisma) is the actual
   // authoritative guarantee; this catch handles the losing request of that race
   // the same way, rather than letting it crash with a raw Prisma error.
+  //
+  // 26B: the CollectionItem row and its founding AcquisitionLot are created
+  // atomically — a CollectionItem is never left without a lot. quantity=0 at
+  // create time; createAcquisitionLot's own increment establishes the true
+  // value, so the ledger remains the single writer of the quantity cache.
+  const dbFields = toDbFields(result.data)
+  const sourceRaw = formData.get('source')?.toString()
+  const source: AcquisitionSource = sourceRaw === 'i_own_it' ? 'i_own_it' : 'manual'
+  const unitRecordedCostCents = dbFields.purchasePrice !== null ? internalPriceToCents(dbFields.purchasePrice) : null
+
   let item: { id: string }
   try {
-    item = await prisma.collectionItem.create({
-      data: {
-        profileId: session.profileId,
-        catalogId: resolvedCatalogId ?? undefined,
-        isPublic,
-        ...toDbFields(result.data),
-      },
+    item = await prisma.$transaction(async (tx) => {
+      const created = await tx.collectionItem.create({
+        data: {
+          profileId: session.profileId,
+          catalogId: resolvedCatalogId ?? undefined,
+          isPublic,
+          ...dbFields,
+          quantity: 0,
+        },
+      })
+      await createAcquisitionLot(tx, {
+        collectionItemId: created.id,
+        quantityAcquired: dbFields.quantity,
+        unitRecordedCostCents,
+        costKnowledge: unitRecordedCostCents !== null ? 'known' : 'unknown',
+        acquiredAt: dbFields.purchaseDate,
+        ledgerEffectiveAt: new Date(),
+        source,
+      })
+      return created
     })
   } catch (e) {
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
@@ -219,7 +244,7 @@ export async function updateCollectionItem(
 
   const existing = await prisma.collectionItem.findFirst({
     where: { id, profileId: session.profileId },
-    select: { id: true, isPublic: true },
+    select: { id: true, isPublic: true, quantity: true },
   })
   if (!existing) {
     return { errors: { form: ['This collection item no longer exists.'] } }
@@ -257,12 +282,17 @@ export async function updateCollectionItem(
 
   const isPublic = formData.get('isPublic') === 'on'
 
+  // 26B §20: quantity is ledger-derived (Σ AcquisitionLot.remainingQuantity) —
+  // the general edit form never mutates it directly, regardless of what was
+  // submitted (the input is disabled client-side; this is the authoritative
+  // server-side guarantee). Use "Add Another" / "Mark Sold / Removed" instead.
   const updateResult = await prisma.collectionItem.updateMany({
     where: { id, profileId: session.profileId, updatedAt: expectedUpdatedAt },
     data: {
       catalogId: resolvedCatalogId,
       isPublic,
       ...toDbFields(result.data),
+      quantity: existing.quantity,
     },
   })
 
@@ -289,16 +319,35 @@ export async function deleteCollectionItem(id: string): Promise<void> {
   const session = await getBuyerSession()
   if (!session) redirect('/account/orders')
 
-  // Fetch the item's photos and visibility before deletion so we can clean up blobs afterward
+  // Fetch the item's photos/visibility plus ledger state before deletion.
   const item = await prisma.collectionItem.findFirst({
     where: { id, profileId: session.profileId },
-    select: { isPublic: true, photos: { select: { url: true } } },
+    select: {
+      isPublic: true,
+      photos: { select: { url: true } },
+      acquisitionLots: { select: { id: true, quantityAcquired: true, remainingQuantity: true } },
+      disposals: { select: { id: true } },
+    },
   })
   if (!item) redirect('/account/collection')
 
-  // Delete the item — cascade removes CollectionItemPhoto rows from DB
-  const deleteResult = await prisma.collectionItem.deleteMany({
-    where: { id, profileId: session.profileId },
+  // 26B §28: once any lot has ever participated in an allocation, or any
+  // disposal (even reversed) exists, ordinary hard-delete is blocked — the
+  // ledger's historical facts must never be destroyed. Direct ownership
+  // reduction through "Mark Sold / Removed" instead. A genuinely mistaken
+  // entry (no allocation/disposal history at all) may still be deleted —
+  // its lots are removed in the same transaction as the CollectionItem.
+  const hasDisposalHistory = item.disposals.length > 0
+  const hasAllocatedLot = item.acquisitionLots.some((lot) => lot.remainingQuantity !== lot.quantityAcquired)
+  if (hasDisposalHistory || hasAllocatedLot) {
+    redirect(`/account/collection/${id}?deleteBlocked=1`)
+  }
+
+  // Delete lots (mistaken-entry only, none ever allocated) + the item
+  // atomically — cascade removes CollectionItemPhoto rows from DB.
+  const deleteResult = await prisma.$transaction(async (tx) => {
+    await tx.acquisitionLot.deleteMany({ where: { collectionItemId: id } })
+    return tx.collectionItem.deleteMany({ where: { id, profileId: session.profileId } })
   })
 
   if (deleteResult.count === 0) {

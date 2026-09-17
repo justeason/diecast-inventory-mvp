@@ -57,6 +57,18 @@ function makeTx(draftRow: ReturnType<typeof makeDraftRow>, overrides: Record<str
     sellerPayoutLine: { findUnique: vi.fn().mockResolvedValue(null), create: vi.fn().mockResolvedValue({ id: 'line1' }) },
     photo: { create: vi.fn().mockResolvedValue({}) },
     listing: { create: vi.fn().mockResolvedValue({ id: 'listing1', version: 1 }) },
+    // 26B: createDisposal's own dependencies — only exercised when the resolved
+    // SellerSubmission carries a collectionItemId (buyout ownership-ledger trigger).
+    acquisitionLot: {
+      findMany: vi.fn().mockResolvedValue([{ id: 'lot1', collectionItemId: 'ci1', remainingQuantity: 1, unitRecordedCostCents: null, acquiredAt: null, ledgerEffectiveAt: new Date('2026-01-01'), createdAt: new Date('2026-01-01') }]),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+    },
+    collectionDisposal: {
+      findUnique: vi.fn().mockResolvedValue(null),
+      create: vi.fn().mockImplementation((args: { data: Record<string, unknown> }) => Promise.resolve({ id: 'disposal1', ...args.data })),
+    },
+    collectionDisposalAllocation: { createMany: vi.fn().mockResolvedValue({ count: 1 }) },
+    collectionItem: { update: vi.fn().mockResolvedValue({ id: 'ci1' }) },
     ...overrides,
   }
 }
@@ -249,6 +261,95 @@ describe('convertIntakeDraft — buyout cost semantics (15D-review final approva
     const call = (tx.itemInstance.create as Mock).mock.calls[0][0]
     expect(call.data.purchasePrice).toBeUndefined()
     expect(tx.sellerPayoutLine.create).not.toHaveBeenCalled()
+  })
+})
+
+describe('convertIntakeDraft — 26B buyout ownership-ledger disposal trigger (§48-51)', () => {
+  function buyoutAgreement(overrides: Record<string, unknown> = {}) {
+    return { id: 'agr1', type: 'buyout', status: 'accepted', agreedBuyoutAmount: new Prisma.Decimal('500.00'), sellerPortfolioId: null, acceptedItemCount: null, ...overrides }
+  }
+
+  it('a resolvable collectionItemId fires exactly one platform_sale disposal, keyed by the converted itemInstanceId', async () => {
+    const tx = makeTx(makeDraftRow({ sellerSubmissionId: 'sub1' }), {
+      sellerAgreement: { findMany: vi.fn().mockResolvedValue([buyoutAgreement({ acceptedItemCount: 1 })]) },
+      sellerSubmission: { findUnique: vi.fn().mockResolvedValue({ profileId: 'prof1', collectionItemId: 'ci1' }) },
+    })
+    const result = await convertIntakeDraft(tx as never, { draftId: 'draft1', locationId: 'loc1' })
+    expect(result.ok).toBe(true)
+    expect(tx.collectionDisposal.create).toHaveBeenCalledTimes(1)
+    const call = (tx.collectionDisposal.create as Mock).mock.calls[0][0]
+    expect(call.data.disposalType).toBe('platform_sale')
+    expect(call.data.collectionItemId).toBe('ci1')
+    expect(call.data.sourceKey).toBe('buyout-conversion:item1')
+  })
+
+  it('acceptedItemCount=1 -> netProceedsCents is the exact agreed buyout amount, gross stays null (buyout never claims a "sale price")', async () => {
+    const tx = makeTx(makeDraftRow({ sellerSubmissionId: 'sub1' }), {
+      sellerAgreement: { findMany: vi.fn().mockResolvedValue([buyoutAgreement({ acceptedItemCount: 1, agreedBuyoutAmount: new Prisma.Decimal('19.97') })]) },
+      sellerSubmission: { findUnique: vi.fn().mockResolvedValue({ profileId: 'prof1', collectionItemId: 'ci1' }) },
+    })
+    await convertIntakeDraft(tx as never, { draftId: 'draft1', locationId: 'loc1' })
+    const call = (tx.collectionDisposal.create as Mock).mock.calls[0][0]
+    expect(call.data.netProceedsCents).toBe(1997)
+    expect(call.data.grossProceedsCents).toBeNull()
+  })
+
+  it('acceptedItemCount=null (unspecified) -> netProceedsCents stays null; quantity still reconciles (disposal still fires)', async () => {
+    const tx = makeTx(makeDraftRow({ sellerSubmissionId: 'sub1' }), {
+      sellerAgreement: { findMany: vi.fn().mockResolvedValue([buyoutAgreement({ acceptedItemCount: null })]) },
+      sellerSubmission: { findUnique: vi.fn().mockResolvedValue({ profileId: 'prof1', collectionItemId: 'ci1' }) },
+    })
+    await convertIntakeDraft(tx as never, { draftId: 'draft1', locationId: 'loc1' })
+    expect(tx.collectionDisposal.create).toHaveBeenCalledTimes(1)
+    const call = (tx.collectionDisposal.create as Mock).mock.calls[0][0]
+    expect(call.data.netProceedsCents).toBeNull()
+  })
+
+  it('acceptedItemCount=2 (multi-item, no per-unit split) -> netProceedsCents stays null, never the lump sum divided', async () => {
+    const tx = makeTx(makeDraftRow({ sellerSubmissionId: 'sub1' }), {
+      sellerAgreement: { findMany: vi.fn().mockResolvedValue([buyoutAgreement({ acceptedItemCount: 2 })]) },
+      sellerSubmission: { findUnique: vi.fn().mockResolvedValue({ profileId: 'prof1', collectionItemId: 'ci1' }) },
+    })
+    await convertIntakeDraft(tx as never, { draftId: 'draft1', locationId: 'loc1' })
+    const call = (tx.collectionDisposal.create as Mock).mock.calls[0][0]
+    expect(call.data.netProceedsCents).toBeNull()
+    expect(call.data.grossProceedsCents).toBeNull()
+  })
+
+  it('no collectionItemId on the submission (non-customer/company-owned inventory) is a legitimate no-op — never guesses a similarly-named holding', async () => {
+    const tx = makeTx(makeDraftRow({ sellerSubmissionId: 'sub1' }), {
+      sellerAgreement: { findMany: vi.fn().mockResolvedValue([buyoutAgreement({ acceptedItemCount: 1 })]) },
+      sellerSubmission: { findUnique: vi.fn().mockResolvedValue({ profileId: 'prof1', collectionItemId: null }) },
+    })
+    const result = await convertIntakeDraft(tx as never, { draftId: 'draft1', locationId: 'loc1' })
+    expect(result.ok).toBe(true)
+    expect(tx.collectionDisposal.create).not.toHaveBeenCalled()
+  })
+
+  it('retrying the same conversion (sourceKey already exists) is idempotent — no second disposal, no duplicate decrement', async () => {
+    // Already carries the same proceeds the retried call would compute
+    // (acceptedItemCount:1, $500 agreement -> 50000 cents) — a realistic
+    // "already fully reconciled" row, so the retry's enrichment check finds
+    // nothing to enrich (not a stale/incomplete fixture that would otherwise
+    // look like a proceeds conflict against a real row's null fields).
+    const existingDisposal = { id: 'disposal-existing', collectionItemId: 'ci1', quantity: 1, grossProceedsCents: null, netProceedsCents: 50000 }
+    const tx = makeTx(makeDraftRow({ sellerSubmissionId: 'sub1' }), {
+      sellerAgreement: { findMany: vi.fn().mockResolvedValue([buyoutAgreement({ acceptedItemCount: 1 })]) },
+      sellerSubmission: { findUnique: vi.fn().mockResolvedValue({ profileId: 'prof1', collectionItemId: 'ci1' }) },
+      collectionDisposal: { findUnique: vi.fn().mockResolvedValue(existingDisposal), create: vi.fn() },
+    })
+    await convertIntakeDraft(tx as never, { draftId: 'draft1', locationId: 'loc1' })
+    expect(tx.collectionDisposal.create).not.toHaveBeenCalled()
+    expect(tx.acquisitionLot.updateMany).not.toHaveBeenCalled()
+  })
+
+  it('consignment conversions never fire a buyout disposal (only the buyout branch calls createDisposal here)', async () => {
+    const tx = makeTx(makeDraftRow({ sellerSubmissionId: 'sub1' }), {
+      sellerAgreement: { findMany: vi.fn().mockResolvedValue([{ id: 'agr1', type: 'consignment', status: 'accepted', agreedBuyoutAmount: null, sellerPortfolioId: 'port1', acceptedItemCount: 1 }]) },
+      sellerSubmission: { findUnique: vi.fn().mockResolvedValue({ profileId: 'prof1', collectionItemId: 'ci1' }) },
+    })
+    await convertIntakeDraft(tx as never, { draftId: 'draft1', locationId: 'loc1' })
+    expect(tx.collectionDisposal.create).not.toHaveBeenCalled()
   })
 })
 

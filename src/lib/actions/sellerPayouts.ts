@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation'
 import { revalidatePath } from 'next/cache'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
+import { reconcileCollectionDisposalsForCompletedOrder } from '@/lib/collectionDisposalReconciliation'
 import {
   buildBuyoutSourceKey,
   buildConsignmentSourceKey,
@@ -740,6 +741,26 @@ export async function generateMissingPayoutLines(
   }
 
   const { created } = await ensureConsignmentPayoutLinesForCompletedOrder(orderId)
+
+  // 26B Final Patch: closes the async-payout-then-disposal-reconciliation race
+  // (see collectionDisposalReconciliation.ts) — a disposal created before this
+  // payout line existed is stuck at netProceedsCents=null until something
+  // re-runs reconciliation for this order. This repair action is exactly that
+  // "something," so it must trigger it itself rather than relying on anyone
+  // manually touching Order.status again. Always attempted (not gated on
+  // created > 0): a prior call to this action may have already created the
+  // payout line while reconciliation itself failed independently, so relying
+  // on `created > 0` here could leave that disposal permanently stuck.
+  // reconcileCollectionDisposalsForCompletedOrder is fully idempotent, so
+  // this is a harmless no-op whenever there is nothing left to enrich.
+  // Non-blocking: the payout-line repair above is already valid and complete
+  // on its own — a reconciliation failure here is reported, never used to
+  // roll back or fail this action.
+  try {
+    await reconcileCollectionDisposalsForCompletedOrder(orderId)
+  } catch (err) {
+    console.error('[generateMissingPayoutLines] Collection disposal reconciliation failed for order', orderId, ':', err instanceof Error ? err.message : 'UnknownError')
+  }
 
   revalidatePath(`/admin/orders/${orderId}`)
   revalidatePath('/admin/seller-payouts')

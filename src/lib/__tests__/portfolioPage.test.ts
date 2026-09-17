@@ -122,20 +122,17 @@ describe('25B: per-holding display distinguishes per-copy value from holding tot
   })
 })
 
-// ── Multi-copy / unknown cost UX (§30/§31/§32/§61) ──────────────────────────
+// ── Multi-copy / partial-coverage cost UX (26B ledger-sourced 3-state model) ─
 
-describe('25B: cost UX per policy — ambiguous multi-copy never shown as usable cost, unknown cost gets a CTA', () => {
-  it('ambiguous_quantity renders a review-needed note, not a cost figure', () => {
-    expect(collectionSrc).toContain('Recorded purchase price needs review for multi-copy holding')
+describe('26B: cost UX per the known/partial/unknown ledger cost model', () => {
+  it('partial coverage renders a "partial coverage" note with the known/total copy count, not a full cost figure treated as complete', () => {
+    expect(collectionSrc).toContain('partial coverage)')
+    expect(collectionSrc).toContain('known for {holding.knownCostCopies} of {item.quantity}')
   })
 
-  it('unknown cost (qty=1, no price) links to the existing edit flow, not a new cost-editing subsystem', () => {
+  it('unknown cost (no known-cost lot yet) links to the Ownership/Add Another anchor, not a new cost-editing subsystem', () => {
     expect(collectionSrc).toContain('Add purchase price')
-    expect(collectionSrc).toContain('/edit#purchasePrice')
-  })
-
-  it('invalid recorded cost is disclosed, not silently dropped or clamped', () => {
-    expect(collectionSrc).toContain('Recorded purchase price is invalid')
+    expect(collectionSrc).toContain('#add-another')
   })
 })
 
@@ -224,28 +221,42 @@ describe('25B: Portfolio disclosure copy — no financial-advice/tax/guarantee f
   })
 })
 
-// ── Scope confirmation (§68-§73/§92) ─────────────────────────────────────────
+// ── 26B: Recorded Realized Gain/Loss tile ────────────────────────────────────
 
-describe('25B: scope discipline — no lot model, no realized gains, no quantity reconciliation, no off-platform sale', () => {
-  it('no AcquisitionLot/CollectionLot model or realized-gain logic exists', () => {
-    const schema = readSrc('prisma/schema.prisma')
-    expect(schema).not.toContain('model AcquisitionLot')
-    expect(schema).not.toContain('model CollectionLot')
-    expect(stripComments(portfolioQuerySrc)).not.toMatch(/\brealizedGain\b|FIFO|specificIdentification|averageCost/i)
+describe('26B: Recorded Realized Gain/Loss summary tile is distinct from Unrealized Gain/Loss', () => {
+  it('renders a fourth summary tile with its own coverage line and disclosure, never merged into the Unrealized tile', () => {
+    expect(collectionSrc).toContain('Recorded Realized Gain/Loss')
+    expect(collectionSrc).toContain('portfolio.recordedRealizedGainLossCents')
+    expect(collectionSrc).toContain('portfolio.realizedCoverage.coveredDisposals')
+    expect(collectionSrc).toContain('Recorded Realized Gain/Loss is based on recorded acquisition cost and known seller proceeds')
+    expect(collectionSrc).toContain('not tax/accounting advice')
   })
 
-  it('no CollectionItem.quantity decrement was introduced for marketplace sales', () => {
+  it('never uses "Tax Gain", "Profit", or "Investment Return" terminology', () => {
+    expect(collectionSrc).not.toMatch(/tax gain|investment return/i)
+  })
+})
+
+// ── Scope confirmation (§68-§73/§92, updated for 26B's deliberate ledger scope) ──
+
+describe('25B/26B: scope discipline — no CollectionLot redesign, no unrelated quantity reconciliation', () => {
+  // 26B legitimately introduces AcquisitionLot as the ownership-ledger model
+  // (with FIFO-based realized-gain logic in ownershipLedger.ts) — this no
+  // longer forbids that, only the narrower, still-true invariants below.
+  it('no CollectionLot model exists (AcquisitionLot is the sanctioned 26B ledger model, not an ad-hoc "CollectionLot" redesign)', () => {
+    const schema = readSrc('prisma/schema.prisma')
+    expect(schema).toContain('model AcquisitionLot')
+    expect(schema).not.toContain('model CollectionLot')
+  })
+
+  it('no CollectionItem.quantity decrement was introduced for marketplace sales outside the ledger (sellerSubmissions.ts still never writes CollectionItem directly)', () => {
     const sellerSubmissionsSrc = readSrc('src/lib/actions/sellerSubmissions.ts')
     expect(sellerSubmissionsSrc).not.toMatch(/collectionItem\.(update|updateMany)\(/)
   })
 
-  it('no "mark sold off-platform" action exists', () => {
-    expect(collectionSrc).not.toMatch(/[Mm]ark.*[Ss]old|soldOffPlatform/)
-  })
-
-  it('no new packages/migrations — 52 migrations still present', () => {
+  it('migration count reflects 26B\'s additive ownership-ledger migration', () => {
     const migrationDirs = fs.readdirSync(path.join(root, 'prisma/migrations')).filter((f) => /^\d/.test(f))
-    expect(migrationDirs.length).toBe(52)
+    expect(migrationDirs.length).toBe(53)
   })
 })
 
@@ -253,7 +264,7 @@ describe('25B: scope discipline — no lot model, no realized gains, no quantity
 
 describe('25B: no wide valuation-table dependency — reuses the existing responsive card pattern', () => {
   it('Portfolio summary uses a responsive grid, not a fixed-width table', () => {
-    expect(collectionSrc).toContain('grid grid-cols-1 sm:grid-cols-3')
+    expect(collectionSrc).toContain('grid grid-cols-1 sm:grid-cols-4')
     expect(collectionSrc).not.toContain('overflow-x-auto')
     expect(collectionSrc).not.toMatch(/<table/)
   })

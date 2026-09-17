@@ -17,12 +17,20 @@ function src(rel: string): string {
   return fs.readFileSync(path.join(root, rel), 'utf-8')
 }
 
-vi.mock('@/lib/prisma', () => ({
-  prisma: {
+// 26B: createCollectionItem now creates the CollectionItem + its founding
+// AcquisitionLot atomically inside prisma.$transaction — the mock's
+// $transaction simply invokes the callback with the same mocked client
+// (tx === prisma here), so every existing prisma.collectionItem.* mock
+// configuration below continues to apply unchanged inside the transaction.
+vi.mock('@/lib/prisma', () => {
+  const client: Record<string, unknown> = {
     catalogModel: { findUnique: vi.fn() },
-    collectionItem: { findFirst: vi.fn(), create: vi.fn() },
-  },
-}))
+    collectionItem: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn() },
+    acquisitionLot: { findUnique: vi.fn(), create: vi.fn() },
+  }
+  client.$transaction = vi.fn((cb: (tx: unknown) => unknown) => cb(client))
+  return { prisma: client }
+})
 vi.mock('@/lib/buyerSession', () => ({ getBuyerSession: vi.fn() }))
 vi.mock('next/navigation', () => ({ redirect: vi.fn(() => { throw new Error('NEXT_REDIRECT') }) }))
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn(), updateTag: vi.fn() }))
@@ -32,7 +40,13 @@ import { prisma } from '@/lib/prisma'
 import { getBuyerSession } from '@/lib/buyerSession'
 import { createCollectionItem } from '@/lib/actions/collectionItems'
 
-beforeEach(() => vi.resetAllMocks())
+beforeEach(() => {
+  vi.resetAllMocks()
+  // resetAllMocks wipes $transaction's own implementation too — restore it.
+  ;(prisma.$transaction as Mock).mockImplementation((cb: (tx: unknown) => unknown) => cb(prisma))
+  ;(prisma.acquisitionLot.create as Mock).mockResolvedValue({ id: 'lot1' })
+  ;(prisma.collectionItem.update as Mock).mockResolvedValue({ id: 'updated' })
+})
 
 function fd(catalogId: string): FormData {
   const f = new FormData()
@@ -147,7 +161,10 @@ describe('createCollectionItem: concurrent Add to Collection cannot create dupli
     await expect(createCollectionItem(null, fd('cat1'))).rejects.toThrow('connection reset')
   })
 
-  it('the winning request (no conflict) still creates with quantity defaulting to 1 and redirects to the new item', async () => {
+  // 26B: CollectionItem.quantity is created at 0 — createAcquisitionLot's own
+  // increment (via its founding lot, quantityAcquired=1 for the bare I-Own-It
+  // form) establishes the true value, keeping the ledger the single writer.
+  it('the winning request (no conflict) creates the CollectionItem at quantity=0 plus a founding AcquisitionLot of 1, and redirects to the new item', async () => {
     ;(getBuyerSession as Mock).mockResolvedValue({ profileId: 'p1' })
     ;(prisma.catalogModel.findUnique as Mock).mockResolvedValue({ id: 'cat1' })
     ;(prisma.collectionItem.findFirst as Mock).mockResolvedValue(null)
@@ -156,8 +173,15 @@ describe('createCollectionItem: concurrent Add to Collection cannot create dupli
     await expect(createCollectionItem(null, fd('cat1'))).rejects.toThrow() // redirect() throws in test env
 
     const createCall = (prisma.collectionItem.create as Mock).mock.calls[0][0]
-    expect(createCall.data.quantity).toBe(1)
+    expect(createCall.data.quantity).toBe(0)
     expect(createCall.data.catalogId).toBe('cat1')
+
+    const lotCall = (prisma.acquisitionLot.create as Mock).mock.calls[0][0]
+    expect(lotCall.data.quantityAcquired).toBe(1)
+    expect(lotCall.data.collectionItemId).toBe('new-item-1')
+
+    const updateCall = (prisma.collectionItem.update as Mock).mock.calls[0][0]
+    expect(updateCall.data.quantity).toEqual({ increment: 1 })
   })
 
   it('the pre-check (findFirst) still returns the friendly error in the common non-racy case, without ever hitting create()', async () => {

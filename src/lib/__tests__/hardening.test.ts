@@ -936,7 +936,10 @@ describe('rate limit applied before DB mutation', () => {
 
   it('collection: rate check before prisma.create', () => {
     const rateLimitIdx = collectionSrc.indexOf('checkRateLimit')
-    const createIdx    = collectionSrc.indexOf('prisma.collectionItem.create')
+    // 26B: the CollectionItem create now runs inside prisma.$transaction
+    // (atomic with its founding AcquisitionLot) — tx.collectionItem.create,
+    // not a bare prisma.collectionItem.create.
+    const createIdx    = collectionSrc.indexOf('tx.collectionItem.create')
     expect(rateLimitIdx).toBeLessThan(createIdx)
   })
 

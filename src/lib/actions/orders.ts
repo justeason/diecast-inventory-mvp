@@ -7,6 +7,7 @@ import { prisma } from '@/lib/prisma'
 import { getStripe } from '@/lib/stripe'
 import { normalizeEmail } from '@/lib/normalizeEmail'
 import { ensureConsignmentPayoutLinesForCompletedOrder } from '@/lib/actions/sellerPayouts'
+import { reconcileCollectionDisposalsForCompletedOrder } from '@/lib/collectionDisposalReconciliation'
 import { ensureSellerLifecycleEvent } from '@/lib/actions/sellerLifecycle'
 
 const OrderSchema = z.object({
@@ -303,6 +304,16 @@ export async function updateOrderStatus(
     } catch (err) {
       console.error('[updateOrderStatus] Consignment payout line generation failed for order', id, ':', err instanceof Error ? err.message : 'UnknownError')
       // Order remains complete. Admin can use the reconciliation tool on the order detail page.
+    }
+
+    // Non-blocking: reconcile the seller's private Collection ownership —
+    // must run AFTER payout-line generation above, since it reads the
+    // resulting SellerPayoutLine.netAmount for Recorded Realized Gain/Loss.
+    // Idempotent (sourceKey), so a retry here never double-decrements.
+    try {
+      await reconcileCollectionDisposalsForCompletedOrder(id)
+    } catch (err) {
+      console.error('[updateOrderStatus] Collection disposal reconciliation failed for order', id, ':', err instanceof Error ? err.message : 'UnknownError')
     }
 
     // Non-blocking: lifecycle events for each seller submission linked to this order.

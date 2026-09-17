@@ -13,6 +13,8 @@ import { Prisma } from '@prisma/client'
 import { resolveConversionEligibility, validateConversionConfirmation } from '@/lib/sellerAgreementInventory'
 import { buildBuyoutSourceKey, calculateBuyoutPayoutSnapshot } from '@/lib/sellerPayoutCalculation'
 import { ensurePackagingMarketVariants, resolvePackagingMarketVariant } from '@/lib/marketVariant'
+import { externalPriceToCents } from '@/lib/marketMoney'
+import { createDisposal } from '@/lib/ownershipLedger'
 
 type TxClient = Prisma.TransactionClient
 
@@ -243,7 +245,10 @@ export async function convertIntakeDraft(
 
   let buyoutLineId: string | undefined
   if (sourceType === 'buyout' && agreementId && buyoutAgreedAmount) {
-    const submission = await tx.sellerSubmission.findUnique({ where: { id: draft.sellerSubmissionId! }, select: { profileId: true } })
+    const submission = await tx.sellerSubmission.findUnique({
+      where: { id: draft.sellerSubmissionId! },
+      select: { profileId: true, collectionItemId: true },
+    })
     if (!submission) return { ok: false, field: 'form', message: 'Seller submission not found.' }
     const sourceKey = buildBuyoutSourceKey(agreementId)
     const existingLine = await tx.sellerPayoutLine.findUnique({ where: { sourceKey } })
@@ -258,6 +263,28 @@ export async function convertIntakeDraft(
         },
       })
       buyoutLineId = line.id
+    }
+
+    // 26B §48-51: ownership leaves the customer at THIS conversion (not
+    // agreement acceptance, not payout-paid) — fires per CONVERTED ITEM
+    // (idempotency grain = itemInstanceId), independent of the payout
+    // line's own per-AGREEMENT grain above, so every converted unit
+    // reconciles, not just the first. Proceeds are only allocable per-unit
+    // when the agreement's signed count is exactly 1 (mirrors the
+    // purchasePrice rule above) — otherwise ownership still reconciles but
+    // Recorded Realized Gain/Loss stays unavailable, never invented by
+    // dividing the lump-sum buyout amount.
+    if (submission.collectionItemId) {
+      const netProceedsCents = buyoutAcceptedItemCount === 1 ? externalPriceToCents(buyoutAgreedAmount) : null
+      await createDisposal(tx, {
+        collectionItemId: submission.collectionItemId,
+        quantity: 1,
+        disposalType: 'platform_sale',
+        disposedAt: new Date(),
+        grossProceedsCents: null,
+        netProceedsCents,
+        sourceKey: `buyout-conversion:${item.id}`,
+      })
     }
   }
 

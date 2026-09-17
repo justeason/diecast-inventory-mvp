@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { isAdminAuthenticated } from '@/lib/adminAuth'
+import { reconcileCollectionDisposalsForCompletedOrder } from '@/lib/collectionDisposalReconciliation'
 import {
   buildBuyoutSourceKey,
   buildConsignmentSourceKey,
@@ -329,6 +330,18 @@ async function repairGenerateConsignmentPayoutLine(ctx: {
   } catch (err) {
     if (txError) return txError
     throw err
+  }
+
+  // 26B Final Patch: this is the other consignment-payout-line late-creation
+  // path (per-orderItem, distinct from generateMissingPayoutLines) — it must
+  // also close the async-payout-then-disposal-reconciliation race rather than
+  // leaving an existing disposal permanently stuck at netProceedsCents=null.
+  // Non-blocking: the payout-line repair above already succeeded and is
+  // valid on its own; a reconciliation failure here is only reported.
+  try {
+    await reconcileCollectionDisposalsForCompletedOrder(orderId)
+  } catch (err) {
+    console.error('[repairGenerateConsignmentPayoutLine] Collection disposal reconciliation failed for order', orderId, ':', err instanceof Error ? err.message : 'UnknownError')
   }
 
   revalidatePath(`/admin/orders/${orderId}`)

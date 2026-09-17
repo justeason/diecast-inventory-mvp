@@ -514,6 +514,13 @@ model CollectionItem {
   catalogSuggestions CatalogSuggestion[]
   sellerSubmissions  SellerSubmission[]
 
+  // 26B: CollectionItem is the required, durable ownership-ledger identity —
+  // every AcquisitionLot/CollectionDisposal belongs to exactly one CollectionItem
+  // (never optional/informational), which is why hard-delete is now Restrict-
+  // guarded once ledger rows exist (see AcquisitionLot/CollectionDisposal below).
+  acquisitionLots AcquisitionLot[]
+  disposals       CollectionDisposal[]
+
   // 16F Final: DB-enforced "one catalog-linked CollectionItem per customer" —
   // closes the createCollectionItem check-then-create race (concurrent Add to
   // Collection from /browse could otherwise create two rows for the same model).
@@ -532,6 +539,111 @@ model CollectionItemPhoto {
   sortOrder Int    @default(0)
 
   createdAt DateTime @default(now())
+}
+
+// 26B: ownership ledger — durable acquisition/disposal history for private
+// Collection holdings, enabling multi-lot cost tracking and Recorded Realized
+// Gain/Loss. CollectionItem is the required identity anchor (26A follow-up) —
+// never profileId/catalogId directly — so a ledgered CollectionItem can never
+// be hard-deleted out from under its own history (onDelete: Restrict).
+model AcquisitionLot {
+  id               String         @id @default(cuid())
+  collectionItemId String
+  collectionItem   CollectionItem @relation(fields: [collectionItemId], references: [id], onDelete: Restrict)
+
+  quantityAcquired  Int
+  remainingQuantity Int
+
+  // Known per-unit cost, integer cents. Null unless costKnowledge='known'.
+  unitRecordedCostCents Int?
+
+  // Preserves the raw legacy CollectionItem.purchasePrice (converted to cents)
+  // when quantity>1 made its per-unit-vs-total meaning ambiguous at backfill
+  // time. Audit/display only — NEVER read by cost/gain math.
+  legacyRecordedPriceCents Int?
+
+  // 'known' | 'ambiguous_legacy' | 'unknown'
+  costKnowledge String
+
+  // Customer-claimed acquisition date — nullable, never fabricated.
+  acquiredAt DateTime?
+  // Earliest point the ledger itself can assert ownership was true — required,
+  // never null. Migration cutover timestamp for legacy_backfill lots (identical
+  // across the whole backfill run), else the lot's own createdAt. FIFO/history
+  // ordering uses COALESCE(acquiredAt, ledgerEffectiveAt), never a fabricated date.
+  ledgerEffectiveAt DateTime
+
+  // 'manual' | 'i_own_it' | 'quick_capture' | 'legacy_backfill' | 'correction'
+  source String
+
+  // Durable idempotency for upstream-fact-triggered lots (currently only legacy
+  // backfill: 'legacy-backfill:<collectionItemId>'). Null for ordinary manual lots.
+  sourceKey String? @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  allocations CollectionDisposalAllocation[]
+
+  @@index([collectionItemId])
+}
+
+// 'platform_sale' | 'external_sale' | 'gift' | 'trade' | 'other_removal' | 'correction'
+// platform_sale covers BOTH a completed consignment sale AND a buyout
+// ownership transfer — sourceKey's prefix distinguishes the trigger, since
+// calling buyout a "marketplace sale" would misdescribe it (26A follow-up §15).
+model CollectionDisposal {
+  id               String         @id @default(cuid())
+  collectionItemId String
+  collectionItem   CollectionItem @relation(fields: [collectionItemId], references: [id], onDelete: Restrict)
+
+  quantity     Int
+  disposalType String
+  disposedAt   DateTime
+
+  grossProceedsCents Int?
+  netProceedsCents   Int?
+
+  // Durable idempotency: 'orderitem:<orderItemId>' (consignment platform sale),
+  // 'buyout-conversion:<itemInstanceId>' (buyout), 'manual:<token>' (manual
+  // disposal double-submit guard). Null for corrections with no upstream fact.
+  sourceKey String? @unique
+
+  // Reversal, never deletion — historical facts are never destroyed.
+  reversedAt     DateTime?
+  reversalReason String?
+  notes          String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  allocations CollectionDisposalAllocation[]
+
+  @@index([collectionItemId])
+  @@index([disposalType])
+}
+
+model CollectionDisposalAllocation {
+  id                String             @id @default(cuid())
+  disposalId        String
+  // Restrict, not Cascade: a CollectionDisposal is never hard-deleted by any
+  // business path (reversal only sets reversedAt) — Restrict on BOTH
+  // allocation parents makes that invariant DB-enforced, not just app-level,
+  // so allocation rows can never silently disappear via a parent delete.
+  disposal          CollectionDisposal @relation(fields: [disposalId], references: [id], onDelete: Restrict)
+  acquisitionLotId  String
+  acquisitionLot    AcquisitionLot     @relation(fields: [acquisitionLotId], references: [id], onDelete: Restrict)
+
+  quantity Int
+  // Snapshot at disposal time — unitRecordedCostCents * quantity for a
+  // known-cost lot, else null. Never recomputed from later lot edits (26A
+  // follow-up §17) — historical realized calculations must not silently change.
+  allocatedRecordedCostCents Int?
+
+  createdAt DateTime @default(now())
+
+  @@index([disposalId])
+  @@index([acquisitionLotId])
 }
 
 model CatalogSuggestion {

@@ -437,23 +437,35 @@ describe('mobileCapture: collection duplicate resolution', () => {
     expect(actionsSrc).toContain('existing:')
     expect(actionsSrc).toContain('updatedAt: existing.updatedAt.toISOString()')
   })
-  it('updateExistingCollectionQuantity uses updateMany with profileId+updatedAt stale check', () => {
+  // 26B: no longer a blind collectionItem.updateMany({data:{quantity}}) — the
+  // stale check now happens via a findFirst inside a transaction (still keyed
+  // on profileId+updatedAt), and the actual mutation routes through the
+  // ownership ledger (createAcquisitionLot for an increase, a non-economic
+  // 'correction' disposal for a decrease) so quantity stays ledger-derived.
+  it('updateExistingCollectionQuantity re-verifies profileId+updatedAt inside a transaction before mutating', () => {
     const idx = actionsSrc.indexOf('export async function updateExistingCollectionQuantity')
     const body = actionsSrc.slice(idx, idx + 1200)
-    expect(body).toContain('collectionItem.updateMany')
+    expect(body).toContain('prisma.$transaction')
     expect(body).toContain('profileId: session.profileId')
     expect(body).toContain('updatedAt: new Date(expectedUpdatedAt)')
   })
-  it('updateExistingCollectionQuantity uses target quantity (absolute, not delta) for retry safety', () => {
+  it('updateExistingCollectionQuantity keeps its public absolute-target-quantity contract, routed through the ledger', () => {
     const idx = actionsSrc.indexOf('export async function updateExistingCollectionQuantity')
-    const body = actionsSrc.slice(idx, idx + 1200)
+    const body = actionsSrc.slice(idx, idx + 1400)
     expect(body).toContain('targetQty')
-    expect(body).toContain('quantity: targetQty')
+    expect(body).toContain('createAcquisitionLot')
+    expect(body).toContain('createDisposal')
+    expect(body).toContain("disposalType: 'correction'")
   })
   it('returns stale error when row was modified elsewhere', () => {
     const idx = actionsSrc.indexOf('export async function updateExistingCollectionQuantity')
-    const body = actionsSrc.slice(idx, idx + 1200)
+    const body = actionsSrc.slice(idx, idx + 2500)
     expect(body).toContain('Collection item was modified elsewhere')
+  })
+  it('insufficient owned quantity on a decrease returns a friendly error, never a crash', () => {
+    const idx = actionsSrc.indexOf('export async function updateExistingCollectionQuantity')
+    const body = actionsSrc.slice(idx, idx + 2500)
+    expect(body).toContain('Cannot reduce below owned quantity')
   })
   it('wizard shows dup_resolution step when duplicate detected', () => {
     expect(wizardSrc).toContain("'dup_resolution'")
@@ -477,6 +489,42 @@ describe('mobileCapture: collection duplicate resolution', () => {
   })
   it('wizard shows current quantity in resolution UI', () => {
     expect(wizardSrc).toContain('existingItem.quantity')
+  })
+
+  // 26B: Quick Capture has no cost field anywhere in its flow — the founding
+  // lot for a brand-new collection item must always be unknown-cost, never a
+  // fabricated $0 or inherited value.
+  it('the new-item collection branch creates its founding lot with unitRecordedCostCents null / costKnowledge unknown, source quick_capture', () => {
+    const createIdx = actionsSrc.indexOf('const created = await tx.collectionItem.create')
+    const lotIdx = actionsSrc.indexOf('await createAcquisitionLot(tx, {', createIdx)
+    const lotBlock = actionsSrc.slice(lotIdx, actionsSrc.indexOf('})', lotIdx))
+    expect(lotBlock).toContain('unitRecordedCostCents: null')
+    expect(lotBlock).toContain("costKnowledge: 'unknown'")
+    expect(lotBlock).toContain("source: 'quick_capture'")
+  })
+
+  it('the new-item collection branch creates the CollectionItem at quantity 0 — the founding lot\'s own increment is the sole writer of the true quantity', () => {
+    const createIdx = actionsSrc.indexOf('const created = await tx.collectionItem.create')
+    const block = actionsSrc.slice(createIdx, actionsSrc.indexOf('})', createIdx))
+    expect(block).toContain('quantity:        0')
+  })
+
+  it('a quantity increase via the duplicate-resolution path also stays unknown-cost, source quick_capture — never inherits the existing item\'s recorded cost', () => {
+    const idx = actionsSrc.indexOf('export async function updateExistingCollectionQuantity')
+    const increaseIdx = actionsSrc.indexOf('if (delta > 0) {', idx)
+    const block = actionsSrc.slice(increaseIdx, actionsSrc.indexOf('} else if (delta < 0)', increaseIdx))
+    expect(block).toContain('unitRecordedCostCents: null')
+    expect(block).toContain("costKnowledge: 'unknown'")
+    expect(block).toContain("source: 'quick_capture'")
+  })
+
+  it('a quantity decrease via the duplicate-resolution path is a non-economic correction disposal — no proceeds, never realized-gain eligible', () => {
+    const idx = actionsSrc.indexOf('export async function updateExistingCollectionQuantity')
+    const decreaseIdx = actionsSrc.indexOf('} else if (delta < 0) {', idx)
+    const block = actionsSrc.slice(decreaseIdx, actionsSrc.indexOf('return targetQty', decreaseIdx))
+    expect(block).toContain("disposalType: 'correction'")
+    expect(block).toContain('grossProceedsCents: null')
+    expect(block).toContain('netProceedsCents: null')
   })
 })
 

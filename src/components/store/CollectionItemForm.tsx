@@ -331,7 +331,10 @@ export function CollectionItemForm(props: Props) {
           </p>
         </div>
 
-        {/* Quantity */}
+        {/* Quantity — 26B: ledger-derived once acquisition lots exist. Editable
+            only at initial creation (the first acquisition); afterward, use
+            "Add Another" / "Mark Sold / Removed" on the item detail page so
+            ownership changes always go through the ledger, never a blind edit. */}
         <div className="flex flex-col gap-1">
           <label htmlFor="quantity" className="text-sm font-medium text-gray-700">Quantity</label>
           <input
@@ -341,8 +344,15 @@ export function CollectionItemForm(props: Props) {
             min="1"
             step="1"
             defaultValue={item?.quantity ?? 1}
-            className={`${inputClass('quantity')} max-w-[8rem]`}
+            readOnly={!isCreate}
+            disabled={!isCreate}
+            className={`${inputClass('quantity')} max-w-[8rem] ${!isCreate ? 'bg-gray-100 text-gray-500' : ''}`}
           />
+          {!isCreate && (
+            <p className="text-xs text-gray-400">
+              Use &quot;Add Another&quot; or &quot;Mark Sold / Removed&quot; on the item page to change quantity.
+            </p>
+          )}
           <FieldError message={errors.quantity?.[0]} />
         </div>
 
@@ -350,7 +360,7 @@ export function CollectionItemForm(props: Props) {
         <div className="grid grid-cols-2 gap-4">
           <div className="flex flex-col gap-1">
             <label htmlFor="purchasePrice" className="text-sm font-medium text-gray-700">
-              Purchase price ($)
+              Purchase price per item ($)
             </label>
             <input
               id="purchasePrice"
@@ -362,6 +372,9 @@ export function CollectionItemForm(props: Props) {
               placeholder="0.00"
               className={inputClass('purchasePrice')}
             />
+            {isCreate && (
+              <p className="text-xs text-gray-400">Applies to each item if you&apos;re adding more than one.</p>
+            )}
             <FieldError message={errors.purchasePrice?.[0]} />
           </div>
           <div className="flex flex-col gap-1">

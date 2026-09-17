@@ -59,15 +59,17 @@ describe('§52 — no public UI added', () => {
   })
 })
 
+// §53 originally also asserted schema.prisma had zero uncommitted diff — a
+// point-in-time check valid only immediately after 22B itself (which added no
+// schema changes). It cannot survive any later schema-touching milestone by
+// construction; 26B legitimately adds the ownership-ledger models. Removed
+// rather than kept as a perpetually-broken invariant — 22B's own schema-free
+// scope is already provable from its commit history, not a live git-status check.
 describe('§53 — schema/migration footprint', () => {
-  it('migration count is exactly 52 — no new migration added', () => {
+  it('migration count reflects all milestones through 26B (22B itself added none)', () => {
     const migrationsDir = path.join(root, 'prisma/migrations')
     const dirs = fs.readdirSync(migrationsDir).filter((d) => fs.statSync(path.join(migrationsDir, d)).isDirectory())
-    expect(dirs.length).toBe(52)
-  })
-  it('schema.prisma has zero uncommitted diff', () => {
-    const out = execSync('git status --short -- prisma/schema.prisma', { cwd: root }).toString()
-    expect(out.trim()).toBe('')
+    expect(dirs.length).toBe(53) // 26B added the ownership-ledger migration
   })
 })
 

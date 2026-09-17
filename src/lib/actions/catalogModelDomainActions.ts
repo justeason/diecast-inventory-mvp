@@ -44,6 +44,10 @@ export async function unwantAction(catalogModelId: string, wantedId: string): Pr
 
 export async function addToCollectionAction(catalogModelId: string, formData: FormData): Promise<void> {
   formData.set('catalogId', catalogModelId)
+  // 26B: tags the founding AcquisitionLot's source as 'i_own_it' rather than
+  // the generic 'manual' default — this is the bare one-click button, not the
+  // full manual-add form.
+  formData.set('source', 'i_own_it')
   await createCollectionItem(null, formData)
 }
 

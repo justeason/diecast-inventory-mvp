@@ -146,8 +146,11 @@ describe('§51/§52 — no chase taxonomy, no portfolio/lot redesign introduced 
     const block = schema.slice(start, end)
     expect(block).not.toMatch(/variantKind|chase|treasureHunt|label\s|attributes\s+Json/i)
   })
-  it('no CollectionLot/AcquisitionLot model was introduced', () => {
+  // 26B legitimately introduces AcquisitionLot (an ownership-ledger model,
+  // unrelated to MarketVariant/21B's own scope) — this assertion only ever
+  // proved 21B itself didn't smuggle in a lot/chase redesign, which remains
+  // true regardless of later, unrelated milestones adding one deliberately.
+  it('no CollectionLot model exists (21B itself never introduced one; AcquisitionLot is 26B\'s unrelated ownership ledger)', () => {
     expect(schema).not.toContain('model CollectionLot')
-    expect(schema).not.toContain('model AcquisitionLot')
   })
 })

@@ -7,6 +7,7 @@ import { getRequestId } from '@/lib/requestId'
 import { normalizeError } from '@/lib/errors'
 import { checkRateLimit } from '@/lib/rateLimit'
 import { computeMobileCaptureFingerprint } from '@/lib/captureFingerprint'
+import { createAcquisitionLot, createDisposal } from '@/lib/ownershipLedger'
 
 export type CaptureDestination = 'collection' | 'sell'
 
@@ -574,19 +575,32 @@ export async function submitCaptureSession(
             })
           }
 
-          await tx.collectionItem.create({
+          // 26B: quantity=0 at create — createAcquisitionLot's own increment
+          // establishes the true value, so the ledger stays the sole writer
+          // of the quantity cache. No cost field exists in Quick Capture, so
+          // the founding lot is always unknown-cost — never invented.
+          const created = await tx.collectionItem.create({
             data: {
               profileId:       session.profileId,
               catalogId:       item.catalogModelId,
               brand:           item.catalog.brand,
               name:            item.catalog.name,
               year:            item.catalog.year,
-              quantity:        item.quantity,
+              quantity:        0,
               condition:       item.condition,
               notes:           item.notes,
               isPublic:        item.isPublic,
               purchaseDate:    item.acquisitionDate ?? undefined,
             },
+          })
+          await createAcquisitionLot(tx, {
+            collectionItemId: created.id,
+            quantityAcquired: item.quantity,
+            unitRecordedCostCents: null,
+            costKnowledge: 'unknown',
+            acquiredAt: item.acquisitionDate ?? null,
+            ledgerEffectiveAt: new Date(),
+            source: 'quick_capture',
           })
         } else {
           // Only permitted records: SellerSubmission with status='submitted'.
@@ -665,9 +679,12 @@ export async function checkCollectionDuplicate(
 }
 
 // ── updateExistingCollectionQuantity ──────────────────────────────────────────
-// Sets target quantity (absolute, not delta). Retry-safe: SET qty = N is idempotent.
-// Stale-safe: updateMany on (id, profileId, updatedAt) — count=0 → stale error.
-// Preserves all other fields on the existing CollectionItem.
+// Public contract unchanged (absolute target quantity, stale-safe on
+// expectedUpdatedAt) — but 26B routes the actual mutation through the ledger
+// rather than a blind SET, so quantity stays ledger-derived. An increase
+// creates a new 'quick_capture' AcquisitionLot for exactly the delta (never a
+// blind bump of an existing lot); a decrease is a non-economic 'correction'
+// disposal (§26/§27) — never realized-gain eligible, never inventing a cost.
 
 export async function updateExistingCollectionQuantity(
   existingItemId: string,
@@ -681,14 +698,42 @@ export async function updateExistingCollectionQuantity(
     return err('Quantity must be 1–999.')
   }
 
-  const result = await prisma.collectionItem.updateMany({
-    where: { id: existingItemId, profileId: session.profileId, updatedAt: new Date(expectedUpdatedAt) },
-    data:  { quantity: targetQty },
-  })
+  try {
+    const newQuantity = await prisma.$transaction(async (tx) => {
+      const existing = await tx.collectionItem.findFirst({
+        where: { id: existingItemId, profileId: session.profileId, updatedAt: new Date(expectedUpdatedAt) },
+        select: { id: true, quantity: true },
+      })
+      if (!existing) throw new Error('STALE')
 
-  if (result.count === 0) {
-    return err('Collection item was modified elsewhere. Please refresh.')
+      const delta = targetQty - existing.quantity
+      if (delta > 0) {
+        await createAcquisitionLot(tx, {
+          collectionItemId: existingItemId,
+          quantityAcquired: delta,
+          unitRecordedCostCents: null,
+          costKnowledge: 'unknown',
+          acquiredAt: null,
+          ledgerEffectiveAt: new Date(),
+          source: 'quick_capture',
+        })
+      } else if (delta < 0) {
+        const outcome = await createDisposal(tx, {
+          collectionItemId: existingItemId,
+          quantity: -delta,
+          disposalType: 'correction',
+          disposedAt: new Date(),
+          grossProceedsCents: null,
+          netProceedsCents: null,
+        })
+        if (outcome.status === 'insufficient_quantity') throw new Error('INSUFFICIENT')
+      }
+      return targetQty
+    })
+    return ok({ newQuantity })
+  } catch (e) {
+    if (e instanceof Error && e.message === 'STALE') return err('Collection item was modified elsewhere. Please refresh.')
+    if (e instanceof Error && e.message === 'INSUFFICIENT') return err('Cannot reduce below owned quantity.')
+    throw e
   }
-
-  return ok({ newQuantity: targetQty })
 }

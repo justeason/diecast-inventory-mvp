@@ -216,7 +216,7 @@ export default async function CollectionListPage({
         <section className="mb-8 rounded-md border border-gray-200 bg-gray-50 px-4 py-3 space-y-4">
           <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Portfolio</h2>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
             <div>
               <p className="text-[11px] font-medium text-gray-500 uppercase tracking-wide">Estimated Portfolio Value</p>
               <p className="text-lg font-semibold text-gray-900">
@@ -244,12 +244,22 @@ export default async function CollectionListPage({
                 {formatCoverage(portfolio.gainLossCoverage.comparableCopies, portfolio.gainLossCoverage.totalCopies)}
               </p>
             </div>
+            <div>
+              <p className="text-[11px] font-medium text-gray-500 uppercase tracking-wide">Recorded Realized Gain/Loss</p>
+              <p className="text-lg font-semibold text-gray-900">
+                {portfolio.recordedRealizedGainLossCents !== null ? centsToDisplay(portfolio.recordedRealizedGainLossCents) : '—'}
+              </p>
+              <p className="text-xs text-gray-500 mt-0.5">
+                Covers {portfolio.realizedCoverage.coveredDisposals} of {portfolio.realizedCoverage.totalDisposals} sale{portfolio.realizedCoverage.totalDisposals === 1 ? '' : 's'}
+              </p>
+            </div>
           </div>
 
           <div className="border-t border-gray-200 pt-3 space-y-1 text-xs text-gray-500">
             <p>Estimated values are not guaranteed sale proceeds — they reflect executed CollectNTrades and tracked external marketplace sales for this exact model only. Some items may show limited market data.</p>
             <p>Recorded Cost uses purchase prices you recorded where the cost can be interpreted safely. Multi-copy historical purchase-cost tracking is limited.</p>
             <p>Unrealized Gain/Loss is estimated market value minus recorded purchase cost for currently owned items where both values are available. Not an amount you can necessarily realize immediately.</p>
+            <p>Recorded Realized Gain/Loss is based on recorded acquisition cost and known seller proceeds for items you&apos;ve sold or removed; not tax/accounting advice.</p>
           </div>
         </section>
       )}
@@ -447,13 +457,14 @@ export default async function CollectionListPage({
                                   </>
                                 )}
                               </p>
-                            ) : holding.costStatus === 'ambiguous_quantity' ? (
-                              <p className="text-gray-400">Recorded purchase price needs review for multi-copy holding</p>
-                            ) : holding.costStatus === 'invalid' ? (
-                              <p className="text-gray-400">Recorded purchase price is invalid</p>
+                            ) : holding.costStatus === 'partial' ? (
+                              <p className="text-gray-400">
+                                Recorded Cost: <span className="font-medium text-gray-700">{centsToDisplay(holding.recordedCostCents!)}</span>
+                                {' '}(known for {holding.knownCostCopies} of {item.quantity} — partial coverage)
+                              </p>
                             ) : (
                               <Link
-                                href={`/account/collection/${item.id}/edit#purchasePrice`}
+                                href={`/account/collection/${item.id}#add-another`}
                                 className="text-gray-500 hover:text-gray-900 underline underline-offset-2"
                               >
                                 Add purchase price
@@ -465,7 +476,7 @@ export default async function CollectionListPage({
                         <div className="mt-2 flex flex-wrap items-center gap-4 text-xs">
                           {item.catalogId && (
                             <Link
-                              href={`/account/collection/${item.id}/edit#quantity`}
+                              href={`/account/collection/${item.id}#add-another`}
                               aria-label={`Add another ${name}`}
                               className="font-medium text-gray-900 hover:underline underline-offset-2"
                             >

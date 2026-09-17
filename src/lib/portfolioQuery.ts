@@ -1,23 +1,21 @@
-// 25B: Portfolio V1 — the canonical customer-facing ownership + value + cost
-// summary for a profile's Collection. Market value comes EXCLUSIVELY from 23B
-// getValuationsBatch (model-level, no marketVariantId/condition — CollectionItem
-// identity is not canonical enough for narrower tiers, 24A/25A). No
+// 26B: Portfolio V1 — now sources cost from the ownership ledger
+// (AcquisitionLot) rather than CollectionItem.purchasePrice directly. Market
+// value remains EXCLUSIVELY 23B getValuationsBatch (model-level). No
 // AdvancedValuation, no resaleEstimator, no pricingIntelligence.
 //
-// "Recorded Cost" (never "Cost Basis") is deliberately conservative: purchasePrice
-// is historically ambiguous between per-unit and total-holding intent, and that
-// ambiguity cannot be resolved for existing data. It is only ever treated as a
-// usable cost when quantity===1, where per-unit and holding-total interpretations
-// are identical. A multi-copy row's recorded price is preserved (surfaced via
-// costStatus) but deliberately excluded from every cost/gain-loss total — Series
-// 26 owns proper acquisition-lot cost tracking.
+// "Recorded Cost" (never "Cost Basis") sums only KNOWN-cost remaining lots.
+// A holding's Unrealized Gain/Loss is computed only at FULL remaining-cost
+// coverage (every remaining copy has a known-cost lot) — never subtracting a
+// partial known cost from the full market value and calling the result a
+// gain/loss (26B §41). Recorded Realized Gain/Loss is a separate, portfolio-
+// wide total over non-reversed sale-type disposals only.
 import { prisma } from '@/lib/prisma'
 import { getValuationsBatch } from '@/lib/marketValuation'
 import { isValidQuantity } from '@/lib/advancedValuationQuery'
-import { internalPriceToCents } from '@/lib/marketMoney'
+import { computeRealizedGain, resolveLegacyCostKnowledge, SALE_DISPOSAL_TYPES } from '@/lib/ownershipLedger'
 import type { ValuationConfidence } from '@/lib/marketValuationMath'
 
-export type HoldingCostStatus = 'known' | 'unknown' | 'ambiguous_quantity' | 'invalid'
+export type HoldingCostStatus = 'known' | 'partial' | 'unknown'
 export type HoldingValuationStatus = 'valued' | 'insufficient_data' | 'no_catalog_match' | 'invalid_quantity'
 
 export type PortfolioHolding = {
@@ -31,13 +29,17 @@ export type PortfolioHolding = {
   confidence: ValuationConfidence | null
   valuationStatus: HoldingValuationStatus
 
+  // Known-lot-only sum — shown even at partial coverage (costStatus discloses
+  // which). Null only when zero remaining copies have known cost.
   recordedCostCents: number | null
   costStatus: HoldingCostStatus
+  knownCostCopies: number
 
+  // Only non-null when costStatus==='known' (full coverage) AND valued.
   unrealizedGainLossCents: number | null
   // Raw ratio (e.g. 0.184 for +18.4%), matching this codebase's existing
-  // percentageChange convention (advancedValuation.ts::computeTrend) — never
-  // pre-multiplied by 100, never annualized, never an expected return.
+  // percentageChange convention — never pre-multiplied by 100, never
+  // annualized, never an expected return.
   unrealizedGainLossPercent: number | null
 }
 
@@ -50,32 +52,61 @@ export type PortfolioResult = {
   recordedCostCents: number | null
   unrealizedGainLossCents: number | null
 
+  // Recorded Realized Gain/Loss — portfolio-wide, over non-reversed
+  // platform_sale/external_sale disposals only (never gift/trade/
+  // other_removal/correction — those are never realized-gain eligible).
+  recordedRealizedGainLossCents: number | null
+
   marketValueCoverage: { valuedCopies: number; totalCopies: number }
   costCoverage: { knownCostCopies: number; totalCopies: number }
   gainLossCoverage: { comparableCopies: number; totalCopies: number }
+  // Denominator: non-reversed platform_sale/external_sale disposals.
+  // Numerator: those with fully calculable Recorded Realized Gain/Loss.
+  realizedCoverage: { coveredDisposals: number; totalDisposals: number }
 
   holdings: PortfolioHolding[]
 }
 
-// §19/§20 of 25B's spec, verbatim policy: quantity===1 is the only case where
-// a single recorded purchasePrice is unambiguous (per-unit and holding-total
-// interpretations coincide). Any other quantity makes the same number
-// genuinely ambiguous, so it is preserved (costStatus) but never totaled.
-function resolveHoldingCostStatus(quantity: number, purchasePrice: number | null): HoldingCostStatus {
-  if (purchasePrice === null) return 'unknown'
-  if (!Number.isFinite(purchasePrice) || purchasePrice < 0) return 'invalid'
-  if (quantity === 1) return 'known'
-  return 'ambiguous_quantity'
+function classifyHoldingCost(totalCopies: number, knownCostCopies: number): HoldingCostStatus {
+  if (totalCopies === 0 || knownCostCopies === 0) return 'unknown'
+  if (knownCostCopies === totalCopies) return 'known'
+  return 'partial'
 }
+
+type LotForCost = { collectionItemId: string; remainingQuantity: number; unitRecordedCostCents: number | null }
+type SaleDisposalForRealized = { netProceedsCents: number | null; allocations: Array<{ allocatedRecordedCostCents: number | null }> }
 
 export async function getPortfolio(profileId: string, asOf: Date = new Date()): Promise<PortfolioResult> {
   const items = await prisma.collectionItem.findMany({
     where: { profileId },
     select: { id: true, catalogId: true, quantity: true, purchasePrice: true },
   })
+  const itemIds = items.map((i) => i.id)
 
   const catalogIds = [...new Set(items.map((i) => i.catalogId).filter((id): id is string => id !== null))]
-  const valuations = catalogIds.length > 0 ? await getValuationsBatch({ catalogModelIds: catalogIds, asOf }) : new Map()
+
+  const [valuations, lots, saleDisposals] = await Promise.all([
+    catalogIds.length > 0 ? getValuationsBatch({ catalogModelIds: catalogIds, asOf }) : Promise.resolve(new Map()),
+    itemIds.length > 0
+      ? prisma.acquisitionLot.findMany({
+          where: { collectionItemId: { in: itemIds }, remainingQuantity: { gt: 0 } },
+          select: { collectionItemId: true, remainingQuantity: true, unitRecordedCostCents: true },
+        })
+      : Promise.resolve([] as LotForCost[]),
+    itemIds.length > 0
+      ? prisma.collectionDisposal.findMany({
+          where: { collectionItemId: { in: itemIds }, reversedAt: null, disposalType: { in: [...SALE_DISPOSAL_TYPES] } },
+          select: { netProceedsCents: true, allocations: { select: { allocatedRecordedCostCents: true } } },
+        })
+      : Promise.resolve([] as SaleDisposalForRealized[]),
+  ])
+
+  const lotsByItem = new Map<string, LotForCost[]>()
+  for (const lot of lots) {
+    const arr = lotsByItem.get(lot.collectionItemId)
+    if (arr) arr.push(lot)
+    else lotsByItem.set(lot.collectionItemId, [lot])
+  }
 
   let estimatedPortfolioValueCents = 0
   let hasAnyValue = false
@@ -86,7 +117,7 @@ export async function getPortfolio(profileId: string, asOf: Date = new Date()): 
 
   let valuedCopies = 0
   let totalCopies = 0
-  let knownCostCopies = 0
+  let knownCostCopiesTotal = 0
   let comparableCopies = 0
 
   const holdings: PortfolioHolding[] = items.map((item) => {
@@ -117,11 +148,44 @@ export async function getPortfolio(profileId: string, asOf: Date = new Date()): 
       valuationStatus = 'insufficient_data'
     }
 
-    const costStatus = resolveHoldingCostStatus(item.quantity, item.purchasePrice)
-    let recordedCostForRow: number | null = null
-    if (costStatus === 'known') {
-      recordedCostForRow = internalPriceToCents(item.purchasePrice!)
-      knownCostCopies += copies
+    const itemLots = lotsByItem.get(item.id) ?? []
+    let knownCostCopies: number
+    let recordedCostForRow: number
+    let costStatus: HoldingCostStatus
+    if (itemLots.length > 0) {
+      knownCostCopies = itemLots.reduce(
+        (sum, lot) => (lot.unitRecordedCostCents !== null ? sum + lot.remainingQuantity : sum),
+        0,
+      )
+      recordedCostForRow = itemLots.reduce(
+        (sum, lot) => (lot.unitRecordedCostCents !== null ? sum + lot.unitRecordedCostCents * lot.remainingQuantity : sum),
+        0,
+      )
+      costStatus = classifyHoldingCost(copies, knownCostCopies)
+    } else {
+      // Final Gate §5/§6: a CollectionItem can legitimately have zero
+      // AcquisitionLot rows between schema deployment and the separate,
+      // idempotent backfill script reaching this specific item — never
+      // interpret that as a known-zero-cost or fully-reconciled holding.
+      // Fall back to the pre-26B (25B) conservative legacy purchasePrice
+      // read, for THIS holding's display only — never fabricates a lot row,
+      // and stops applying the instant even one real lot exists for it (see
+      // itemLots.length > 0 branch above, which is then always authoritative).
+      const legacy = resolveLegacyCostKnowledge(item.quantity, item.purchasePrice)
+      if (legacy.costKnowledge === 'known') {
+        knownCostCopies = copies
+        recordedCostForRow = legacy.unitRecordedCostCents ?? 0
+        costStatus = 'known'
+      } else {
+        // ambiguous_legacy (qty>1) and unknown both exclude from totals —
+        // matches 25B's own "ambiguous/unknown excluded" cost policy.
+        knownCostCopies = 0
+        recordedCostForRow = 0
+        costStatus = 'unknown'
+      }
+    }
+    knownCostCopiesTotal += knownCostCopies
+    if (knownCostCopies > 0) {
       recordedCostCents += recordedCostForRow
       hasAnyCost = true
     }
@@ -129,8 +193,8 @@ export async function getPortfolio(profileId: string, asOf: Date = new Date()): 
     let unrealizedGainLossForRow: number | null = null
     let unrealizedGainLossPercent: number | null = null
     if (costStatus === 'known' && valuationStatus === 'valued') {
-      unrealizedGainLossForRow = estimatedHoldingValueCents! - recordedCostForRow!
-      unrealizedGainLossPercent = recordedCostForRow! > 0 ? unrealizedGainLossForRow / recordedCostForRow! : null
+      unrealizedGainLossForRow = estimatedHoldingValueCents! - recordedCostForRow
+      unrealizedGainLossPercent = recordedCostForRow > 0 ? unrealizedGainLossForRow / recordedCostForRow : null
       comparableCopies += copies
       unrealizedGainLossCents += unrealizedGainLossForRow
       hasAnyGainLoss = true
@@ -147,22 +211,37 @@ export async function getPortfolio(profileId: string, asOf: Date = new Date()): 
       confidence,
       valuationStatus,
 
-      recordedCostCents: recordedCostForRow,
+      recordedCostCents: knownCostCopies > 0 ? recordedCostForRow : null,
       costStatus,
+      knownCostCopies,
 
       unrealizedGainLossCents: unrealizedGainLossForRow,
       unrealizedGainLossPercent,
     }
   })
 
+  let recordedRealizedGainLossCents = 0
+  let hasAnyRealizedGain = false
+  let coveredDisposals = 0
+  for (const disposal of saleDisposals) {
+    const result = computeRealizedGain(disposal.netProceedsCents, disposal.allocations)
+    if (result.status === 'calculable') {
+      coveredDisposals++
+      recordedRealizedGainLossCents += result.recordedRealizedGainLossCents
+      hasAnyRealizedGain = true
+    }
+  }
+
   return {
     asOf,
     estimatedPortfolioValueCents: hasAnyValue ? estimatedPortfolioValueCents : null,
     recordedCostCents: hasAnyCost ? recordedCostCents : null,
     unrealizedGainLossCents: hasAnyGainLoss ? unrealizedGainLossCents : null,
+    recordedRealizedGainLossCents: hasAnyRealizedGain ? recordedRealizedGainLossCents : null,
     marketValueCoverage: { valuedCopies, totalCopies },
-    costCoverage: { knownCostCopies, totalCopies },
+    costCoverage: { knownCostCopies: knownCostCopiesTotal, totalCopies },
     gainLossCoverage: { comparableCopies, totalCopies },
+    realizedCoverage: { coveredDisposals, totalDisposals: saleDisposals.length },
     holdings,
   }
 }

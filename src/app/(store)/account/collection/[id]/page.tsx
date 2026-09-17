@@ -8,6 +8,8 @@ import { ConfirmDeleteItemButton } from '@/components/store/ConfirmDeleteItemBut
 import { CollectionPhotoUpload } from '@/components/store/CollectionPhotoUpload'
 import { CollectionAiScan } from '@/components/store/CollectionAiScan'
 import { CatalogSuggestionForm } from '@/components/store/CatalogSuggestionForm'
+import { AddAcquisitionForm } from '@/components/store/AddAcquisitionForm'
+import { MarkSoldOrRemovedForm } from '@/components/store/MarkSoldOrRemovedForm'
 
 export const dynamic = 'force-dynamic'
 
@@ -58,10 +60,13 @@ function displayName(item: {
 
 export default async function CollectionItemDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>
+  searchParams: Promise<{ deleteBlocked?: string }>
 }) {
   const { id } = await params
+  const { deleteBlocked } = await searchParams
   const session = await getBuyerSession()
   if (!session) notFound()
 
@@ -285,6 +290,14 @@ export default async function CollectionItemDetailPage({
         </dl>
       </div>
 
+      {/* Ownership — 26B: acquisition/removal always go through the ledger,
+          never a blind quantity edit. */}
+      <div id="add-another" className="space-y-3 mb-8">
+        <h2 className="text-sm font-semibold text-gray-900">Ownership</h2>
+        <AddAcquisitionForm collectionItemId={item.id} />
+        <MarkSoldOrRemovedForm collectionItemId={item.id} />
+      </div>
+
       {/* Timestamps */}
       <p className="text-xs text-gray-400 mb-8">
         Added {item.createdAt.toLocaleDateString()}
@@ -322,8 +335,15 @@ export default async function CollectionItemDetailPage({
       {/* Delete item */}
       <div className="pt-6 border-t border-gray-200">
         <p className="text-sm font-medium text-gray-700 mb-1">Remove from collection</p>
+        {deleteBlocked && (
+          <p className="text-xs text-red-600 mb-2">
+            This item has ownership history (acquisitions or removals) and can no longer be deleted outright —
+            use &quot;Mark Sold / Removed&quot; above to reduce ownership instead.
+          </p>
+        )}
         <p className="text-xs text-gray-500 mb-3">
-          This will permanently delete this item and all its photos. This cannot be undone.
+          This will permanently delete this item and all its photos. This cannot be undone. Only available for a
+          mistaken entry with no acquisition/removal history.
         </p>
         <ConfirmDeleteItemButton id={item.id} />
       </div>
