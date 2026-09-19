@@ -3,6 +3,8 @@ import Link from 'next/link'
 import { getBuyerSession } from '@/lib/buyerSession'
 import { getCatalogRelationshipState } from '@/lib/catalogRelationshipQuery'
 import { getCatalogDiscovery, CATALOG_PAGE_SIZE } from '@/lib/catalogDiscoveryQuery'
+import { getValuationsBatch, type ValuationResult } from '@/lib/marketValuation'
+import { logger } from '@/lib/serverLogger'
 import { CatalogSearchBar } from '@/components/store/CatalogSearchBar'
 import { CatalogModelCard } from '@/components/store/CatalogModelCard'
 import { Pagination } from '@/components/shared/Pagination'
@@ -37,6 +39,20 @@ export default async function CatalogDiscoveryPage({
   const session = await getBuyerSession()
   const modelIds = result.models.map((m) => m.id)
   const relationshipMap = session ? await getCatalogRelationshipState(session.profileId, modelIds) : null
+
+  // 29B: search/filter/sort/paginate happens above THIS line — modelIds is
+  // already the exact visible page. Batch-value only those IDs, at one shared
+  // asOf, using the same canonical getValuationsBatch as Portfolio (25B). A
+  // thrown error here is isolated to this optional enrichment only — it must
+  // never take down catalog identity/listing/relationship rendering.
+  const asOf = new Date()
+  let valuationByModel: Map<string, ValuationResult> | null = null
+  try {
+    valuationByModel = await getValuationsBatch({ catalogModelIds: modelIds, asOf })
+  } catch (err) {
+    logger.error('catalog_discovery_valuation_batch_failed', err, { route: '/catalog' })
+    valuationByModel = null
+  }
 
   const paginationParams: Record<string, string> = {}
   if (q?.trim()) paginationParams.q = q.trim()
@@ -125,6 +141,7 @@ export default async function CatalogDiscoveryPage({
                 model={model}
                 availability={result.availabilityByModel.get(model.id) ?? { count: 0, lowestPrice: null }}
                 relationship={relationshipMap?.get(model.id) ?? null}
+                marketValuation={valuationByModel?.get(model.id) ?? null}
               />
             ))}
           </div>

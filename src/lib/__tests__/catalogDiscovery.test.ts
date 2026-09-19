@@ -635,9 +635,9 @@ describe('20A: availability label semantics — "N available · from $X.XX" / "C
     expect(cardSrc).not.toMatch(/lowestPrice\s*\?\?\s*0/)
   })
 
-  it('no discount/deal-score/average/valuation-comparison logic exists', () => {
+  it('no discount/deal-score/average-comparison logic exists (29B added canonical EMV via marketValuation/ValuationResult by design — that is not a "valuation-comparison" heuristic, so the blanket "valuation" ban was narrowed accordingly)', () => {
     for (const src of [cardSrc, readSrc('src/lib/catalogDiscoveryQuery.ts')]) {
-      expect(src).not.toMatch(/discount|dealScore|average|valuation/i)
+      expect(src).not.toMatch(/discount|dealScore|average/i)
     }
   })
 })
@@ -874,8 +874,8 @@ describe('16J: accessibility', () => {
     expect(cardSrc).toContain('alt={modelName}')
   })
 
-  it('availability is rendered as text, not color-only', () => {
-    expect(cardSrc).toContain('{availabilityText}')
+  it('availability is rendered as text, not color-only (29B renamed the variable to supplyText as part of the canonical "Lowest Ask $X · N available" line)', () => {
+    expect(cardSrc).toContain('{supplyText}')
   })
 
   it('pagination links have clear directional labels (reused shared Pagination component)', () => {

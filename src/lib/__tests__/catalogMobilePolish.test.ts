@@ -16,32 +16,30 @@ const marketSrc = readSrc('src/app/(store)/market/page.tsx')
 const homeSrc = readSrc('src/app/(store)/page.tsx')
 const navSrc = readSrc('src/lib/customerNav.ts')
 
-describe('20B §25: mobile availability layout — two compact lines, price never hidden', () => {
-  it('mobile block shows "N available" then, only when priced, a line break + "from $X.XX"', () => {
-    const idx = cardSrc.indexOf('md:hidden')
-    const block = cardSrc.slice(idx, cardSrc.indexOf('hidden md:inline', idx))
-    expect(block).toContain('{availability.count} available')
-    expect(block).toContain('<br />')
-    expect(block).toContain('from ${availability.lowestPrice.toFixed(2)}')
-  })
-
-  it('desktop keeps the single-line "N available · from $X.XX" (availabilityText, unchanged)', () => {
-    expect(cardSrc).toContain('hidden md:inline')
-    expect(cardSrc).toContain('{availabilityText}')
+// 29B replaced the old per-breakpoint two-line/one-line availability split
+// with a single canonical "Lowest Ask $X.XX · N available" supply line (plus
+// a new EMV line above it) that is already compact enough to render
+// identically on every breakpoint — so the md:hidden/hidden md:inline split
+// and its dedicated min-height hack no longer exist. See catalogModelCard.test.ts
+// for the current 29B supply-line copy assertions.
+describe('20B §25 / 29B: single canonical supply line, price never hidden', () => {
+  it('the supply line shows "Lowest Ask $X.XX · N available" on every breakpoint — no mobile/desktop content split', () => {
+    const marketBlockIdx = cardSrc.indexOf('{emvText}')
+    const actionRowIdx = cardSrc.indexOf('className={actionRowCls}')
+    const block = cardSrc.slice(marketBlockIdx, actionRowIdx)
+    expect(block).not.toContain('md:hidden')
+    expect(block).not.toContain('hidden md:inline')
+    expect(block).toContain('{supplyText}')
   })
 
   it('unavailable state remains exactly "Currently unavailable" on both breakpoints', () => {
     expect(cardSrc).toContain("'Currently unavailable'")
   })
 
-  it('mobile and desktop availability blocks share a consistent min-height so available/unavailable cards stay aligned', () => {
-    expect(cardSrc).toContain('min-h-10 md:min-h-0')
-  })
-
-  it('price text is never truncated/clamped away — no line-clamp on the availability block', () => {
-    const availabilityBlockIdx = cardSrc.indexOf('hasAvailability ?')
+  it('price text is never truncated/clamped away — no line-clamp on the market/supply block', () => {
+    const marketBlockIdx = cardSrc.indexOf('{emvText}')
     const actionRowIdx = cardSrc.indexOf('className={actionRowCls}')
-    const block = cardSrc.slice(availabilityBlockIdx, actionRowIdx)
+    const block = cardSrc.slice(marketBlockIdx, actionRowIdx)
     expect(block).not.toMatch(/line-clamp|truncate/)
   })
 })
@@ -54,9 +52,9 @@ describe('20B §26: mobile buy-link discoverability — visible without hover', 
     expect(block).toContain('md:hover:underline')
   })
 
-  it('retains the trailing arrow on both breakpoints', () => {
+  it('retains the trailing arrow on the (now single, breakpoint-shared) supply line', () => {
     const matches = [...cardSrc.matchAll(/<span aria-hidden="true">→<\/span>/g)]
-    expect(matches.length).toBeGreaterThanOrEqual(2) // mobile block + desktop block
+    expect(matches.length).toBeGreaterThanOrEqual(1)
   })
 
   it('retains clear focus-visible styling (never removed for the mobile polish)', () => {

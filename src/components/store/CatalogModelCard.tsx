@@ -3,8 +3,10 @@ import { PhotoThumbnail } from '@/components/shared/PhotoThumbnail'
 import { PendingActionButton } from './PendingActionButton'
 import { wantAction, unwantAction, addToCollectionAction } from '@/lib/actions/catalogModelDomainActions'
 import { buildAccountIntentHref } from '@/lib/customerModelIntent'
+import { centsToDisplay } from '@/lib/marketModelPageDisplay'
 import type { CatalogDiscoveryModel, CatalogModelAvailability } from '@/lib/catalogDiscoveryQuery'
 import type { CatalogRelationshipEntry } from '@/lib/catalogRelationshipQuery'
+import type { ValuationResult } from '@/lib/marketValuation'
 
 type Props = {
   model: CatalogDiscoveryModel
@@ -12,6 +14,12 @@ type Props = {
   // null = anonymous visitor (no private query was issued); a real entry = the
   // authenticated customer's actual Want/Collection relationship for this model.
   relationship: CatalogRelationshipEntry | null
+  // 29B: model-level batch valuation for this card's CatalogModel, at the
+  // page's single shared asOf. null means no result is available — either the
+  // batch valuation call failed technically (isolated in the page) or this
+  // model had no entry in a successful batch — NEVER the same thing as the
+  // 'insufficient_data' status, which is a real, disclosed evidence outcome.
+  marketValuation: ValuationResult | null
 }
 
 // 20A: one CatalogModel = one unified Market discovery result — identity,
@@ -20,7 +28,7 @@ type Props = {
 // link, and action controls are DELIBERATELY SIBLINGS, never nested inside one
 // another — <a><button></a> would be invalid and would make an action click
 // accidentally also fire card navigation.
-export function CatalogModelCard({ model, availability, relationship }: Props) {
+export function CatalogModelCard({ model, availability, relationship, marketValuation }: Props) {
   const modelName = `${model.brand} ${model.name}`
   const isAuthenticated = relationship !== null
   const wanted = relationship?.wanted ?? false
@@ -29,9 +37,27 @@ export function CatalogModelCard({ model, availability, relationship }: Props) {
   const ownedQuantity = relationship?.ownedQuantity ?? null
 
   const hasAvailability = availability.count > 0
-  const availabilityText = hasAvailability
-    ? `${availability.count} available${availability.lowestPrice !== null ? ` · from $${availability.lowestPrice.toFixed(2)}` : ''}`
+  // 29B: single canonical current-supply line — replaces the old duplicated
+  // "N available · from $X" copy. Never "$0"/"Lowest Ask —"; count>0 implies
+  // lowestPrice is set (getCatalogDiscovery only increments count alongside
+  // lowestPrice), the null branch below is defensive only.
+  const supplyText = hasAvailability
+    ? availability.lowestPrice !== null
+      ? `Lowest Ask $${availability.lowestPrice.toFixed(2)} · ${availability.count} available`
+      : `${availability.count} available`
     : 'Currently unavailable'
+
+  // 29B: EMV is fully independent of supply — never derived from Lowest Ask,
+  // never $0. 'insufficient_data' is a real, disclosed evidence outcome
+  // ("Limited sales data"); a null marketValuation means the batch call
+  // itself failed or produced no entry for this model, which is a distinct,
+  // neutral technical-failure state ("Market estimate unavailable").
+  const emvText =
+    marketValuation?.status === 'valued'
+      ? `Est. Market Value ${centsToDisplay(marketValuation.estimatedValueCents)}`
+      : marketValuation?.status === 'insufficient_data'
+        ? 'Limited sales data'
+        : 'Market estimate unavailable'
 
   const sellHref = collectionItemId
     ? `/account/collection/${collectionItemId}/sell`
@@ -68,37 +94,23 @@ export function CatalogModelCard({ model, availability, relationship }: Props) {
       </Link>
 
       <div className="px-4 pt-3 pb-4">
-        {/* 20B §25/§27: a consistent min-height on mobile (where availability
-            may render as two stacked lines) keeps available/unavailable cards
-            reasonably aligned in the dense grid — never achieved by
-            truncating/clamping away the price text. */}
+        {/* 29B: at most two concise market lines — EMV, then current supply.
+            Both always render (one of their fixed set of states each) so
+            card height stays consistent across the grid without a min-height
+            hack. */}
+        <p className={`border-t border-gray-100 pt-3 text-sm ${marketValuation?.status === 'valued' ? 'text-gray-700' : 'text-gray-400'}`}>
+          {emvText}
+        </p>
         {hasAvailability ? (
           <Link
             href={`/catalog/${model.id}#available-listings`}
             aria-label={`View ${availability.count} available ${availability.count === 1 ? 'copy' : 'copies'} of ${modelName}`}
-            className="flex min-h-10 md:min-h-0 items-center border-t border-gray-100 pt-3 text-sm text-gray-700 underline md:no-underline underline-offset-2 hover:text-gray-900 md:hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-900"
+            className="mt-1 flex items-center text-sm text-gray-700 underline md:no-underline underline-offset-2 hover:text-gray-900 md:hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-900"
           >
-            {/* 20B §25: mobile renders two compact lines ("N available" /
-                "from $X.XX") rather than wrapping the combined sentence;
-                desktop keeps the single-line "N available · from $X.XX". Same
-                underlying data, no semantic change — price is never hidden. */}
-            <span className="md:hidden">
-              {availability.count} available <span aria-hidden="true">→</span>
-              {availability.lowestPrice !== null && (
-                <>
-                  <br />
-                  from ${availability.lowestPrice.toFixed(2)}
-                </>
-              )}
-            </span>
-            <span className="hidden md:inline">
-              {availabilityText} <span aria-hidden="true">→</span>
-            </span>
+            {supplyText} <span aria-hidden="true">→</span>
           </Link>
         ) : (
-          <p className="flex min-h-10 md:min-h-0 items-center border-t border-gray-100 pt-3 text-sm text-gray-400">
-            {availabilityText}
-          </p>
+          <p className="mt-1 text-sm text-gray-400">{supplyText}</p>
         )}
 
         <div className={actionRowCls}>
