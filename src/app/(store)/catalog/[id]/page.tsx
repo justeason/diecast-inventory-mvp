@@ -7,11 +7,14 @@ import { getCatalogRelationshipState } from '@/lib/catalogRelationshipQuery'
 import { getCatalogModelHub, LISTING_PAGE_SIZE } from '@/lib/catalogModelHubQuery'
 import { getMarketSaleHistory } from '@/lib/marketSaleQuery'
 import { getMarketQuote } from '@/lib/marketQuoteQuery'
+import { getMarketSignals, type MarketSignals } from '@/lib/marketSignalsQuery'
+import { logger } from '@/lib/serverLogger'
 import { isValidPackagingType, findPackagingMarketVariant, type PackagingType } from '@/lib/marketVariant'
 import { CatalogModelActions } from '@/components/store/CatalogModelActions'
 import { CatalogListingOption } from '@/components/store/CatalogListingOption'
 import { PhotoThumbnail } from '@/components/shared/PhotoThumbnail'
 import { MarketSnapshot } from '@/components/store/MarketSnapshot'
+import { MarketActivity } from '@/components/store/MarketActivity'
 import { PriceHistoryChart } from '@/components/store/PriceHistoryChart'
 import { RecentSalesList } from '@/components/store/RecentSalesList'
 
@@ -87,6 +90,19 @@ export default async function CatalogModelHubPage({
   const relationshipMap = session ? await getCatalogRelationshipState(session.profileId, [id]) : null
   const relationship = relationshipMap?.get(id) ?? null
 
+  // 30B §48: signals are useful enrichment, not identity-critical — isolated
+  // from CatalogModel identity/Market Snapshot/Price History/Listings, which
+  // must never blank due solely to a signals-query failure. §50: reuses the
+  // current valuation already fetched via getMarketQuote (same catalogModelId/
+  // marketVariantId/asOf) rather than recomputing it.
+  let signals: MarketSignals | null = null
+  try {
+    signals = await getMarketSignals({ catalogModelId: id, ...variantFilter, asOf, currentValuation: valuation })
+  } catch (err) {
+    logger.error('market_model_page_signals_failed', err, { route: '/catalog/[id]', catalogModelId: id })
+    signals = null
+  }
+
   const modelName = `${hub.model.brand} ${hub.model.name}`
   const hasListings = hub.listings.length > 0
 
@@ -159,6 +175,8 @@ export default async function CatalogModelHubPage({
         askSummary={askSummary}
         listingsAnchorHref="#available-listings"
       />
+
+      {signals && <MarketActivity signals={signals} />}
 
       <section className="mb-8">
         <h2 className="text-sm font-semibold text-gray-900 mb-2">Price History</h2>

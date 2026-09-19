@@ -4,9 +4,20 @@
 // math from orchestration/rendering.
 import type { MarketSaleObservation } from './marketSaleQuery'
 import type { ValuationResult } from './marketValuation'
+import type { ValuationChange30d } from './marketSignalsQuery'
 
 export function centsToDisplay(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`
+}
+
+// 30B §17/§18: "+6.3% (+$2.00)" / "-4.1% (-$1.25)" / "0.0% ($0.00)" — plain
+// text sign, one decimal place, no green/red/ticker treatment (styling is the
+// caller's concern, this only produces the string).
+export function formatValuationChange30d(change: Extract<ValuationChange30d, { status: 'available' }>): string {
+  const sign = change.changeCents > 0 ? '+' : change.changeCents < 0 ? '-' : ''
+  const pct = `${sign}${Math.abs(change.changePercent).toFixed(1)}%`
+  const dollars = `${sign}${centsToDisplay(Math.abs(change.changeCents))}`
+  return `${pct} (${dollars})`
 }
 
 export function saleSourceLabel(sale: Pick<MarketSaleObservation, 'sourceType'>): string {

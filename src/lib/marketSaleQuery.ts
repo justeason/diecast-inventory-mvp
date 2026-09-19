@@ -204,7 +204,10 @@ const INTERNAL_SALE_SELECT = {
 // (getMarketSaleHistoryForModels) below — every other clause is unchanged and
 // model-independent, so this never alters per-model eligibility. Single-model
 // callers (BaseFilter.catalogModelId: string) are unaffected.
-function buildInternalWhere(filter: Omit<BaseFilter, 'catalogModelId'> & { catalogModelId: string | string[] }): Prisma.OrderItemWhereInput {
+// 30B: exported so marketDaysToSellQuery.ts can reuse this exact predicate
+// (plus a Listing.createdAt join) rather than defining a second, driftable
+// "completed sale" definition.
+export function buildInternalWhere(filter: Omit<BaseFilter, 'catalogModelId'> & { catalogModelId: string | string[] }): Prisma.OrderItemWhereInput {
   return {
     catalogModelId: Array.isArray(filter.catalogModelId) ? { in: filter.catalogModelId } : filter.catalogModelId,
     ...(filter.marketVariantId !== undefined ? { marketVariantId: filter.marketVariantId } : {}),

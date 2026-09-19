@@ -9,11 +9,13 @@ import {
   isFallbackSpecificity,
   resolveLastSaleDisplay,
   computeChartPoints,
+  formatValuationChange30d,
   PACKAGING_LABELS,
   CONDITION_LABELS,
 } from '@/lib/marketModelPageDisplay'
 import type { MarketSaleObservation } from '@/lib/marketSaleQuery'
 import type { ValuationResult } from '@/lib/marketValuation'
+import type { ValuationChange30d } from '@/lib/marketSignalsQuery'
 
 function internalSale(overrides: Partial<Extract<MarketSaleObservation, { sourceType: 'internal' }>> = {}): MarketSaleObservation {
   return {
@@ -53,6 +55,35 @@ describe('centsToDisplay', () => {
   it('formats integer cents as a 2dp dollar string', () => {
     expect(centsToDisplay(1000)).toBe('$10.00')
     expect(centsToDisplay(999)).toBe('$9.99')
+  })
+})
+
+function available(overrides: Partial<Extract<ValuationChange30d, { status: 'available' }>> = {}): Extract<ValuationChange30d, { status: 'available' }> {
+  return {
+    status: 'available',
+    changeCents: 200,
+    changePercent: 6.25,
+    currentEstimatedValueCents: 3400,
+    priorEstimatedValueCents: 3200,
+    ...overrides,
+  }
+}
+
+describe('30B: formatValuationChange30d — plain-text sign, one decimal place, no ticker styling (§17/§18/§66)', () => {
+  it('positive change: "+6.3% (+$2.00)"', () => {
+    expect(formatValuationChange30d(available({ changeCents: 200, changePercent: 6.25 }))).toBe('+6.3% (+$2.00)')
+  })
+
+  it('negative change: "-4.1% (-$1.25)"', () => {
+    expect(formatValuationChange30d(available({ changeCents: -125, changePercent: -4.0625 }))).toBe('-4.1% (-$1.25)')
+  })
+
+  it('zero change: "0.0% ($0.00)" — no leading sign', () => {
+    expect(formatValuationChange30d(available({ changeCents: 0, changePercent: 0 }))).toBe('0.0% ($0.00)')
+  })
+
+  it('percent is rounded to exactly one decimal place', () => {
+    expect(formatValuationChange30d(available({ changeCents: 1, changePercent: 0.03125 }))).toBe('+0.0% (+$0.01)')
   })
 })
 
