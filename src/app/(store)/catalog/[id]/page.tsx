@@ -8,6 +8,7 @@ import { getCatalogModelHub, LISTING_PAGE_SIZE } from '@/lib/catalogModelHubQuer
 import { getMarketSaleHistory } from '@/lib/marketSaleQuery'
 import { getMarketQuote } from '@/lib/marketQuoteQuery'
 import { getMarketSignals, type MarketSignals } from '@/lib/marketSignalsQuery'
+import { getInternalAskDepth } from '@/lib/marketAskQuery'
 import { logger } from '@/lib/serverLogger'
 import { isValidPackagingType, findPackagingMarketVariant, type PackagingType } from '@/lib/marketVariant'
 import { CatalogModelActions } from '@/components/store/CatalogModelActions'
@@ -15,6 +16,7 @@ import { CatalogListingOption } from '@/components/store/CatalogListingOption'
 import { PhotoThumbnail } from '@/components/shared/PhotoThumbnail'
 import { MarketSnapshot } from '@/components/store/MarketSnapshot'
 import { MarketActivity } from '@/components/store/MarketActivity'
+import { AskDepth } from '@/components/store/AskDepth'
 import { PriceHistoryChart } from '@/components/store/PriceHistoryChart'
 import { RecentSalesList } from '@/components/store/RecentSalesList'
 
@@ -81,10 +83,14 @@ export default async function CatalogModelHubPage({
   // 16H Part AB, reused: one narrowly-scoped relationship lookup for this
   // single model. §51: session and every independent market-data query run in
   // parallel; relationship state depends on session, so it follows sequentially.
-  const [session, quote, history] = await Promise.all([
+  const [session, quote, history, askDepth] = await Promise.all([
     getBuyerSession(),
     getMarketQuote({ catalogModelId: id, ...variantFilter, asOf, includeLastSale: true }),
     getMarketSaleHistory({ catalogModelId: id, ...variantFilter, endDate: asOf, limit: HISTORY_LIMIT }),
+    // 28B: current executable supply — no asOf coupling, no historical
+    // semantics (§41). Independent of Market Quote/Signals; its own focused,
+    // exhaustive (never bounded/truncated) query — see marketAskQuery.ts.
+    getInternalAskDepth({ catalogModelId: id, ...variantFilter }),
   ])
   const { valuation, askSummary, lastMarketSale, lastInternalSale } = quote
   const relationshipMap = session ? await getCatalogRelationshipState(session.profileId, [id]) : null
@@ -191,6 +197,8 @@ export default async function CatalogModelHubPage({
           </div>
         )}
       </section>
+
+      <AskDepth levels={askDepth} />
 
       <section id="available-listings" aria-labelledby="available-copies-heading">
         <h2 id="available-copies-heading" className="text-sm font-semibold text-gray-900 mb-1">

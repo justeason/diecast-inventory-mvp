@@ -2,12 +2,14 @@
 // kept strictly separate; external asks never affect Lowest Ask.
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { Prisma } from '@prisma/client'
+import fs from 'fs'
+import path from 'path'
 
 type Mock = ReturnType<typeof vi.fn>
 
 vi.mock('@/lib/prisma', () => ({
   prisma: {
-    listing: { findMany: vi.fn(), count: vi.fn(), findFirst: vi.fn() },
+    listing: { findMany: vi.fn(), count: vi.fn(), findFirst: vi.fn(), groupBy: vi.fn() },
     externalMarketObservation: { findMany: vi.fn() },
   },
 }))
@@ -20,6 +22,8 @@ import {
   getLowestAsk,
   getExternalAsks,
   getInternalAskSummary,
+  getInternalAskDepth,
+  buildInternalAskWhere,
   type InternalAskInput,
   type ExternalAskInput,
 } from '@/lib/marketAskQuery'
@@ -287,5 +291,199 @@ describe('getInternalAskSummary — internal-only, exact regardless of populatio
     ;(prisma.listing.count as Mock).mockResolvedValue(0)
     await getInternalAskSummary({ catalogModelId: 'cat1' })
     expect(prisma.externalMarketObservation.findMany).not.toHaveBeenCalled()
+  })
+})
+
+// ── 28B: getInternalAskDepth — Current Ask Depth ────────────────────────────
+
+function groupRow(price: number, count: number) {
+  return { price, _count: { _all: count } }
+}
+
+describe('getInternalAskDepth — eligibility reuse (§3/§59)', () => {
+  it('uses the exact same buildInternalAskWhere predicate as getInternalAsks/getInternalAskSummary — no second definition', async () => {
+    ;(prisma.listing.groupBy as Mock).mockResolvedValue([])
+    await getInternalAskDepth({ catalogModelId: 'cat1', marketVariantId: 'v1' })
+    const call = (prisma.listing.groupBy as Mock).mock.calls[0][0]
+    expect(call.where).toEqual(buildInternalAskWhere({ catalogModelId: 'cat1', marketVariantId: 'v1' }))
+    expect(call.where).toEqual({
+      status: 'active',
+      item: { status: 'available', catalogId: 'cat1', marketVariantId: 'v1' },
+    })
+  })
+
+  it('groups by price via a DB aggregate — never a bounded findMany/take/skip', async () => {
+    ;(prisma.listing.groupBy as Mock).mockResolvedValue([])
+    await getInternalAskDepth({ catalogModelId: 'cat1' })
+    const call = (prisma.listing.groupBy as Mock).mock.calls[0][0]
+    expect(call.by).toEqual(['price'])
+    expect(call).not.toHaveProperty('take')
+    expect(call).not.toHaveProperty('skip')
+  })
+})
+
+describe('getInternalAskDepth — grouping and sorting (§7/§33/§62/§63/§68)', () => {
+  it('$32 x1, $35 x2, $40 x1 -> three levels ascending by price, exact counts', async () => {
+    ;(prisma.listing.groupBy as Mock).mockResolvedValue([
+      groupRow(40, 1),
+      groupRow(32, 1),
+      groupRow(35, 2),
+    ])
+    const depth = await getInternalAskDepth({ catalogModelId: 'cat1' })
+    expect(depth).toEqual([
+      { priceCents: 3200, availableCopies: 1 },
+      { priceCents: 3500, availableCopies: 2 },
+      { priceCents: 4000, availableCopies: 1 },
+    ])
+  })
+
+  it('N listings at the same price collapse into one level with count=N, never duplicate rows', async () => {
+    ;(prisma.listing.groupBy as Mock).mockResolvedValue([groupRow(35, 3)])
+    const depth = await getInternalAskDepth({ catalogModelId: 'cat1' })
+    expect(depth).toEqual([{ priceCents: 3500, availableCopies: 3 }])
+  })
+
+  it('distinct Float prices that convert to the SAME canonical cents value merge into one level, counts summed (§7/§34)', async () => {
+    ;(prisma.listing.groupBy as Mock).mockResolvedValue([groupRow(32.0, 1), groupRow(32.001, 2)])
+    const depth = await getInternalAskDepth({ catalogModelId: 'cat1' })
+    expect(depth).toEqual([{ priceCents: 3200, availableCopies: 3 }])
+  })
+
+  it('output order is deterministic ascending regardless of input row order', async () => {
+    ;(prisma.listing.groupBy as Mock).mockResolvedValue([groupRow(99, 1), groupRow(1, 1), groupRow(50, 1)])
+    const depth = await getInternalAskDepth({ catalogModelId: 'cat1' })
+    expect(depth.map((l) => l.priceCents)).toEqual([100, 5000, 9900])
+  })
+})
+
+describe('getInternalAskDepth — condition aggregation (§10/§64)', () => {
+  it('two listings at the same price with different item conditions still collapse into one level (depth groups by price only, condition is never a grouping key)', async () => {
+    // groupBy(['price']) inherently cannot split by condition since 'price' is
+    // the only grouping field — two Carded listings ($35, Near Mint and Good)
+    // are indistinguishable to this query and correctly merge.
+    ;(prisma.listing.groupBy as Mock).mockResolvedValue([groupRow(35, 2)])
+    const depth = await getInternalAskDepth({ catalogModelId: 'cat1', marketVariantId: 'v1' })
+    expect(depth).toEqual([{ priceCents: 3500, availableCopies: 2 }])
+    const call = (prisma.listing.groupBy as Mock).mock.calls[0][0]
+    expect(call.by).toEqual(['price'])
+  })
+})
+
+describe('getInternalAskDepth — variant scope, no fallback (§9/§65)', () => {
+  it('marketVariantId is threaded into the eligibility predicate exactly like getInternalAsks — Carded never falls back to All', async () => {
+    ;(prisma.listing.groupBy as Mock).mockResolvedValue([])
+    await getInternalAskDepth({ catalogModelId: 'cat1', marketVariantId: 'carded-variant' })
+    const call = (prisma.listing.groupBy as Mock).mock.calls[0][0]
+    expect(call.where.item.marketVariantId).toBe('carded-variant')
+  })
+
+  it('omitting marketVariantId (All) applies no variant filter', async () => {
+    ;(prisma.listing.groupBy as Mock).mockResolvedValue([])
+    await getInternalAskDepth({ catalogModelId: 'cat1' })
+    const call = (prisma.listing.groupBy as Mock).mock.calls[0][0]
+    expect(call.where.item).not.toHaveProperty('marketVariantId')
+  })
+})
+
+describe('getInternalAskDepth — empty and single-level (§31/§32/§66/§67)', () => {
+  it('zero eligible listings -> empty array (UI renders "No copies currently available.")', async () => {
+    ;(prisma.listing.groupBy as Mock).mockResolvedValue([])
+    const depth = await getInternalAskDepth({ catalogModelId: 'cat1' })
+    expect(depth).toEqual([])
+  })
+
+  it('exactly one eligible listing -> one normal level, not treated as a special/degenerate case', async () => {
+    ;(prisma.listing.groupBy as Mock).mockResolvedValue([groupRow(32, 1)])
+    const depth = await getInternalAskDepth({ catalogModelId: 'cat1' })
+    expect(depth).toEqual([{ priceCents: 3200, availableCopies: 1 }])
+  })
+})
+
+describe('getInternalAskDepth — money (§8/§69)', () => {
+  it('uses the canonical internalPriceToCents conversion, never a raw Math.round(price*100) in the depth module', () => {
+    const src = fs.readFileSync(path.join(process.cwd(), 'src/lib/marketAskQuery.ts'), 'utf-8')
+    const idx = src.indexOf('export async function getInternalAskDepth')
+    const block = src.slice(idx, src.indexOf('\n}', idx))
+    expect(block).toContain('internalPriceToCents(group.price)')
+    expect(block).not.toMatch(/Math\.round\(.*price.*100\)/)
+  })
+})
+
+describe('getInternalAskDepth — privacy (§20/§71)', () => {
+  it('selects/returns only price and count — never a seller/profile/agreement field', () => {
+    const src = fs.readFileSync(path.join(process.cwd(), 'src/lib/marketAskQuery.ts'), 'utf-8')
+    const idx = src.indexOf('export async function getInternalAskDepth')
+    const block = src.slice(idx, src.indexOf('\n}', idx + 400))
+    expect(block).not.toMatch(/seller|profile|agreement|payout|cost/i)
+  })
+
+  it('AskDepthLevel type has exactly priceCents and availableCopies, nothing else', () => {
+    const src = fs.readFileSync(path.join(process.cwd(), 'src/lib/marketAskQuery.ts'), 'utf-8')
+    expect(src).toContain('export type AskDepthLevel = { priceCents: number; availableCopies: number }')
+  })
+})
+
+// ── 28B: Lowest Ask / Available Copies parity with getInternalAskSummary ───
+
+describe('28B: depth <-> summary parity (§11/§12/§60/§61)', () => {
+  it('depth[0].priceCents equals getInternalAskSummary.lowestAskCents for the same eligible population', async () => {
+    const listings = [
+      { price: 32, id: 'l1' },
+      { price: 35, id: 'l2' },
+      { price: 35, id: 'l3' },
+      { price: 40, id: 'l4' },
+    ]
+
+    ;(prisma.listing.groupBy as Mock).mockResolvedValue([
+      groupRow(32, 1),
+      groupRow(35, 2),
+      groupRow(40, 1),
+    ])
+    const depth = await getInternalAskDepth({ catalogModelId: 'cat1' })
+
+    ;(prisma.listing.count as Mock).mockResolvedValue(listings.length)
+    ;(prisma.listing.findFirst as Mock).mockResolvedValue({ price: 32 }) // lowest, price ASC
+    ;(prisma.listing.findMany as Mock).mockResolvedValue([{ price: 35 }, { price: 35 }]) // median pair (n=4)
+    const summary = await getInternalAskSummary({ catalogModelId: 'cat1' })
+
+    expect(depth[0].priceCents).toBe(summary.lowestAskCents)
+  })
+
+  it('SUM(depth.availableCopies) equals getInternalAskSummary.availableCopies for the same eligible population', async () => {
+    ;(prisma.listing.groupBy as Mock).mockResolvedValue([
+      groupRow(32, 1),
+      groupRow(35, 2),
+      groupRow(40, 1),
+    ])
+    const depth = await getInternalAskDepth({ catalogModelId: 'cat1' })
+    const depthTotal = depth.reduce((sum, level) => sum + level.availableCopies, 0)
+
+    ;(prisma.listing.count as Mock).mockResolvedValue(4)
+    ;(prisma.listing.findFirst as Mock).mockResolvedValue({ price: 32 })
+    ;(prisma.listing.findMany as Mock).mockResolvedValue([{ price: 35 }, { price: 35 }])
+    const summary = await getInternalAskSummary({ catalogModelId: 'cat1' })
+
+    expect(depthTotal).toBe(summary.availableCopies)
+  })
+
+  it('zero eligible listings: depth is empty and summary.availableCopies is 0 — both agree', async () => {
+    ;(prisma.listing.groupBy as Mock).mockResolvedValue([])
+    const depth = await getInternalAskDepth({ catalogModelId: 'cat1' })
+
+    ;(prisma.listing.count as Mock).mockResolvedValue(0)
+    const summary = await getInternalAskSummary({ catalogModelId: 'cat1' })
+
+    expect(depth).toEqual([])
+    expect(summary.availableCopies).toBe(0)
+    expect(summary.lowestAskCents).toBeNull()
+  })
+})
+
+// ── 28B: market-boundary discipline ─────────────────────────────────────────
+
+describe('28B: ask depth never feeds valuation/signals (§29/§30/§72)', () => {
+  it('marketAskQuery.ts never imports getValuation/getMarketSignals/valuation math', () => {
+    const src = fs.readFileSync(path.join(process.cwd(), 'src/lib/marketAskQuery.ts'), 'utf-8')
+    expect(src).not.toMatch(/getValuation|getMarketSignals|marketValuationMath/)
   })
 })

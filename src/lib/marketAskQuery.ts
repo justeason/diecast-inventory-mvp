@@ -73,7 +73,9 @@ const INTERNAL_ASK_SELECT = {
   },
 } as const
 
-function buildInternalAskWhere(filter: InternalAskFilter): Prisma.ListingWhereInput {
+// 28B: exported so getInternalAskDepth (below) reuses this exact predicate —
+// never a second, weaker "purchasable" definition.
+export function buildInternalAskWhere(filter: InternalAskFilter): Prisma.ListingWhereInput {
   return {
     status: 'active',
     item: {
@@ -156,6 +158,37 @@ export async function getInternalAskSummary(filter: {
   }
 
   return { lowestAskCents, medianAskCents, availableCopies }
+}
+
+// ── Internal ask depth (28B) — Current Ask Depth on the Market Model Page.
+// A price-grouped view of the SAME internal-purchasable-listing eligibility
+// (buildInternalAskWhere, unmodified) — one Listing = one physical
+// ItemInstance = one copy (§6), so a listing.groupBy(['price']) count IS the
+// available-copy count at that price, exactly. Uses a DB-level aggregate
+// (never take/skip/limit) so depth can never silently truncate once supply
+// exceeds getInternalAsks'/getInternalAskSummary's own bounded page sizes
+// (§36/§37/§38) — this is the one canonical guarantee a groupBy gives that a
+// bounded findMany cannot. Grouped by raw Listing.price (Float) first, then
+// merged by canonical integer cents — two distinct Float prices that convert
+// to the same cents value must never appear as two separate rows (§7/§34).
+export type AskDepthLevel = { priceCents: number; availableCopies: number }
+
+export async function getInternalAskDepth(filter: InternalAskFilter): Promise<AskDepthLevel[]> {
+  const groups = await prisma.listing.groupBy({
+    by: ['price'],
+    where: buildInternalAskWhere(filter),
+    _count: { _all: true },
+  })
+
+  const byCents = new Map<number, number>()
+  for (const group of groups) {
+    const cents = internalPriceToCents(group.price)
+    byCents.set(cents, (byCents.get(cents) ?? 0) + group._count._all)
+  }
+
+  return [...byCents.entries()]
+    .map(([priceCents, availableCopies]) => ({ priceCents, availableCopies }))
+    .sort((a, b) => a.priceCents - b.priceCents)
 }
 
 // ── External asks — matched active_ask observations, never purchasable here ─
