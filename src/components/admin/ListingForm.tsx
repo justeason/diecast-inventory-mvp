@@ -19,6 +19,7 @@ export type ConsignmentContextForListing = {
   agreementId: string
   submissionId: string
   commissionPercent: string
+  commissionMinimumFee: string | null
   fixedFee: string | null
   minimumSellerPayout: string | null
   agreedListPrice: string | null
@@ -128,7 +129,8 @@ function PayoutPreview({ preview }: { preview: ConsignmentPreview }) {
       </dl>
       {preview.belowMinimum && (
         <p className="mt-1.5 text-amber-800">
-          Estimated proceeds are below the agreed minimum seller payout. Review listing price.
+          Market-derived proceeds fall short of the agreed minimum seller payout — the amount
+          shown is topped up to the guaranteed minimum. Review listing price.
         </p>
       )}
       <p className="mt-1.5 text-gray-400 italic">Advisory only. Payout is not automatic.</p>
@@ -146,6 +148,7 @@ function ConsignmentPricingPanel({
   const preview = calculateConsignmentPreview({
     listingPriceStr,
     commissionPercent: context.commissionPercent,
+    commissionMinimumFee: context.commissionMinimumFee,
     fixedFee: context.fixedFee,
     minimumSellerPayout: context.minimumSellerPayout,
   })

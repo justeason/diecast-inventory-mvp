@@ -1,5 +1,8 @@
 // Pure helpers for seller-agreement ↔ inventory integration.
-// No DB calls, no server imports — safe to import from both server and client modules.
+// No DB calls — safe to import from both server and client modules.
+
+import { Prisma } from '@prisma/client'
+import { calculateConsignmentPayoutSnapshot } from '@/lib/sellerPayoutCalculation'
 
 export type SourceType = 'company_owned' | 'buyout' | 'consignment'
 
@@ -115,6 +118,7 @@ export function validateConversionConfirmation(
 export type ConsignmentPreviewInput = {
   listingPriceStr: string
   commissionPercent: string
+  commissionMinimumFee: string | null
   fixedFee: string | null
   minimumSellerPayout: string | null
 }
@@ -127,9 +131,19 @@ export type ConsignmentPreview =
       estimatedCommission: number
       estimatedFixedFee: number
       estimatedProceeds: number
+      // True when the canonical minimum-payout top-up was applied — i.e. the
+      // market-derived proceeds fell short and estimatedProceeds is now the
+      // guaranteed floor, not a market-price-derived amount. Never "final
+      // proceeds are below the minimum" — calculateConsignmentPayoutSnapshot
+      // guarantees that can't happen once a minimum is set.
       belowMinimum: boolean
     }
 
+// Admin Listing-form "Projected seller payout" preview — a thin UI-facing
+// wrapper around the CANONICAL calculateConsignmentPayoutSnapshot (the same
+// function actual settlement uses). Never a second, independently-derived fee
+// formula: this function only parses form-input strings into Decimal and
+// reshapes the canonical snapshot back into the preview's display shape.
 export function calculateConsignmentPreview(input: ConsignmentPreviewInput): ConsignmentPreview {
   const listingPrice = parseFloat(input.listingPriceStr)
   if (!Number.isFinite(listingPrice) || listingPrice <= 0) {
@@ -141,33 +155,26 @@ export function calculateConsignmentPreview(input: ConsignmentPreviewInput): Con
     return { valid: false }
   }
 
-  const estimatedCommission = roundCents(listingPrice * commission)
-
-  const rawFixedFee = input.fixedFee ? parseFloat(input.fixedFee) : 0
-  const estimatedFixedFee = Number.isFinite(rawFixedFee) ? rawFixedFee : 0
-
-  const estimatedProceeds = roundCents(
-    Math.max(0, listingPrice - estimatedCommission - estimatedFixedFee),
-  )
-
-  let belowMinimum = false
-  if (input.minimumSellerPayout) {
-    const minPayout = parseFloat(input.minimumSellerPayout)
-    if (Number.isFinite(minPayout) && minPayout > 0) {
-      belowMinimum = estimatedProceeds < minPayout
-    }
+  const parseDecimalOrNull = (raw: string | null): Prisma.Decimal | null => {
+    if (!raw) return null
+    const n = parseFloat(raw)
+    return Number.isFinite(n) ? new Prisma.Decimal(raw) : null
   }
+
+  const snapshot = calculateConsignmentPayoutSnapshot({
+    grossSalePriceFloat: listingPrice,
+    commissionPercent: new Prisma.Decimal(commission),
+    commissionMinimumFee: parseDecimalOrNull(input.commissionMinimumFee),
+    fixedFee: parseDecimalOrNull(input.fixedFee),
+    minimumSellerPayout: parseDecimalOrNull(input.minimumSellerPayout),
+  })
 
   return {
     valid: true,
     listingPrice,
-    estimatedCommission,
-    estimatedFixedFee,
-    estimatedProceeds,
-    belowMinimum,
+    estimatedCommission: snapshot.commissionAmount.toNumber(),
+    estimatedFixedFee: (snapshot.fixedFee ?? new Prisma.Decimal(0)).toNumber(),
+    estimatedProceeds: snapshot.netAmount.toNumber(),
+    belowMinimum: snapshot.minimumAdjustment.greaterThan(0),
   }
-}
-
-function roundCents(value: number): number {
-  return Math.round(value * 100) / 100
 }

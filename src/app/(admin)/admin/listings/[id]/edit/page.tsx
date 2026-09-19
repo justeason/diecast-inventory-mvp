@@ -28,6 +28,7 @@ export default async function EditListingPage({
               submissionId: true,
               status: true,
               commissionPercent: true,
+              commissionMinimumFee: true,
               fixedFee: true,
               minimumSellerPayout: true,
               agreedListPrice: true,
@@ -64,6 +65,8 @@ export default async function EditListingPage({
           submissionId: listing.item.sellerAgreement.submissionId,
           commissionPercent:
             listing.item.sellerAgreement.commissionPercent?.toString() ?? '0',
+          commissionMinimumFee:
+            listing.item.sellerAgreement.commissionMinimumFee?.toFixed(2) ?? null,
           fixedFee: listing.item.sellerAgreement.fixedFee?.toFixed(2) ?? null,
           minimumSellerPayout:
             listing.item.sellerAgreement.minimumSellerPayout?.toFixed(2) ?? null,
