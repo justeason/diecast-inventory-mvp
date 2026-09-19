@@ -22,6 +22,13 @@ export type OrderActionState =
   | { errors: Record<string, string[]> }
   | null
 
+// Checkout reservation hotfix: internal control-flow signal only — thrown
+// inside the transaction when a conditional reservation loses the
+// available->reserved race, caught outside $transaction to translate into the
+// existing honest "no longer available" checkout error. Never exposed to the
+// caller as a raw error.
+class ListingUnavailableError extends Error {}
+
 export async function createOrder(
   _prev: OrderActionState,
   formData: FormData
@@ -81,51 +88,79 @@ export async function createOrder(
     console.error('[createOrder] customerProfile upsert failed:', err instanceof Error ? err.name : 'UnknownError')
   }
 
-  const { orderId } = await prisma.$transaction(async (tx) => {
-    const order = await tx.order.create({
-      data: {
-        buyerName,
-        buyerEmail,
-        buyerPhone: buyerPhone ?? null,
-        notes: notes ?? null,
-        status: 'pending',
-        customerProfileId: profileId,
-      },
-    })
-
-    for (const listing of listings) {
-      await tx.orderItem.create({
-        data: {
-          orderId: order.id,
-          itemId: listing.itemId,
-          listingId: listing.id,
-          price: listing.price,
-          // 21B: mutable identity pointers + immutable sale-time snapshot, both
-          // copied from the authoritative ItemInstance in this same creation flow.
-          catalogModelId: listing.item.catalogId,
-          marketVariantId: listing.item.marketVariantId,
-          snapshotPackagingType: listing.item.cardedOrLoose,
-          snapshotCondition: listing.item.condition,
-          // 21C: every NEW OrderItem is captured live from the authoritative
-          // ItemInstance — never caller-supplied, never anything but 'sale_time'.
-          snapshotProvenance: 'sale_time',
-        },
-      })
-
+  let orderId: string
+  try {
+    const txResult = await prisma.$transaction(async (tx) => {
+      // Checkout reservation hotfix (28A follow-up): the findMany availability
+      // check above is a pre-filter only — under concurrent requests two
+      // transactions can both read 'available' before either commits. The
+      // conditional updateMany below (available -> reserved, count===1) is the
+      // ONLY real concurrency guard, so every reservation is acquired FIRST,
+      // before any persistent Order/OrderItem row exists — a losing
+      // reservation throws immediately and rolls back the whole transaction
+      // with nothing partially written (no Order, no OrderItem, no other
+      // item's reservation left behind).
+      //
       // Use listing.itemId (the FK stored directly on the Listing row) — not catalogId and not a
       // relation-derived id — because each physical ItemInstance is unique even when multiple items
       // share the same CatalogModel. Relation includes can resolve ambiguously in Prisma 5 + SQLite
       // when the same relation appears in both the where filter and the include.
-      await tx.itemInstance.update({
-        where: { id: listing.itemId },
-        data: { status: 'reserved' },
-      })
+      for (const listing of listings) {
+        const reserved = await tx.itemInstance.updateMany({
+          where: { id: listing.itemId, status: 'available' },
+          data: { status: 'reserved' },
+        })
+        if (reserved.count !== 1) {
+          throw new ListingUnavailableError()
+        }
+      }
       // Listing.status intentionally stays 'active'; ItemInstance.status = 'reserved' is the hold signal.
       // Browse filters out reserved items via the item.status = 'available' check.
-    }
 
-    return { orderId: order.id }
-  })
+      const order = await tx.order.create({
+        data: {
+          buyerName,
+          buyerEmail,
+          buyerPhone: buyerPhone ?? null,
+          notes: notes ?? null,
+          status: 'pending',
+          customerProfileId: profileId,
+        },
+      })
+
+      for (const listing of listings) {
+        await tx.orderItem.create({
+          data: {
+            orderId: order.id,
+            itemId: listing.itemId,
+            listingId: listing.id,
+            price: listing.price,
+            // 21B: mutable identity pointers + immutable sale-time snapshot, both
+            // copied from the authoritative ItemInstance in this same creation flow.
+            catalogModelId: listing.item.catalogId,
+            marketVariantId: listing.item.marketVariantId,
+            snapshotPackagingType: listing.item.cardedOrLoose,
+            snapshotCondition: listing.item.condition,
+            // 21C: every NEW OrderItem is captured live from the authoritative
+            // ItemInstance — never caller-supplied, never anything but 'sale_time'.
+            snapshotProvenance: 'sale_time',
+          },
+        })
+      }
+
+      return { orderId: order.id }
+    })
+    orderId = txResult.orderId
+  } catch (err) {
+    if (err instanceof ListingUnavailableError) {
+      return {
+        errors: {
+          form: ['One or more items are no longer available. Please review your cart and try again.'],
+        },
+      }
+    }
+    throw err
+  }
 
   return { success: true, orderId }
 }

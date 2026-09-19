@@ -39,11 +39,15 @@ function listingRow(overrides: Record<string, unknown> = {}) {
   }
 }
 
+// Checkout reservation hotfix: reservation now uses a conditional
+// updateMany (available -> reserved, count===1) as the concurrency guard,
+// not a plain update — see ordersReservation.test.ts for the dedicated
+// reservation-race coverage. Default mock here always "wins" the race.
 function makeTx(overrides: Record<string, unknown> = {}) {
   return {
     order: { create: vi.fn().mockResolvedValue({ id: 'order1' }) },
     orderItem: { create: vi.fn().mockResolvedValue({}) },
-    itemInstance: { update: vi.fn().mockResolvedValue({}) },
+    itemInstance: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
     ...overrides,
   }
 }
