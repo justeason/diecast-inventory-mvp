@@ -13,7 +13,7 @@
 //
 // No asks, no trend, no velocity, no supply/demand, no condition/variant
 // multipliers, no seller-offer logic — all deliberately out of scope for V1.
-import { prisma } from '@/lib/prisma'
+import { prisma, type DbClient } from '@/lib/prisma'
 import { getMarketSaleHistory, getMarketSaleHistoryForModels } from '@/lib/marketSaleQuery'
 import { ITEM_CONDITIONS } from '@/lib/itemMutations'
 import { subtractMonths } from '@/lib/externalMarketResearch'
@@ -49,6 +49,7 @@ async function resolveTierSelection(
   target: TierTarget,
   window: { startDate?: Date; endDate: Date },
   broad: { observations: TierSelection['observations']; hasMore: boolean },
+  client: DbClient,
 ): Promise<{ selection: TierSelection; sampleTruncated: boolean } | null> {
   if (!broad.hasMore) {
     const selection = selectTier(broad.observations, allowedTiers, target)
@@ -69,7 +70,7 @@ async function resolveTierSelection(
       ...(tier === 'model_variant_condition' ? { condition: target.condition! } : {}),
       ...window,
       limit: HISTORY_LIMIT,
-    })
+    }, client)
     if (targeted.observations.length > 0) {
       return { selection: { specificity: tier, observations: targeted.observations }, sampleTruncated: targeted.hasMore }
     }
@@ -127,7 +128,12 @@ export type ValuationResult =
       latestSaleAt: Date | null
     }
 
-export async function getValuation(input: ValuationInput): Promise<ValuationResult> {
+// 31B: optional trailing `client` (defaults to the global `prisma`) so
+// auto-listing's automation pricing decision can read valuation evidence
+// through its own open transaction — see src/lib/prisma.ts's DbClient. Every
+// existing caller (Market Model Page, Portfolio, Market Discovery, etc.) is
+// unaffected: the default preserves current behavior exactly.
+export async function getValuation(input: ValuationInput, client: DbClient = prisma): Promise<ValuationResult> {
   const asOf = input.asOf ?? new Date()
 
   // §5/§74: a condition filter requires marketVariantId — never pool Carded
@@ -148,7 +154,7 @@ export async function getValuation(input: ValuationInput): Promise<ValuationResu
   // §6/§75/§78: marketVariantId, if supplied, must belong to catalogModelId.
   // One validation query — never per-observation.
   if (input.marketVariantId !== undefined) {
-    const variant = await prisma.marketVariant.findUnique({
+    const variant = await client.marketVariant.findUnique({
       where: { id: input.marketVariantId },
       select: { catalogModelId: true },
     })
@@ -184,7 +190,7 @@ export async function getValuation(input: ValuationInput): Promise<ValuationResu
     startDate: windowStart,
     endDate: asOf,
     limit: HISTORY_LIMIT,
-  })
+  }, client)
 
   const primaryResolved = await resolveTierSelection(
     input.catalogModelId,
@@ -192,6 +198,7 @@ export async function getValuation(input: ValuationInput): Promise<ValuationResu
     target,
     { startDate: windowStart, endDate: asOf },
     primary,
+    client,
   )
 
   let selection = primaryResolved?.selection ?? null
@@ -210,13 +217,14 @@ export async function getValuation(input: ValuationInput): Promise<ValuationResu
       catalogModelId: input.catalogModelId,
       endDate: asOf,
       limit: HISTORY_LIMIT,
-    })
+    }, client)
     const extendedResolved = await resolveTierSelection(
       input.catalogModelId,
       allowedTiers,
       target,
       { endDate: asOf },
       extended,
+      client,
     )
     selection = extendedResolved?.selection ?? null
     if (selection) {

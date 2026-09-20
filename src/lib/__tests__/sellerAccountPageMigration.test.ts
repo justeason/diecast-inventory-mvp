@@ -62,9 +62,20 @@ describe('27B §77/§90: customer seller route no longer uses legacy pricing eng
     expect(readSrc('src/app/(admin)/admin/valuation/models/[id]/page.tsx')).toMatch(/getPricingIntelligence/)
   })
 
-  it('admin auto-listing/ready-to-list/intake-exception automation still imports pricingIntelligenceQuery — untouched by 27B', () => {
-    expect(readSrc('src/lib/autoListingExecution.ts')).toContain('pricingIntelligenceQuery')
+  it('ready-to-list/intake-exception automation still imports pricingIntelligenceQuery — untouched by 27B, and by 31B (§61 — no migration unless trivial/zero-UI-impact)', () => {
     expect(readSrc('src/lib/readyToListQuery.ts')).toContain('pricingIntelligenceQuery')
+  })
+
+  // 31B: autoListingExecution.ts is the one production path where pricing output
+  // directly becomes Listing.price — the load-bearing consumer 31B migrates onto
+  // canonical Pricing Intelligence V2. It no longer imports the legacy 14C stack at
+  // all; readyToListQuery.ts above remains a legitimate, unmigrated legacy consumer.
+  it('31B: auto-listing execution no longer imports pricingIntelligenceQuery/legacy pricing — migrated to canonical getPricingContext/evaluateAutoListingPricingV2', () => {
+    const execCode = stripComments(readSrc('src/lib/autoListingExecution.ts'))
+    expect(execCode).not.toContain('pricingIntelligenceQuery')
+    expect(execCode).not.toMatch(/getPricingIntelligence\(/)
+    expect(execCode).toContain("from '@/lib/pricingContext'")
+    expect(execCode).toContain("from '@/lib/autoListingPricingV2'")
   })
 })
 

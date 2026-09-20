@@ -7,16 +7,25 @@
 // RiskApprovalRequest rows, which automation must never do (Part T). A new Listing
 // is only ever created via listingActivation.ts's createListingAtomic — the one
 // authoritative boundary shared with the interactive path (Part G).
+//
+// 31B: candidate pricing migrated off the legacy 14C stack (pricingIntelligenceQuery)
+// onto canonical Pricing Intelligence V2 — getPricingContext (23B getValuation +
+// 24B getInternalAskSummary, both transaction-aware) + evaluateAutoListingPricingV2
+// (pure, hard-coded safety invariants: exact requested specificity, no cross-model
+// evidence, no external asks, canonical Medium/High confidence only). No legacy
+// fallback on failure/insufficiency — review_required is the only outcome besides a
+// clean automated listing.
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { searchReadyToListPage, getItemReadyToListStatus } from '@/lib/readyToListQuery'
 import type { ItemSearchFilter } from '@/lib/itemLifecycleQuery'
 import type { ReadyToListOutcome } from '@/lib/readyToList'
-import { getPricingIntelligence } from '@/lib/pricingIntelligenceQuery'
+import { getPricingContext, type PricingContext } from '@/lib/pricingContext'
+import { evaluateAutoListingPricingV2, type PricingDecisionReason } from '@/lib/autoListingPricingV2'
 import { getEffectiveRiskPolicy } from '@/lib/riskPolicyQuery'
 import { evaluateRiskPolicy, type RiskDecision } from '@/lib/riskPolicy'
 import { getEffectiveAutoListingPolicy, type AutoListingPolicyRow } from '@/lib/autoListingPolicyQuery'
-import { evaluateAutoListCandidate, type AutoListPricingInput, type AutoListIneligibleReasonCode } from '@/lib/autoListing'
+import { deriveListingTitle } from '@/lib/autoListing'
 import { buildListingActivationContext, createListingAtomic } from '@/lib/listingActivation'
 
 export const AUTO_LIST_BATCH_SIZE = 25
@@ -30,8 +39,16 @@ export const AUTO_LIST_RUN_TIME_BUDGET_MS = 20_000
 const EMPTY_ITEM_FILTER: ItemSearchFilter = { q: '', status: '', condition: '', cardedOrLoose: '', sort: 'sku' }
 
 export type AutoListAttemptOutcome = 'listed' | 'review_required' | 'denied' | 'already_listed' | 'stale' | 'failed'
+// 31B: the 3 non-pricing orchestration gates this module still owns directly
+// (policy enable/disable, create-only listingPath, derivable title) — kept
+// local since they are pure execution-flow concerns, not pricing facts.
+export type AutoListOrchestrationReasonCode =
+  | 'policy_disabled'
+  | 'reactivation_requires_manual_review'
+  | 'required_listing_field_missing'
 export type AutoListReasonCode =
-  | AutoListIneligibleReasonCode
+  | AutoListOrchestrationReasonCode
+  | PricingDecisionReason
   | 'auto_listed'
   | 'readiness_changed'
   | 'risk_approval_required'
@@ -51,9 +68,33 @@ function snapshotReadiness(outcome: ReadyToListOutcome | null): Prisma.InputJson
   }
 }
 
-function snapshotPricing(p: AutoListPricingInput): Prisma.InputJsonValue {
-  if (!p) return { available: false }
-  return { isAskOnly: p.isAskOnly, confidenceLevel: p.confidenceLevel, recommendedLowCents: p.recommendedLowCents, recommendedHighCents: p.recommendedHighCents }
+// 31B: small, scalar decision-facts only (31A §59) — never raw sale
+// histories/full Ask Depth. Covers the audit's minimum explainability set:
+// candidate context, Market Range, confidence, requested/resolved
+// specificity, usedSampleCount, extendedHistoryUsed, pricePositionBps, asOf.
+function snapshotPricingContext(context: PricingContext, pricePositionBps: number): Prisma.InputJsonValue {
+  const v = context.valuation
+  return {
+    asOf: context.asOf.toISOString(),
+    valuationStatus: v.status,
+    ...(v.status === 'valued'
+      ? {
+          estimatedValueCents: v.estimatedValueCents,
+          marketRangeLowCents: v.marketRangeLowCents,
+          marketRangeHighCents: v.marketRangeHighCents,
+          confidence: v.confidence,
+          specificity: v.specificity,
+          primarySpecificity: v.primarySpecificity,
+          extendedHistoryUsed: v.extendedHistoryUsed,
+          usedSampleCount: v.usedSampleCount,
+          rawSampleCount: v.rawSampleCount,
+          excludedOutlierCount: v.excludedOutlierCount,
+        }
+      : {}),
+    lowestAskCents: context.askSummary.lowestAskCents,
+    availableCopies: context.askSummary.availableCopies,
+    pricePositionBps,
+  }
 }
 
 function snapshotRisk(decision: RiskDecision): Prisma.InputJsonValue {
@@ -101,7 +142,10 @@ async function recordAttempt(params: {
 }
 
 const EXECUTION_ITEM_SELECT = {
-  id: true, status: true, catalogId: true,
+  // 31B: marketVariantId/condition added — the strongest canonical request
+  // (CatalogModel + MarketVariant + condition, 31A §13) automated pricing
+  // must use; never downgraded merely to obtain more evidence.
+  id: true, status: true, catalogId: true, marketVariantId: true, condition: true,
   listing: { select: { id: true } },
   sellerAgreement: { select: { type: true, agreedBuyoutAmount: true, acceptedItemCount: true } },
   catalog: { select: { brand: true, name: true, year: true } },
@@ -109,26 +153,27 @@ const EXECUTION_ITEM_SELECT = {
 
 // Part K — per-item revalidation. Preview state is NEVER trusted.
 //
-// 15K (execution-snapshot pass): the ORIGINAL implementation fetched 14C pricing via
+// 15K (execution-snapshot pass): the ORIGINAL implementation fetched pricing via
 // the plain global `prisma` client, then — after further sequential work (policy
 // eligibility, 15F evaluation) — opened a SEPARATE later transaction just to create
 // the Listing. That left a real gap: completed sales, external sold observations, or
 // active asks could change in between, so the Listing could be created from pricing
 // evidence that was no longer current, even though nothing in the code detected it.
 // An ItemInstance row lock does NOT lock the OrderItem/ExternalMarketObservation/
-// Listing rows 14C reads.
+// Listing rows the pricing read touches.
 //
-// Fixed by moving readiness-critical re-verification, 14C pricing, 15K eligibility,
-// 15F evaluation, Listing creation, and the AutoListingAttempt write ALL inside ONE
-// SERIALIZABLE transaction, using that transaction's client (`tx`) for the 14C reads
-// (via getPricingIntelligence's now-transaction-aware `client` param — see
-// pricingIntelligenceQuery.ts). Under SERIALIZABLE, Postgres itself detects if a
-// concurrent transaction wrote to any row this transaction read (pricing evidence
-// included) in a way that would break serializability, and aborts this transaction
-// with a serialization-failure error (Prisma P2034) rather than letting it commit —
-// so a Listing can never be created from evidence that was concurrently invalidated.
-// We do NOT blindly retry on that error (Part 1) — it is reported as `stale` and the
-// item is simply picked up again by the next run's fresh 15J/14C read.
+// Fixed by moving readiness-critical re-verification, pricing, eligibility,
+// 15F risk evaluation, Listing creation, and the AutoListingAttempt write ALL inside
+// ONE SERIALIZABLE transaction, using that transaction's client (`tx`) for every
+// canonical pricing read (31B: getPricingContext threads `tx` into both
+// getValuation and getInternalAskSummary — see pricingContext.ts). Under
+// SERIALIZABLE, Postgres itself detects if a concurrent transaction wrote to any row
+// this transaction read (pricing evidence included) in a way that would break
+// serializability, and aborts this transaction with a serialization-failure error
+// (Prisma P2034) rather than letting it commit — so a Listing can never be created
+// from evidence that was concurrently invalidated. We do NOT blindly retry on that
+// error (Part 1) — it is reported as `stale` and the item is simply picked up again
+// by the next run's fresh 15J/pricing read.
 async function processAutoListCandidate(
   runId: string, itemId: string, policy: AutoListingPolicyRow, asOf: Date,
 ): Promise<AutoListAttemptOutcome> {
@@ -167,51 +212,76 @@ async function processAutoListCandidate(
         return 'stale' as const
       }
 
-      // 2. Transaction-aware 14C pricing (Part 1 fix) — the SAME transaction, so
-      // there is no gap between reading evidence and creating the Listing below.
-      const intel = await getPricingIntelligence(item.catalogId, asOf, tx)
-      const pricingInput: AutoListPricingInput = intel
-        ? { isAskOnly: intel.isAskOnly, confidenceLevel: intel.confidence.level, recommendedLowCents: intel.recommendedListing.lowCents, recommendedHighCents: intel.recommendedListing.highCents }
-        : null
-      const pricingSnapshot = snapshotPricing(pricingInput)
-
-      // 3. Auto-list-specific eligibility (Part C).
-      const candidate = evaluateAutoListCandidate({ policy, listingPath: preReadiness.listingPath, pricing: pricingInput, catalog: item.catalog })
-      if (!candidate.eligible) {
-        await tx.autoListingAttempt.create({ data: buildAttemptData(runId, itemId, 'review_required', candidate.reasonCode, readinessSnapshot, pricingSnapshot, null, null, null) })
+      // 2. Non-pricing orchestration gates (kept local — 31B §32/§34).
+      if (!policy.enabled) {
+        await tx.autoListingAttempt.create({ data: buildAttemptData(runId, itemId, 'review_required', 'policy_disabled', readinessSnapshot, null, null, null, null) })
+        return 'review_required' as const
+      }
+      // First-version scope is listingPath 'create' only — 'reactivate' always
+      // goes to manual review regardless of how strong the pricing evidence is.
+      if (preReadiness.listingPath !== 'create') {
+        await tx.autoListingAttempt.create({ data: buildAttemptData(runId, itemId, 'review_required', 'reactivation_requires_manual_review', readinessSnapshot, null, null, null, null) })
         return 'review_required' as const
       }
 
-      // 4. Server-rebuilt 15F risk context, using the SAME intel as the price above
-      // (never a client-supplied decision/confidence/range — Part T section 61).
-      // PURE evaluation only — checkRiskGate is deliberately never called here,
-      // since it would create/consume a RiskApprovalRequest row.
-      const riskContext = buildListingActivationContext(itemId, item.catalogId, candidate.proposedPriceCents, intel?.estimatedValueCents ?? null, item.sellerAgreement)
+      // 3. Canonical Pricing Intelligence V2 (31B) — the SAME transaction, so
+      // there is no gap between reading evidence and creating the Listing below.
+      // Strongest available specificity request (31A §13): CatalogModel +
+      // MarketVariant + condition, never downgraded to obtain more evidence.
+      const context = await getPricingContext(
+        { catalogModelId: item.catalogId, marketVariantId: item.marketVariantId, condition: item.condition, asOf },
+        tx,
+      )
+      const pricingSnapshot = snapshotPricingContext(context, policy.pricePositionBps)
+
+      const decision = evaluateAutoListingPricingV2(context, {
+        pricePositionBps: policy.pricePositionBps,
+        minimumPricingConfidence: policy.minimumPricingConfidence,
+      })
+      if (!decision.eligible) {
+        await tx.autoListingAttempt.create({ data: buildAttemptData(runId, itemId, 'review_required', decision.decisionReasons[0], readinessSnapshot, pricingSnapshot, null, null, null) })
+        return 'review_required' as const
+      }
+
+      const title = deriveListingTitle(item.catalog)
+      if (!title) {
+        await tx.autoListingAttempt.create({ data: buildAttemptData(runId, itemId, 'review_required', 'required_listing_field_missing', readinessSnapshot, pricingSnapshot, decision.candidatePriceCents, null, null) })
+        return 'review_required' as const
+      }
+
+      // 4. Server-rebuilt 15F risk context, using the SAME canonical valuation as
+      // the price above (never a client-supplied decision/confidence/range —
+      // Part T section 61). PURE evaluation only — checkRiskGate is deliberately
+      // never called here, since it would create/consume a RiskApprovalRequest row.
+      const canonicalEstimatedValueCents = context.valuation.status === 'valued' ? context.valuation.estimatedValueCents : null
+      const riskContext = buildListingActivationContext(itemId, item.catalogId, decision.candidatePriceCents, canonicalEstimatedValueCents, item.sellerAgreement)
       const riskPolicy = await getEffectiveRiskPolicy(asOf)
       if (!riskPolicy) throw new Error('No effective risk policy is configured — the 15F migration seed should always provide one.')
-      const decision = evaluateRiskPolicy({ action: 'listing_activation', context: riskContext, policy: riskPolicy, asOf })
-      const riskSnapshot = snapshotRisk(decision)
+      const riskDecision = evaluateRiskPolicy({ action: 'listing_activation', context: riskContext, policy: riskPolicy, asOf })
+      const riskSnapshot = snapshotRisk(riskDecision)
 
-      if (decision.outcome === 'deny') {
-        await tx.autoListingAttempt.create({ data: buildAttemptData(runId, itemId, 'denied', 'risk_denied', readinessSnapshot, pricingSnapshot, candidate.proposedPriceCents, riskSnapshot, null) })
+      if (riskDecision.outcome === 'deny') {
+        await tx.autoListingAttempt.create({ data: buildAttemptData(runId, itemId, 'denied', 'risk_denied', readinessSnapshot, pricingSnapshot, decision.candidatePriceCents, riskSnapshot, null) })
         return 'denied' as const
       }
-      if (decision.outcome === 'require_approval') {
+      if (riskDecision.outcome === 'require_approval') {
         // Part G section 16 / Part T: automation stops here. No RiskApprovalRequest
         // is created — the admin can still list manually, which may create the
         // appropriate approval through the existing interactive path.
-        await tx.autoListingAttempt.create({ data: buildAttemptData(runId, itemId, 'review_required', 'risk_approval_required', readinessSnapshot, pricingSnapshot, candidate.proposedPriceCents, riskSnapshot, null) })
+        await tx.autoListingAttempt.create({ data: buildAttemptData(runId, itemId, 'review_required', 'risk_approval_required', readinessSnapshot, pricingSnapshot, decision.candidatePriceCents, riskSnapshot, null) })
         return 'review_required' as const
       }
 
       // 5. Execute — same transaction, same snapshot. The row lock plus
       // Listing.itemId's unique constraint are the PRIMARY concurrency guarantee;
       // createListingAtomic's own P2002 catch is only a defensive backstop.
-      const created = await createListingAtomic(tx, { itemId, catalogId: item.catalogId, title: candidate.title, price: candidate.proposedPriceCents / 100, description: null })
+      // §50/§51: candidatePriceCents -> Listing.price dollars ONLY at this final
+      // write boundary — no earlier Float pricing math, no merchandising rounding.
+      const created = await createListingAtomic(tx, { itemId, catalogId: item.catalogId, title, price: decision.candidatePriceCents / 100, description: null })
       const outcome = created.ok ? 'listed' as const : 'already_listed' as const
       const reasonCode = created.ok ? 'auto_listed' as const : 'already_listed' as const
       await tx.autoListingAttempt.create({
-        data: buildAttemptData(runId, itemId, outcome, reasonCode, readinessSnapshot, pricingSnapshot, candidate.proposedPriceCents, riskSnapshot, created.ok ? created.id : null),
+        data: buildAttemptData(runId, itemId, outcome, reasonCode, readinessSnapshot, pricingSnapshot, decision.candidatePriceCents, riskSnapshot, created.ok ? created.id : null),
       })
       return outcome
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable })

@@ -18,7 +18,7 @@
 // fallback broadening. History returns exactly the eligible raw evidence for
 // the requested identity scope — nothing more.
 import { Prisma } from '@prisma/client'
-import { prisma } from '@/lib/prisma'
+import { prisma, type DbClient } from '@/lib/prisma'
 import { isValidPackagingType, type PackagingType } from '@/lib/marketVariant'
 import {
   normalizeInternalSale,
@@ -258,15 +258,21 @@ function buildExternalWhere(filter: Omit<BaseFilter, 'catalogModelId'> & { catal
 // the true top-`take` of the two-source union (a single source can contribute
 // at most `take` items to any top-`take` union slice), avoiding a two-source
 // cursor while staying correct if a future page is ever added.
+// 31B: optional trailing `client` (defaults to the global `prisma`) so a
+// caller holding an open transaction (auto-listing execution) can make this
+// read participate in its own transaction/isolation snapshot — see
+// src/lib/prisma.ts's DbClient. Every existing non-transactional caller is
+// unaffected: the default preserves current behavior exactly.
 export async function getMarketSaleHistory(
   filter: MarketSaleHistoryFilter,
+  client: DbClient = prisma,
 ): Promise<{ observations: MarketSaleObservation[]; hasMore: boolean }> {
   const take = Math.min(filter.limit ?? DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT)
   const { internal, external } = activeSources(filter)
 
   const [internalRows, externalRows] = await Promise.all([
     internal
-      ? prisma.orderItem.findMany({
+      ? client.orderItem.findMany({
           where: buildInternalWhere(filter),
           select: INTERNAL_SALE_SELECT,
           orderBy: [{ order: { completedAt: 'desc' } }, { id: 'asc' }],
@@ -274,7 +280,7 @@ export async function getMarketSaleHistory(
         })
       : Promise.resolve([]),
     external
-      ? prisma.externalMarketObservation.findMany({
+      ? client.externalMarketObservation.findMany({
           where: buildExternalWhere(filter),
           select: EXTERNAL_SALE_SELECT,
           orderBy: [{ soldAt: 'desc' }, { id: 'asc' }],

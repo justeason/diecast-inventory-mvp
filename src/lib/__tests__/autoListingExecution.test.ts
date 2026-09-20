@@ -1,7 +1,9 @@
-// 15K: behavioral coverage for the automation execution engine. Risk is mocked at
+// 15K/31B: behavioral coverage for the automation execution engine. Risk is mocked at
 // the PURE evaluateRiskPolicy/getEffectiveRiskPolicy boundary (never checkRiskGate —
 // this file also structurally proves checkRiskGate is never imported/called, since
-// automation must never create/consume a RiskApprovalRequest).
+// automation must never create/consume a RiskApprovalRequest). 31B: pricing mocked
+// at the getPricingContext/evaluateAutoListingPricingV2 boundary — the canonical V2
+// modules, replacing the legacy 14C getPricingIntelligence mock.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 type Mock = ReturnType<typeof vi.fn>
@@ -15,7 +17,8 @@ vi.mock('@/lib/prisma', () => ({
   },
 }))
 vi.mock('@/lib/readyToListQuery', () => ({ searchReadyToListPage: vi.fn(), getItemReadyToListStatus: vi.fn() }))
-vi.mock('@/lib/pricingIntelligenceQuery', () => ({ getPricingIntelligence: vi.fn() }))
+vi.mock('@/lib/pricingContext', () => ({ getPricingContext: vi.fn() }))
+vi.mock('@/lib/autoListingPricingV2', () => ({ evaluateAutoListingPricingV2: vi.fn() }))
 vi.mock('@/lib/riskPolicyQuery', () => ({ getEffectiveRiskPolicy: vi.fn() }))
 vi.mock('@/lib/riskPolicy', async () => {
   const actual = await vi.importActual<typeof import('@/lib/riskPolicy')>('@/lib/riskPolicy')
@@ -26,14 +29,18 @@ vi.mock('@/lib/listingActivation', () => ({ buildListingActivationContext: vi.fn
 // checkRiskGate/consumeApprovedRiskGate/markApprovalConsumed are deliberately NOT
 // mocked here at all — if autoListingExecution.ts ever imported them, this test file
 // would fail to even load without a mock, which is itself a useful tripwire.
+// pricingIntelligenceQuery/resaleEstimator are also NOT mocked — 31B's execution
+// engine must not import them at all (see autoListingSafety.test.ts for the
+// structural regression covering that).
 
 import { prisma } from '@/lib/prisma'
 import { searchReadyToListPage, getItemReadyToListStatus } from '@/lib/readyToListQuery'
-import { getPricingIntelligence } from '@/lib/pricingIntelligenceQuery'
+import { getPricingContext } from '@/lib/pricingContext'
+import { evaluateAutoListingPricingV2 } from '@/lib/autoListingPricingV2'
 import { getEffectiveRiskPolicy } from '@/lib/riskPolicyQuery'
 import { evaluateRiskPolicy } from '@/lib/riskPolicy'
 import { getEffectiveAutoListingPolicy } from '@/lib/autoListingPolicyQuery'
-import { createListingAtomic } from '@/lib/listingActivation'
+import { createListingAtomic, buildListingActivationContext } from '@/lib/listingActivation'
 import { runAutoListingBatch, previewAutoListingCandidates, AUTO_LIST_BATCH_SIZE } from '@/lib/autoListingExecution'
 
 beforeEach(() => vi.resetAllMocks())
@@ -41,8 +48,30 @@ afterEach(() => vi.restoreAllMocks())
 
 const POLICY = { id: 'policy1', version: 1, effectiveFrom: new Date(), enabled: true, minimumPricingConfidence: 'high' as const, pricePositionBps: 5000, notes: null, createdBy: 'admin', createdAt: new Date() }
 const READY_OUTCOME = (over: Record<string, unknown> = {}) => ({ status: 'ready', blockers: [], reviewReasons: [], listingPath: 'create', pricing: { status: 'supported', estimatedValueCents: 1500, confidenceLevel: 'high', isAskOnly: false }, ...over })
-const GOOD_INTEL = { isAskOnly: false, confidence: { level: 'high' }, recommendedListing: { lowCents: 1000, highCents: 2000 } }
-const ITEM_ROW = (over: Record<string, unknown> = {}) => ({ id: 'item1', status: 'available', catalogId: 'cat1', listing: null, sellerAgreement: null, catalog: { brand: 'Hot Wheels', name: 'GT3', year: 2024 }, ...over })
+const ITEM_ROW = (over: Record<string, unknown> = {}) => ({ id: 'item1', status: 'available', catalogId: 'cat1', marketVariantId: 'var1', condition: 'mint', listing: null, sellerAgreement: null, catalog: { brand: 'Hot Wheels', name: 'GT3', year: 2024 }, ...over })
+
+// low=1000 high=2000 at bps=5000 -> candidate 1500 cents == $15.00
+const VALUED = {
+  status: 'valued' as const,
+  catalogModelId: 'cat1', marketVariantId: 'var1', condition: 'mint',
+  estimatedValueCents: 1500,
+  marketRangeLowCents: 1000, marketRangeHighCents: 2000,
+  confidence: 'high' as const, specificity: 'model_variant_condition' as const, primarySpecificity: 'model_variant_condition' as const,
+  rawSampleCount: 10, usedSampleCount: 10, excludedOutlierCount: 0,
+  internalSampleCount: 8, externalSampleCount: 2,
+  asOf: new Date(), windowStart: new Date(),
+  extendedHistoryUsed: false, sampleTruncated: false,
+  method: 'median_sales' as const, outlierMethod: 'none' as const, fallbackReason: null,
+  latestSaleAt: new Date(),
+}
+const CONTEXT = {
+  valuation: VALUED,
+  askSummary: { lowestAskCents: 1200, medianAskCents: 1300, availableCopies: 2 },
+  specificityDisclosure: { requested: 'model_variant_condition' as const, resolved: 'model_variant_condition' as const, exactMatch: true },
+  evidenceDisclosure: { rawSampleCount: 10, usedSampleCount: 10, excludedOutlierCount: 0, internalSampleCount: 8, externalSampleCount: 2 },
+  asOf: new Date(),
+}
+const GOOD_DECISION = { eligible: true as const, candidatePriceCents: 1500, decisionReasons: ['eligible'] as const, pricingContext: CONTEXT }
 
 function mockTx(itemInstanceFresh: unknown, opts: { createResult?: { ok: boolean; id?: string }; attemptError?: unknown } = {}) {
   const tx = {
@@ -100,7 +129,7 @@ describe('runAutoListingBatch — per-item outcomes (Part K/25-27, Part C)', () 
     ;(getItemReadyToListStatus as Mock).mockResolvedValue({ ...READY_OUTCOME(), status: 'review_required' })
     const result = await runAutoListingBatch('admin', null)
     expect(result.stale).toBe(1)
-    expect(getPricingIntelligence).not.toHaveBeenCalled()
+    expect(getPricingContext).not.toHaveBeenCalled()
     expect(evaluateRiskPolicy).not.toHaveBeenCalled()
     expect(prisma.autoListingAttempt.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ outcome: 'stale', reasonCode: 'readiness_changed' }) }))
   })
@@ -121,30 +150,32 @@ describe('runAutoListingBatch — per-item outcomes (Part K/25-27, Part C)', () 
     mockTx(ITEM_ROW({ listing: { id: 'existing-listing' } }))
     const result = await runAutoListingBatch('admin', null)
     expect(result.alreadyListed).toBe(1)
-    expect(getPricingIntelligence).not.toHaveBeenCalled()
+    expect(getPricingContext).not.toHaveBeenCalled()
   })
 
-  it('ask-only pricing -> review_required/pricing_ask_only, never listed', async () => {
+  it('canonical valuation insufficient (including active-internal-ask-only supply) -> review_required/valuation_insufficient, never listed (31B §28 — intentional legacy-behavior change)', async () => {
     baseMocks()
     ;(searchReadyToListPage as Mock).mockResolvedValue({ items: [{ id: 'item1', sku: 'S1', brand: 'X', name: 'Y', status: 'available' }], nextCursor: null })
     ;(getItemReadyToListStatus as Mock).mockResolvedValue(READY_OUTCOME())
     const tx = mockTx(ITEM_ROW())
-    ;(getPricingIntelligence as Mock).mockResolvedValue({ ...GOOD_INTEL, isAskOnly: true })
+    ;(getPricingContext as Mock).mockResolvedValue(CONTEXT)
+    ;(evaluateAutoListingPricingV2 as Mock).mockReturnValue({ eligible: false, candidatePriceCents: null, decisionReasons: ['valuation_insufficient'], pricingContext: CONTEXT })
     const result = await runAutoListingBatch('admin', null)
     expect(result.reviewRequired).toBe(1)
     expect(evaluateRiskPolicy).not.toHaveBeenCalled()
-    expect(tx.autoListingAttempt.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ reasonCode: 'pricing_ask_only' }) }))
+    expect(tx.autoListingAttempt.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ reasonCode: 'valuation_insufficient' }) }))
   })
 
-  it('low confidence below policy minimum -> review_required/pricing_confidence_below_policy', async () => {
+  it('policy requires High confidence but canonical confidence is Medium -> review_required/policy_requires_high_confidence', async () => {
     baseMocks()
     ;(searchReadyToListPage as Mock).mockResolvedValue({ items: [{ id: 'item1', sku: 'S1', brand: 'X', name: 'Y', status: 'available' }], nextCursor: null })
     ;(getItemReadyToListStatus as Mock).mockResolvedValue(READY_OUTCOME())
     const tx = mockTx(ITEM_ROW())
-    ;(getPricingIntelligence as Mock).mockResolvedValue({ ...GOOD_INTEL, confidence: { level: 'medium' } })
+    ;(getPricingContext as Mock).mockResolvedValue(CONTEXT)
+    ;(evaluateAutoListingPricingV2 as Mock).mockReturnValue({ eligible: false, candidatePriceCents: null, decisionReasons: ['policy_requires_high_confidence'], pricingContext: CONTEXT })
     const result = await runAutoListingBatch('admin', null)
     expect(result.reviewRequired).toBe(1)
-    expect(tx.autoListingAttempt.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ reasonCode: 'pricing_confidence_below_policy' }) }))
+    expect(tx.autoListingAttempt.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ reasonCode: 'policy_requires_high_confidence' }) }))
   })
 
   it('15F deny -> denied, no listing created', async () => {
@@ -152,7 +183,8 @@ describe('runAutoListingBatch — per-item outcomes (Part K/25-27, Part C)', () 
     ;(searchReadyToListPage as Mock).mockResolvedValue({ items: [{ id: 'item1', sku: 'S1', brand: 'X', name: 'Y', status: 'available' }], nextCursor: null })
     ;(getItemReadyToListStatus as Mock).mockResolvedValue(READY_OUTCOME())
     mockTx(ITEM_ROW())
-    ;(getPricingIntelligence as Mock).mockResolvedValue(GOOD_INTEL)
+    ;(getPricingContext as Mock).mockResolvedValue(CONTEXT)
+    ;(evaluateAutoListingPricingV2 as Mock).mockReturnValue(GOOD_DECISION)
     ;(getEffectiveRiskPolicy as Mock).mockResolvedValue({ version: 1 })
     ;(evaluateRiskPolicy as Mock).mockReturnValue({ outcome: 'deny', reasons: ['nope'], policyCode: 'x' })
     const result = await runAutoListingBatch('admin', null)
@@ -165,7 +197,8 @@ describe('runAutoListingBatch — per-item outcomes (Part K/25-27, Part C)', () 
     ;(searchReadyToListPage as Mock).mockResolvedValue({ items: [{ id: 'item1', sku: 'S1', brand: 'X', name: 'Y', status: 'available' }], nextCursor: null })
     ;(getItemReadyToListStatus as Mock).mockResolvedValue(READY_OUTCOME())
     const tx = mockTx(ITEM_ROW())
-    ;(getPricingIntelligence as Mock).mockResolvedValue(GOOD_INTEL)
+    ;(getPricingContext as Mock).mockResolvedValue(CONTEXT)
+    ;(evaluateAutoListingPricingV2 as Mock).mockReturnValue(GOOD_DECISION)
     ;(getEffectiveRiskPolicy as Mock).mockResolvedValue({ version: 1 })
     ;(evaluateRiskPolicy as Mock).mockReturnValue({ outcome: 'require_approval', riskLevel: 'medium', reasons: ['high value'], policyCode: 'x' })
     const result = await runAutoListingBatch('admin', null)
@@ -174,25 +207,33 @@ describe('runAutoListingBatch — per-item outcomes (Part K/25-27, Part C)', () 
     expect(tx.autoListingAttempt.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ reasonCode: 'risk_approval_required' }) }))
   })
 
-  it('15F allow -> executes atomically: row lock, re-verify, tx-aware pricing, create, attempt row, all inside one SERIALIZABLE transaction', async () => {
+  it('15F allow -> executes atomically: row lock, re-verify, tx-aware V2 pricing, create, attempt row, all inside one SERIALIZABLE transaction', async () => {
     baseMocks()
     ;(searchReadyToListPage as Mock).mockResolvedValue({ items: [{ id: 'item1', sku: 'S1', brand: 'X', name: 'Y', status: 'available' }], nextCursor: null })
     ;(getItemReadyToListStatus as Mock).mockResolvedValue(READY_OUTCOME())
     const tx = mockTx(ITEM_ROW())
-    ;(getPricingIntelligence as Mock).mockResolvedValue(GOOD_INTEL)
+    ;(getPricingContext as Mock).mockResolvedValue(CONTEXT)
+    ;(evaluateAutoListingPricingV2 as Mock).mockReturnValue(GOOD_DECISION)
     ;(getEffectiveRiskPolicy as Mock).mockResolvedValue({ version: 1 })
     ;(evaluateRiskPolicy as Mock).mockReturnValue({ outcome: 'allow', reasons: [] })
     const result = await runAutoListingBatch('admin', null)
     expect(result.listed).toBe(1)
     expect(tx.$queryRaw).toHaveBeenCalled()
     // Pricing was read via the SAME tx client the item lock/create used — never the
-    // plain global prisma client (Part 1 fix).
-    expect(getPricingIntelligence).toHaveBeenCalledWith('cat1', expect.any(Date), tx)
+    // plain global prisma client (Part 1 fix), and at the strongest available
+    // specificity (31A §13): CatalogModel + MarketVariant + condition.
+    expect(getPricingContext).toHaveBeenCalledWith(
+      { catalogModelId: 'cat1', marketVariantId: 'var1', condition: 'mint', asOf: expect.any(Date) },
+      tx,
+    )
     expect(createListingAtomic).toHaveBeenCalledWith(tx, expect.objectContaining({ itemId: 'item1', catalogId: 'cat1', price: 15 }))
     expect(tx.autoListingAttempt.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ outcome: 'listed', listingId: 'listing1' }) }))
     // Serializable isolation is the isolation level actually requested.
     const txCallOpts = (prisma.$transaction as Mock).mock.calls[0][1]
     expect(txCallOpts?.isolationLevel).toBe('Serializable')
+    // 31A §39/31B §85: risk evaluation receives the CANONICAL EMV from V2's
+    // pricing context — never a legacy recommendedLow/high, never fabricated.
+    expect(buildListingActivationContext).toHaveBeenCalledWith('item1', 'cat1', 1500, 1500, null)
   })
 
   it('race: item became listed between the pre-check and the row lock -> already_listed, never a second Listing', async () => {
@@ -212,7 +253,7 @@ describe('runAutoListingBatch — per-item outcomes (Part K/25-27, Part C)', () 
     mockTx(ITEM_ROW({ status: 'reserved' }))
     const result = await runAutoListingBatch('admin', null)
     expect(result.stale).toBe(1)
-    expect(getPricingIntelligence).not.toHaveBeenCalled()
+    expect(getPricingContext).not.toHaveBeenCalled()
     expect(createListingAtomic).not.toHaveBeenCalled()
   })
 
@@ -221,31 +262,34 @@ describe('runAutoListingBatch — per-item outcomes (Part K/25-27, Part C)', () 
     ;(searchReadyToListPage as Mock).mockResolvedValue({ items: [{ id: 'item1', sku: 'S1', brand: 'X', name: 'Y', status: 'available' }], nextCursor: null })
     ;(getItemReadyToListStatus as Mock).mockResolvedValue(READY_OUTCOME())
     mockTx(ITEM_ROW(), { createResult: { ok: false } })
-    ;(getPricingIntelligence as Mock).mockResolvedValue(GOOD_INTEL)
+    ;(getPricingContext as Mock).mockResolvedValue(CONTEXT)
+    ;(evaluateAutoListingPricingV2 as Mock).mockReturnValue(GOOD_DECISION)
     ;(getEffectiveRiskPolicy as Mock).mockResolvedValue({ version: 1 })
     ;(evaluateRiskPolicy as Mock).mockReturnValue({ outcome: 'allow', reasons: [] })
     const result = await runAutoListingBatch('admin', null)
     expect(result.alreadyListed).toBe(1)
   })
 
-  it('pricing is read via getPricingIntelligence exactly ONCE per candidate — never "fetch twice and hope nothing changed" (Part 1 explicit prohibition)', async () => {
+  it('pricing is read via getPricingContext exactly ONCE per candidate — never "fetch twice and hope nothing changed" (Part 1 explicit prohibition)', async () => {
     baseMocks()
     ;(searchReadyToListPage as Mock).mockResolvedValue({ items: [{ id: 'item1', sku: 'S1', brand: 'X', name: 'Y', status: 'available' }], nextCursor: null })
     ;(getItemReadyToListStatus as Mock).mockResolvedValue(READY_OUTCOME())
     mockTx(ITEM_ROW())
-    ;(getPricingIntelligence as Mock).mockResolvedValue(GOOD_INTEL)
+    ;(getPricingContext as Mock).mockResolvedValue(CONTEXT)
+    ;(evaluateAutoListingPricingV2 as Mock).mockReturnValue(GOOD_DECISION)
     ;(getEffectiveRiskPolicy as Mock).mockResolvedValue({ version: 1 })
     ;(evaluateRiskPolicy as Mock).mockReturnValue({ outcome: 'allow', reasons: [] })
     await runAutoListingBatch('admin', null)
-    expect(getPricingIntelligence).toHaveBeenCalledTimes(1)
+    expect(getPricingContext).toHaveBeenCalledTimes(1)
   })
 
-  it('the successful attempt\'s pricingSnapshot/proposedPriceCents/riskSnapshot are all derived from the SAME intel object used to create the Listing — never a separately-fetched evidence set', async () => {
+  it('the successful attempt\'s pricingSnapshot/proposedPriceCents/riskSnapshot are all derived from the SAME context used to create the Listing — never a separately-fetched evidence set', async () => {
     baseMocks()
     ;(searchReadyToListPage as Mock).mockResolvedValue({ items: [{ id: 'item1', sku: 'S1', brand: 'X', name: 'Y', status: 'available' }], nextCursor: null })
     ;(getItemReadyToListStatus as Mock).mockResolvedValue(READY_OUTCOME())
     const tx = mockTx(ITEM_ROW())
-    ;(getPricingIntelligence as Mock).mockResolvedValue(GOOD_INTEL) // low=1000 high=2000 -> price 1500 at bps=5000
+    ;(getPricingContext as Mock).mockResolvedValue(CONTEXT)
+    ;(evaluateAutoListingPricingV2 as Mock).mockReturnValue(GOOD_DECISION) // candidate 1500 cents
     ;(getEffectiveRiskPolicy as Mock).mockResolvedValue({ version: 1 })
     ;(evaluateRiskPolicy as Mock).mockReturnValue({ outcome: 'allow', reasons: [] })
     await runAutoListingBatch('admin', null)
@@ -254,7 +298,22 @@ describe('runAutoListingBatch — per-item outcomes (Part K/25-27, Part C)', () 
     const createArgs = (createListingAtomic as Mock).mock.calls[0][1]
     expect(attemptData.proposedPriceCents).toBe(1500)
     expect(createArgs.price).toBe(15) // 1500 cents == $15.00, the SAME price
-    expect(attemptData.pricingSnapshot).toEqual({ isAskOnly: false, confidenceLevel: 'high', recommendedLowCents: 1000, recommendedHighCents: 2000 })
+    expect(attemptData.pricingSnapshot).toEqual(
+      expect.objectContaining({
+        valuationStatus: 'valued',
+        estimatedValueCents: 1500,
+        marketRangeLowCents: 1000,
+        marketRangeHighCents: 2000,
+        confidence: 'high',
+        specificity: 'model_variant_condition',
+        primarySpecificity: 'model_variant_condition',
+        extendedHistoryUsed: false,
+        usedSampleCount: 10,
+        lowestAskCents: 1200,
+        availableCopies: 2,
+        pricePositionBps: 5000,
+      }),
+    )
     expect(attemptData.listingId).toBe('listing1')
   })
 
@@ -263,7 +322,8 @@ describe('runAutoListingBatch — per-item outcomes (Part K/25-27, Part C)', () 
     ;(searchReadyToListPage as Mock).mockResolvedValue({ items: [{ id: 'item1', sku: 'S1', brand: 'X', name: 'Y', status: 'available' }], nextCursor: null })
     ;(getItemReadyToListStatus as Mock).mockResolvedValue(READY_OUTCOME())
     const tx = mockTx(ITEM_ROW())
-    ;(getPricingIntelligence as Mock).mockResolvedValue(GOOD_INTEL)
+    ;(getPricingContext as Mock).mockResolvedValue(CONTEXT)
+    ;(evaluateAutoListingPricingV2 as Mock).mockReturnValue(GOOD_DECISION)
     ;(getEffectiveRiskPolicy as Mock).mockResolvedValue({ version: 1 })
     ;(evaluateRiskPolicy as Mock).mockReturnValue({ outcome: 'deny', reasons: ['x'], policyCode: 'y' })
     await runAutoListingBatch('admin', null)
@@ -284,6 +344,17 @@ describe('runAutoListingBatch — per-item outcomes (Part K/25-27, Part C)', () 
     expect(result.stale).toBe(1)
     expect(createListingAtomic).not.toHaveBeenCalled()
     expect(prisma.autoListingAttempt.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ outcome: 'stale', reasonCode: 'serialization_conflict' }) }))
+  })
+
+  it('canonical pricing/context computation throwing technically -> no Listing, failed/execution_failed recorded, no legacy fallback attempted (31B §36/§37)', async () => {
+    baseMocks()
+    ;(searchReadyToListPage as Mock).mockResolvedValue({ items: [{ id: 'item1', sku: 'S1', brand: 'X', name: 'Y', status: 'available' }], nextCursor: null })
+    ;(getItemReadyToListStatus as Mock).mockResolvedValue(READY_OUTCOME())
+    ;(prisma.$transaction as Mock).mockImplementationOnce(async () => { throw new Error('boom') })
+    const result = await runAutoListingBatch('admin', null)
+    expect(result.failed).toBe(1)
+    expect(createListingAtomic).not.toHaveBeenCalled()
+    expect(prisma.autoListingAttempt.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ outcome: 'failed', reasonCode: 'execution_failed' }) }))
   })
 })
 
@@ -354,7 +425,8 @@ describe('runAutoListingBatch — idempotency (Part S/41-42)', () => {
     const p2002 = new Prisma.PrismaClientKnownRequestError('dup', { code: 'P2002', clientVersion: '5.22.0' })
     ;(searchReadyToListPage as Mock).mockResolvedValue({ items: [{ id: 'item1', sku: 'S1', brand: 'X', name: 'Y', status: 'available' }], nextCursor: null })
     ;(getItemReadyToListStatus as Mock).mockResolvedValue(READY_OUTCOME())
-    ;(getPricingIntelligence as Mock).mockResolvedValue(GOOD_INTEL)
+    ;(getPricingContext as Mock).mockResolvedValue(CONTEXT)
+    ;(evaluateAutoListingPricingV2 as Mock).mockReturnValue(GOOD_DECISION)
     ;(getEffectiveRiskPolicy as Mock).mockResolvedValue({ version: 1 })
     ;(evaluateRiskPolicy as Mock).mockReturnValue({ outcome: 'allow', reasons: [] })
     ;(prisma.$transaction as Mock).mockImplementationOnce(async (cb: (tx: unknown) => unknown) => {

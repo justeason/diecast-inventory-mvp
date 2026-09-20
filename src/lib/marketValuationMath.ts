@@ -11,7 +11,12 @@ export type ValuationConfidence = 'high' | 'medium' | 'low'
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000
 const OUTLIER_MIN_SAMPLE = 5
-const RANGE_MIN_SAMPLE = 5
+// 31B: exported so evaluateAutoListingPricingV2 can defensively re-verify
+// Market Range/sample consistency without inventing a second, lower
+// threshold — the canonical V1 definition (computeMarketRange below) is the
+// single source of truth for "how many used samples does a real Market Range
+// require."
+export const RANGE_MIN_SAMPLE = 5
 const RECENCY_THRESHOLD_DAYS = 90
 const HIGH_DISPERSION_RATIO = 0.5
 

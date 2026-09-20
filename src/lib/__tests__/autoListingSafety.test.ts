@@ -101,10 +101,10 @@ describe('Part T/section 61 — no client-supplied risk/pricing bypass', () => {
     expect(execSrc).not.toMatch(/await buildListingActivationContext\(/) // no longer async — see listingActivation.ts
   })
 
-  it('pricing is always re-fetched fresh via getPricingIntelligence INSIDE the SERIALIZABLE transaction, using that transaction\'s own client — never the plain global prisma client, never taken from the 15J preview outcome\'s reduced pricing summary (Part 1 execution-snapshot fix)', () => {
+  it('31B: pricing is always re-fetched fresh via canonical getPricingContext INSIDE the SERIALIZABLE transaction, using that transaction\'s own client — never the plain global prisma client, never taken from the 15J preview outcome\'s reduced pricing summary (Part 1 execution-snapshot fix)', () => {
     const fnStart = execSrc.indexOf('async function processAutoListCandidate')
     const fnSrc = execSrc.slice(fnStart)
-    expect(fnSrc).toContain('await getPricingIntelligence(item.catalogId, asOf, tx)')
+    expect(fnSrc).toContain('await getPricingContext(')
     expect(fnSrc).toContain('Prisma.TransactionIsolationLevel.Serializable')
   })
 })
@@ -169,5 +169,44 @@ describe('Part V/section 45-46 — nav / inventory hub integration', () => {
   it('the command center (/admin) is unchanged by 15K — no new card was added there', () => {
     const opsQuerySrc = readSrc('src/lib/adminOperationsQuery.ts')
     expect(opsQuerySrc).not.toMatch(/autoListing/i)
+  })
+})
+
+describe('31B — cross-model prohibition at the execution-engine level (§16/§56/§63/§71)', () => {
+  it('autoListingExecution.ts never imports resaleEstimator/advancedValuation/pricingIntelligence/externalMarketResearch — the legacy cross-model hierarchy is structurally unreachable from automation', () => {
+    expect(execSrc).not.toMatch(/from ['"]@\/lib\/resaleEstimator['"]/)
+    expect(execSrc).not.toMatch(/from ['"]@\/lib\/advancedValuation(Query)?['"]/)
+    expect(execSrc).not.toMatch(/from ['"]@\/lib\/pricingIntelligence(Query)?['"]/)
+    expect(execSrc).not.toMatch(/from ['"]@\/lib\/externalMarketResearch['"]/)
+  })
+
+  it('autoListingExecution.ts imports canonical V2 pricing modules instead', () => {
+    expect(execSrc).toContain("from '@/lib/pricingContext'")
+    expect(execSrc).toContain("from '@/lib/autoListingPricingV2'")
+  })
+
+  it('no policy-configurable toggle exists for cross-model fallback or external-ask usage — the V2 safety invariants are hard-coded, never a policy knob (31A §56)', () => {
+    const decisionSrc = readSrc('src/lib/autoListingPricingV2.ts')
+    expect(decisionSrc).not.toMatch(/allowCrossModel|allowExternalAsk|crossModelFallback|externalAskToggle/i)
+    expect(policySrc).not.toMatch(/allowCrossModel|allowExternalAsk|crossModelFallback|externalAskToggle/i)
+  })
+})
+
+describe('31B — legacy admin consumers remain legitimately unmigrated (§60/§86)', () => {
+  it('readyToListQuery.ts and intake-exception admin pricing display still import the legacy 14C stack — NOT migrated in 31B (Series 32 scope)', () => {
+    expect(readSrc('src/lib/readyToListQuery.ts')).toContain('pricingIntelligenceQuery')
+    expect(readSrc('src/lib/intakeExceptionQueueQuery.ts')).toMatch(/pricingIntelligenceQuery|getPricingIntelligence/)
+  })
+
+  it('admin resale-estimator/valuation pages still import the legacy engines — untouched by 31B', () => {
+    expect(readSrc('src/app/(admin)/admin/resale-estimator/page.tsx')).toContain('computeEstimate')
+    expect(readSrc('src/app/(admin)/admin/valuation/models/[id]/page.tsx')).toMatch(/getPricingIntelligence/)
+  })
+
+  it('legacy engine FILES still exist — not deleted by 31B', () => {
+    expect(fs.existsSync(path.join(process.cwd(), 'src/lib/resaleEstimator.ts'))).toBe(true)
+    expect(fs.existsSync(path.join(process.cwd(), 'src/lib/advancedValuation.ts'))).toBe(true)
+    expect(fs.existsSync(path.join(process.cwd(), 'src/lib/pricingIntelligence.ts'))).toBe(true)
+    expect(fs.existsSync(path.join(process.cwd(), 'src/lib/externalMarketResearch.ts'))).toBe(true)
   })
 })

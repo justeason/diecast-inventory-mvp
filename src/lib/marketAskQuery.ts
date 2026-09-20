@@ -3,7 +3,7 @@
 // visible opportunity, never executed-sale evidence; internal and external asks
 // stay distinct (external asks never affect CollectNTrades Lowest Ask, 22A §42).
 import { Prisma } from '@prisma/client'
-import { prisma } from '@/lib/prisma'
+import { prisma, type DbClient } from '@/lib/prisma'
 import { isValidPackagingType, type PackagingType } from '@/lib/marketVariant'
 import { normalizeExternalComparableIdentity, EXTERNAL_COMPARABLE_SELECT, type ExternalComparableInput } from '@/lib/normalizedExternalComparable'
 import { internalPriceToCents, externalPriceToCents } from '@/lib/marketMoney'
@@ -120,25 +120,30 @@ export type InternalAskSummary = {
 
 const ASK_SUMMARY_ORDER_BY: Prisma.ListingOrderByWithRelationInput[] = [{ price: 'asc' }, { id: 'asc' }]
 
+// 31B: optional trailing `client` (defaults to the global `prisma`) so
+// auto-listing's automation pricing decision can read current supply through
+// its own open transaction, for the same coherent snapshot as the valuation
+// read — see src/lib/prisma.ts's DbClient. Every existing caller is
+// unaffected: the default preserves current behavior exactly.
 export async function getInternalAskSummary(filter: {
   catalogModelId: string
   marketVariantId?: string
-}): Promise<InternalAskSummary> {
+}, client: DbClient = prisma): Promise<InternalAskSummary> {
   const where = buildInternalAskWhere(filter)
 
-  const availableCopies = await prisma.listing.count({ where })
+  const availableCopies = await client.listing.count({ where })
   if (availableCopies === 0) {
     return { lowestAskCents: null, medianAskCents: null, availableCopies: 0 }
   }
 
-  const lowest = await prisma.listing.findFirst({ where, orderBy: ASK_SUMMARY_ORDER_BY, select: { price: true } })
+  const lowest = await client.listing.findFirst({ where, orderBy: ASK_SUMMARY_ORDER_BY, select: { price: true } })
   const lowestAskCents = lowest ? internalPriceToCents(lowest.price) : null
 
   let medianAskCents: number | null
   if (availableCopies === 1) {
     medianAskCents = lowestAskCents
   } else if (availableCopies % 2 === 1) {
-    const mid = await prisma.listing.findFirst({
+    const mid = await client.listing.findFirst({
       where,
       orderBy: ASK_SUMMARY_ORDER_BY,
       skip: (availableCopies - 1) / 2,
@@ -146,7 +151,7 @@ export async function getInternalAskSummary(filter: {
     })
     medianAskCents = mid ? internalPriceToCents(mid.price) : null
   } else {
-    const pair = await prisma.listing.findMany({
+    const pair = await client.listing.findMany({
       where,
       orderBy: ASK_SUMMARY_ORDER_BY,
       skip: availableCopies / 2 - 1,
