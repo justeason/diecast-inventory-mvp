@@ -2,6 +2,7 @@
 
 import { useActionState, useState } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import type { CatalogModel, ItemInstance, Listing, StorageLocation } from '@prisma/client'
 import { createListing, updateListing, type ListingActionState } from '@/lib/actions/listings'
 import { Button } from '@/components/admin/ui/Button'
@@ -12,6 +13,9 @@ import {
   type ConsignmentPreview,
 } from '@/lib/sellerAgreementInventory'
 import { formatCommissionDisplay } from '@/lib/sellerAgreementDisplay'
+import type { AdminPricingContext } from '@/lib/adminPricingContext'
+import { AdminPricingContextPanel } from '@/components/admin/AdminPricingContext'
+import { parsePriceInputToCents } from '@/lib/adminPricingDisplay'
 
 // ---------- shared types ----------
 
@@ -206,13 +210,29 @@ function ConsignmentPricingPanel({
 type CreateProps = {
   items: ItemWithRelations[]
   preSelectedItem: ItemWithRelations | null
+  // Follow-up §3: canonical market context, fetched server-side for exactly
+  // the item identified by the page's ?itemId= — kept in sync with the
+  // picker below via router.replace on selection (never every eligible
+  // item — see §70 batch-query discipline). null either means no item is
+  // selected yet, OR the fetch technically failed for the selected item
+  // (AdminPricingContextPanel renders the neutral unavailable state either
+  // way once `showPricingContext` gates on a real selection).
+  adminPricingContext: AdminPricingContext | null
 }
 
-export function CreateListingForm({ items, preSelectedItem }: CreateProps) {
+export function CreateListingForm({ items, preSelectedItem, adminPricingContext }: CreateProps) {
+  const router = useRouter()
   const [selectedItem, setSelectedItem] = useState<ItemWithRelations | null>(preSelectedItem)
   const [title, setTitle] = useState(preSelectedItem ? generateTitle(preSelectedItem) : '')
   const [price, setPrice] = useState(preSelectedItem?.listPrice?.toString() ?? '')
   const [state, formAction, isPending] = useActionState<ListingActionState, FormData>(createListing, null)
+  // Follow-up §3/§4: true once the server's ?itemId= (preSelectedItem) has
+  // caught up with the locally selected item — false during the brief gap
+  // right after selection (avoids showing stale/wrong-item pricing), and
+  // false when nothing is selected. router.replace (not push) updates props
+  // in place without remounting this component, so title/price/description
+  // state the admin already typed is never discarded by this navigation.
+  const showPricingContext = !!selectedItem && selectedItem.id === preSelectedItem?.id
 
   const itemOptions = items.map((item) => ({
     value: item.id,
@@ -224,6 +244,10 @@ export function CreateListingForm({ items, preSelectedItem }: CreateProps) {
     setSelectedItem(item)
     setTitle(item ? generateTitle(item) : '')
     setPrice(item?.listPrice?.toString() ?? '')
+    // Follow-up §3: navigate so the server fetches exactly this item's
+    // canonical pricing context — never a client pricing API, never N x
+    // getAdminPricingContext, never a fetch on price keystrokes.
+    router.replace(item ? `/admin/listings/new?itemId=${item.id}` : '/admin/listings/new')
   }
 
   if (items.length === 0) {
@@ -249,6 +273,15 @@ export function CreateListingForm({ items, preSelectedItem }: CreateProps) {
       />
 
       {selectedItem && <ItemSummary item={selectedItem} />}
+
+      {showPricingContext && (
+        <AdminPricingContextPanel
+          context={adminPricingContext}
+          heading="Market Pricing"
+          comparePriceCents={parsePriceInputToCents(price)}
+          comparePriceLabel="Entered Listing Price"
+        />
+      )}
 
       {selectedItem?.consignmentContext && (
         <ConsignmentPricingPanel
@@ -310,9 +343,14 @@ export function CreateListingForm({ items, preSelectedItem }: CreateProps) {
 type EditProps = {
   listing: ListingWithItem
   consignmentContext?: ConsignmentContextForListing | null
+  // Follow-up §1/§5: null means the optional pricing enrichment fetch
+  // technically failed — AdminPricingContextPanel renders the neutral
+  // unavailable state; price/title/description/payout preview/submit all
+  // stay usable regardless.
+  adminPricingContext: AdminPricingContext | null
 }
 
-export function EditListingForm({ listing, consignmentContext }: EditProps) {
+export function EditListingForm({ listing, consignmentContext, adminPricingContext }: EditProps) {
   const action = updateListing.bind(null, listing.id)
   const [state, formAction, isPending] = useActionState<ListingActionState, FormData>(action, null)
   const [priceForPreview, setPriceForPreview] = useState(listing.price.toString())
@@ -320,6 +358,13 @@ export function EditListingForm({ listing, consignmentContext }: EditProps) {
   return (
     <form action={formAction} className="space-y-4 max-w-lg">
       <ItemSummary item={listing.item} />
+
+      <AdminPricingContextPanel
+        context={adminPricingContext}
+        heading="Market Pricing"
+        comparePriceCents={parsePriceInputToCents(priceForPreview)}
+        comparePriceLabel="Entered Listing Price"
+      />
 
       {consignmentContext && (
         <ConsignmentPricingPanel context={consignmentContext} listingPriceStr={priceForPreview} />

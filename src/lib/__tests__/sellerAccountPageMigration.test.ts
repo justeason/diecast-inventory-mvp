@@ -57,13 +57,17 @@ describe('27B §77/§90: customer seller route no longer uses legacy pricing eng
     expect(exists('src/lib/sellerPricingGuidance.ts')).toBe(true)
   })
 
-  it('admin resale-estimator/valuation pages are untouched — still import the legacy engines', () => {
+  // 32B migrated the valuation detail page and readyToListQuery.ts onto the
+  // canonical stack — resale-estimator remains the one intentionally-retained
+  // legacy consumer (§36/§88).
+  it('admin resale-estimator intentionally still imports the legacy engine; valuation detail page is canonical (32B)', () => {
     expect(readSrc('src/app/(admin)/admin/resale-estimator/page.tsx')).toContain('computeEstimate')
-    expect(readSrc('src/app/(admin)/admin/valuation/models/[id]/page.tsx')).toMatch(/getPricingIntelligence/)
+    expect(readSrc('src/app/(admin)/admin/valuation/models/[id]/page.tsx')).not.toMatch(/getPricingIntelligence/)
   })
 
-  it('ready-to-list/intake-exception automation still imports pricingIntelligenceQuery — untouched by 27B, and by 31B (§61 — no migration unless trivial/zero-UI-impact)', () => {
-    expect(readSrc('src/lib/readyToListQuery.ts')).toContain('pricingIntelligenceQuery')
+  it('ready-to-list no longer imports pricingIntelligenceQuery — migrated to canonical getValuation/getValuationsBatch in 32B', () => {
+    expect(readSrc('src/lib/readyToListQuery.ts')).not.toContain('pricingIntelligenceQuery')
+    expect(readSrc('src/lib/readyToListQuery.ts')).toContain("from '@/lib/marketValuation'")
   })
 
   // 31B: autoListingExecution.ts is the one production path where pricing output

@@ -110,14 +110,13 @@ export default async function IntakeExceptionDetailPage({ params }: { params: Pr
 
       {detail.pricing && (
         <div className="mt-4 rounded-md border border-gray-200 bg-white p-3 text-sm">
-          <p className="text-xs text-gray-500 mb-1">Pricing advisory (14C)</p>
+          <p className="text-xs text-gray-500 mb-1">Pricing advisory</p>
           <p className="text-gray-900">
             Est. {detail.pricing.estimatedValueCents != null ? `$${(detail.pricing.estimatedValueCents / 100).toFixed(2)}` : '—'}
-            {detail.pricing.recommendedListing.lowCents != null && detail.pricing.recommendedListing.highCents != null && (
-              <> · Recommended ${(detail.pricing.recommendedListing.lowCents / 100).toFixed(0)}–${(detail.pricing.recommendedListing.highCents / 100).toFixed(0)}</>
+            {detail.pricing.marketRangeLowCents != null && detail.pricing.marketRangeHighCents != null && (
+              <> · Market Range ${(detail.pricing.marketRangeLowCents / 100).toFixed(0)}–${(detail.pricing.marketRangeHighCents / 100).toFixed(0)}</>
             )}
-            {' · '}Confidence {detail.pricing.confidence.level}
-            {detail.pricing.isAskOnly && ' (ask-only)'}
+            {' · '}Confidence {detail.pricing.confidence}
           </p>
         </div>
       )}

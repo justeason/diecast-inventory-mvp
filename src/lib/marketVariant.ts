@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client'
+import type { DbClient } from '@/lib/prisma'
 
 // 21B: MarketVariant is a packaging-only (Carded/Loose) market-comparison bucket
 // between CatalogModel and physical inventory. Every CatalogModel is system-
@@ -41,8 +42,13 @@ export async function ensurePackagingMarketVariants(
 // Server-side resolution only — callers must never trust a request-supplied
 // marketVariantId. Returns null if the (catalogModelId, packagingType) pair
 // doesn't resolve to an existing row (e.g. packagingType not yet valid/known).
+// 32B: widened from Prisma.TransactionClient to DbClient (prisma.ts) — this is
+// a plain read, so a caller with no open transaction (e.g. an admin advisory
+// query) can pass the global prisma client directly. Every existing
+// transactional caller is unaffected: Prisma.TransactionClient is itself a
+// member of the DbClient union.
 export async function findPackagingMarketVariant(
-  tx: Prisma.TransactionClient,
+  tx: DbClient,
   catalogModelId: string,
   packagingType: string
 ): Promise<{ id: string } | null> {

@@ -4,7 +4,8 @@ import { getItemLifecycleRecord } from '@/lib/itemLifecycleQuery'
 import { getItemReadyToListStatus } from '@/lib/readyToListQuery'
 import type { ReadyToListOutcome } from '@/lib/readyToList'
 import { AGREEMENT_STATUS_LABELS } from '@/lib/sellerAgreementDisplay'
-import { PricingIntelligenceSummary, type SerializedPricingIntelligence } from '@/components/store/PricingIntelligenceSummary'
+import { AdminPricingContextPanel } from '@/components/admin/AdminPricingContext'
+import { PRICE_VS_RANGE_LABELS } from '@/lib/adminPricingDisplay'
 
 export const dynamic = 'force-dynamic'
 
@@ -311,16 +312,12 @@ export default async function AdminItemDetailPage({
         </div>
       </section>
 
-      {/* Pricing (14C) */}
+      {/* Pricing */}
       <section className="mb-8">
         <h2 className="text-sm font-semibold text-gray-900 mb-3">Pricing</h2>
-        {pricing.intelligence ? (
-          <PricingIntelligenceSummary result={pricing.intelligence as unknown as SerializedPricingIntelligence} />
-        ) : (
-          <p className="text-xs text-gray-500">No pricing intelligence available for this catalog model yet.</p>
-        )}
-        {pricing.listingComparison && (
-          <p className="mt-2 text-xs text-gray-500">Listing position: {pricing.listingComparison.classification.replace('_', ' ')}</p>
+        <AdminPricingContextPanel context={pricing.context} heading="Market Pricing" />
+        {pricing.priceVsRange && (
+          <p className="mt-2 text-xs text-gray-500">Listing price: {PRICE_VS_RANGE_LABELS[pricing.priceVsRange]}</p>
         )}
         <p className="mt-2 text-xs text-gray-400">Advisory only — pricing is never changed automatically.</p>
       </section>
@@ -403,7 +400,6 @@ function ReadyToListCard({
         <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ${style.badge}`}>{style.label}</span>
         <span className="text-xs text-gray-500">
           Pricing: {PRICING_LABELS[readiness.pricing.status]}
-          {readiness.pricing.isAskOnly && readiness.pricing.status !== 'not_evaluated' ? ' (ask-only)' : ''}
         </span>
       </div>
 

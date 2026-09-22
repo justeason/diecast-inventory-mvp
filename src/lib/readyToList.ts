@@ -34,7 +34,12 @@
 //                        rule, so it is not a blocker here.
 
 import type { ItemContradiction } from '@/lib/itemLifecycle'
-import type { Confidence } from '@/lib/resaleEstimator'
+
+// 32B: local, canonical-shaped confidence union — no longer imports the
+// legacy 4-value Confidence type from resaleEstimator.ts. 'insufficient'
+// here means "canonical valuation.status !== 'valued'" (readyToListQuery.ts's
+// boundary), never a legacy ask-only/insufficient blend.
+export type ReadyToListConfidence = 'high' | 'medium' | 'low' | 'insufficient'
 
 // 15J's own reason codes — every one gets a message from REASON_MESSAGES below.
 export type ReadyToListOwnReasonCode =
@@ -70,8 +75,7 @@ export type ReadyToListReview = { code: ReadyToListReviewCode; message: string }
 export type PricingReadinessSummary = {
   status: 'supported' | 'low_confidence' | 'no_evidence' | 'not_evaluated'
   estimatedValueCents: number | null
-  confidenceLevel: Confidence | null
-  isAskOnly: boolean
+  confidenceLevel: ReadyToListConfidence | null
 }
 
 export type ReadyToListOutcome = {
@@ -98,10 +102,10 @@ export type ReadyToListContext = {
   hasOpenReturnCase: boolean
   // Reused verbatim from 15C's detectItemContradictions — never re-derived here.
   contradictions: ItemContradiction[]
-  // null = pricing intelligence not evaluated for this context (e.g. bulk list
-  // scan that intentionally skips 14C — see Part Q) — reported as 'not_evaluated',
-  // never fabricated as 'no_evidence'.
-  pricing: { estimatedValueCents: number | null; confidenceLevel: Confidence; isAskOnly: boolean } | null
+  // null = pricing not evaluated for this context (e.g. bulk list scan that
+  // intentionally skips a pricing read — see Part Q) — reported as
+  // 'not_evaluated', never fabricated as 'no_evidence'.
+  pricing: { estimatedValueCents: number | null; confidenceLevel: ReadyToListConfidence } | null
 }
 
 // Messages only for 15J's OWN reason codes — contradiction-derived blockers use the
@@ -156,12 +160,12 @@ function reasonMessage(code: ReadyToListOwnReasonCode, ctx: ReadyToListContext):
 }
 
 function pricingSummary(pricing: ReadyToListContext['pricing']): PricingReadinessSummary {
-  if (!pricing) return { status: 'not_evaluated', estimatedValueCents: null, confidenceLevel: null, isAskOnly: false }
+  if (!pricing) return { status: 'not_evaluated', estimatedValueCents: null, confidenceLevel: null }
   const status: PricingReadinessSummary['status'] =
     pricing.confidenceLevel === 'insufficient' ? 'no_evidence'
       : pricing.confidenceLevel === 'low' ? 'low_confidence'
       : 'supported'
-  return { status, estimatedValueCents: pricing.estimatedValueCents, confidenceLevel: pricing.confidenceLevel, isAskOnly: pricing.isAskOnly }
+  return { status, estimatedValueCents: pricing.estimatedValueCents, confidenceLevel: pricing.confidenceLevel }
 }
 
 export function evaluateReadyToList(ctx: ReadyToListContext): ReadyToListOutcome {

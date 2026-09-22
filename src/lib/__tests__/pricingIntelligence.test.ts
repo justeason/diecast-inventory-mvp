@@ -475,9 +475,13 @@ describe('pricingIntelligence: ask-only vs sold-evidence UI labeling (section 4)
     expect(adminPanel.toLowerCase()).toContain('no completed-sale evidence is available')
   })
 
-  it('admin opportunity list marks ask-only rows distinctly instead of showing a bare dollar estimate', () => {
-    expect(adminList).toContain('isAskOnly')
-    expect(adminList.toLowerCase()).toContain('no sold evidence')
+  // 32B: /admin/valuation/page.tsx was migrated off the legacy 14C engine onto
+  // canonical getValuationsBatch — canonical valuation is never ask-only (no
+  // isAskOnly concept at all), so this assertion is now inapplicable to that
+  // page. PricingIntelligencePanel.tsx/PricingIntelligenceSummary.tsx below
+  // remain legacy, unmigrated, and still genuinely ask-only-aware.
+  it('canonical admin valuation list distinguishes "not enough sales" from a bare dollar estimate', () => {
+    expect(adminList.toLowerCase()).toContain('not enough sales')
   })
 
   it('seller-facing summary renders a distinct "Active ask context" block for ask-only results, never "Estimated market value"', () => {

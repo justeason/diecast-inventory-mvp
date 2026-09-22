@@ -14,8 +14,8 @@ import { isAdminAuthenticated } from '@/lib/adminAuth'
 import { resolveConversionEligibility } from '@/lib/sellerAgreementInventory'
 import { convertIntakeDraft } from '@/lib/intakeConversion'
 import { ensureSellerLifecycleEvent } from '@/lib/actions/sellerLifecycle'
-import { getPricingIntelligence } from '@/lib/pricingIntelligenceQuery'
-import { computeMarketVariantId } from '@/lib/marketVariant'
+import { getValuation } from '@/lib/marketValuation'
+import { computeMarketVariantId, findPackagingMarketVariant } from '@/lib/marketVariant'
 import {
   MAX_WORKBENCH_BATCH_QUANTITY,
   WORKBENCH_LEASE_TTL_MS,
@@ -115,38 +115,49 @@ export async function releaseWorkbenchLease(shipmentId: string, claimToken: stri
 
 export type WorkbenchPricingAdvisory = {
   estimatedValueCents: number | null
-  lowCents: number | null
-  targetCents: number | null
-  highCents: number | null
+  marketRangeLowCents: number | null
+  marketRangeHighCents: number | null
   confidence: 'high' | 'medium' | 'low' | 'insufficient'
-  isAskOnly: boolean
   riskFlags: { code: string; message: string }[]
 }
 
+// 32B §55: progressive canonical specificity — requests packaging (and, once
+// packaging is known, condition) only as far as the workbench has actually
+// classified so far, never fabricated. A single lookup resolves
+// cardedOrLoose -> MarketVariant (mirrors marketVariant.ts's own
+// findPackagingMarketVariant predicate; that helper itself requires a
+// transaction client, which this read-only advisory doesn't hold).
 export async function getWorkbenchPricingAdvisory(
   catalogModelId: string,
   catalogConfidence: 'exact' | 'strong' | 'possible' | null = null,
+  cardedOrLoose: string | null = null,
+  condition: string | null = null,
 ): Promise<WorkbenchPricingAdvisory | null> {
   if (!(await isAdminAuthenticated())) return null
   if (!catalogModelId) return null
 
-  const intel = await getPricingIntelligence(catalogModelId)
-  if (!intel) return null
+  const variant = cardedOrLoose ? await findPackagingMarketVariant(prisma, catalogModelId, cardedOrLoose) : null
+  const marketVariantId = variant?.id ?? null
+
+  const valuation = await getValuation({
+    catalogModelId,
+    ...(marketVariantId !== null ? { marketVariantId } : {}),
+    ...(marketVariantId !== null && condition !== null ? { condition } : {}),
+  })
+  const valued = valuation.status === 'valued' ? valuation : null
 
   const riskFlags = deriveIntakeRiskFlags({
-    pricingConfidence: intel.confidence.level,
+    pricingConfidence: valued?.confidence ?? 'insufficient',
     catalogConfidence,
-    estimatedValueCents: intel.estimatedValueCents,
+    estimatedValueCents: valued?.estimatedValueCents ?? null,
     highValueThresholdCents: DEFAULT_HIGH_VALUE_THRESHOLD_CENTS,
   })
 
   return {
-    estimatedValueCents: intel.estimatedValueCents,
-    lowCents: intel.recommendedListing.lowCents,
-    targetCents: intel.recommendedListing.targetCents,
-    highCents: intel.recommendedListing.highCents,
-    confidence: intel.confidence.level,
-    isAskOnly: intel.isAskOnly,
+    estimatedValueCents: valued?.estimatedValueCents ?? null,
+    marketRangeLowCents: valued?.marketRangeLowCents ?? null,
+    marketRangeHighCents: valued?.marketRangeHighCents ?? null,
+    confidence: valued?.confidence ?? 'insufficient',
     riskFlags,
   }
 }

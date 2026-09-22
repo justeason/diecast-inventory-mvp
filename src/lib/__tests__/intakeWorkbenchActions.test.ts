@@ -19,11 +19,13 @@ vi.mock('@/lib/prisma', () => ({
   prisma: {
     $transaction: vi.fn(),
     intakeWorkbenchSession: { findUnique: vi.fn(), upsert: vi.fn(), updateMany: vi.fn(), deleteMany: vi.fn() },
+    marketVariant: { findUnique: vi.fn() },
   },
 }))
 vi.mock('@/lib/adminAuth', () => ({ isAdminAuthenticated: vi.fn().mockResolvedValue(true) }))
 vi.mock('@/lib/actions/sellerLifecycle', () => ({ ensureSellerLifecycleEvent: vi.fn().mockResolvedValue(undefined) }))
-vi.mock('@/lib/pricingIntelligenceQuery', () => ({ getPricingIntelligence: vi.fn().mockResolvedValue(null) }))
+// 32B: canonical replacement for the legacy 14C pricingIntelligenceQuery mock.
+vi.mock('@/lib/marketValuation', () => ({ getValuation: vi.fn().mockResolvedValue({ status: 'insufficient_data' }) }))
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }))
 
 import { prisma } from '@/lib/prisma'
@@ -37,7 +39,7 @@ import {
   reconcileWorkbenchShipment,
   type ConfirmWorkbenchItemInput,
 } from '@/lib/actions/intakeWorkbench'
-import { getPricingIntelligence } from '@/lib/pricingIntelligenceQuery'
+import { getValuation } from '@/lib/marketValuation'
 import { ensureSellerLifecycleEvent } from '@/lib/actions/sellerLifecycle'
 
 function baseInput(overrides: Partial<ConfirmWorkbenchItemInput> = {}): ConfirmWorkbenchItemInput {
@@ -649,22 +651,31 @@ describe('confirmWorkbenchItem — buyout payout dedup (existing 15A/15C semanti
   })
 })
 
-describe('getWorkbenchPricingAdvisory (14C reuse, section 18/19)', () => {
+describe('getWorkbenchPricingAdvisory (32B canonical, section 18/19)', () => {
   beforeEach(() => { vi.resetAllMocks(); defaultAdminAuth() })
 
-  it('returns null when 14C has no intelligence for the model (never fabricated)', async () => {
-    ;(getPricingIntelligence as Mock).mockResolvedValueOnce(null)
-    expect(await getWorkbenchPricingAdvisory('cat1')).toBeNull()
+  // 32B: canonical getValuation always resolves (never null) — an
+  // insufficient-data result is reported honestly, never a null advisory.
+  it('reports insufficient confidence/null EMV when canonical valuation has no evidence (never fabricated)', async () => {
+    ;(getValuation as Mock).mockResolvedValueOnce({ status: 'insufficient_data' })
+    const advisory = await getWorkbenchPricingAdvisory('cat1')
+    expect(advisory).toMatchObject({ estimatedValueCents: null, confidence: 'insufficient' })
   })
 
-  it('passes through isAskOnly and confidence verbatim from 14C', async () => {
-    ;(getPricingIntelligence as Mock).mockResolvedValueOnce({
-      estimatedValueCents: 1850, isAskOnly: true,
-      recommendedListing: { lowCents: 1700, targetCents: 1900, highCents: 2100 },
-      confidence: { level: 'medium', score: 60, reasons: [] },
+  it('passes through EMV/Market Range/confidence verbatim from canonical valuation — no isAskOnly (canonical concept does not exist)', async () => {
+    ;(getValuation as Mock).mockResolvedValueOnce({
+      status: 'valued', estimatedValueCents: 1850, marketRangeLowCents: 1700, marketRangeHighCents: 2100, confidence: 'medium',
     })
     const advisory = await getWorkbenchPricingAdvisory('cat1', 'strong')
-    expect(advisory).toMatchObject({ estimatedValueCents: 1850, isAskOnly: true, confidence: 'medium' })
+    expect(advisory).toMatchObject({ estimatedValueCents: 1850, marketRangeLowCents: 1700, marketRangeHighCents: 2100, confidence: 'medium' })
+    expect(advisory).not.toHaveProperty('isAskOnly')
+  })
+
+  it('resolves a MarketVariant for progressive specificity when cardedOrLoose is known, and requests it from getValuation', async () => {
+    ;(prisma.marketVariant.findUnique as Mock).mockResolvedValueOnce({ id: 'variant1' })
+    ;(getValuation as Mock).mockResolvedValueOnce({ status: 'insufficient_data' })
+    await getWorkbenchPricingAdvisory('cat1', 'strong', 'carded', 'mint')
+    expect(getValuation).toHaveBeenCalledWith({ catalogModelId: 'cat1', marketVariantId: 'variant1', condition: 'mint' })
   })
 
   it('admin authentication is required', async () => {

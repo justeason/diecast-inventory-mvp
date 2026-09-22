@@ -13,8 +13,9 @@ import {
   type ItemLifecycleStage,
   type ItemContradiction,
 } from '@/lib/itemLifecycle'
-import { getPricingIntelligence, getListingPriceComparison } from '@/lib/pricingIntelligenceQuery'
-import type { PricingIntelligenceResult, ListingPriceComparison } from '@/lib/pricingIntelligence'
+import { safeGetAdminPricingContext, type AdminPricingContext } from '@/lib/adminPricingContext'
+import { classifyPriceVsMarketRange, type PriceVsMarketRange } from '@/lib/adminPricingDisplay'
+import { internalPriceToCents } from '@/lib/marketMoney'
 
 // ── Timeline (section 9) — built entirely from raw authoritative timestamp fields,
 // never from a second, potentially-duplicative representation (e.g. SellerLifecycleEvent)
@@ -114,8 +115,15 @@ export type ItemLifecycleRecord = {
     payoutId: string | null
   }
   pricing: {
-    intelligence: PricingIntelligenceResult | null
-    listingComparison: ListingPriceComparison | null
+    // Follow-up §1/§6: null when the optional pricing enrichment fetch
+    // technically fails — isolated locally below so it can never take down
+    // the rest of this record (item identity/lifecycle/seller/listing/
+    // order/financial/timeline all assemble independently of this field).
+    context: AdminPricingContext | null
+    // §38/§54: exact-bound classification of the item's current listing (if
+    // any) against the canonical Market Range — null when there is no
+    // listing, no Market Range, or pricing context failed to load. Display-only.
+    priceVsRange: PriceVsMarketRange | null
   }
   lifecycleStage: ItemLifecycleStage
   contradictions: ItemContradiction[]
@@ -163,7 +171,7 @@ export async function getItemLifecycleRecord(itemId: string): Promise<ItemLifecy
   const item = await prisma.itemInstance.findUnique({
     where: { id: itemId },
     select: {
-      id: true, sku: true, catalogId: true, locationId: true,
+      id: true, sku: true, catalogId: true, locationId: true, marketVariantId: true,
       cardedOrLoose: true, condition: true, conditionNotes: true,
       purchasePrice: true, listPrice: true, status: true, notes: true,
       sourceType: true, sellerAgreementId: true, sellerPortfolioId: true,
@@ -324,11 +332,30 @@ export async function getItemLifecycleRecord(itemId: string): Promise<ItemLifecy
     payoutId: payoutLine?.payoutId ?? null,
   }
 
-  const [intelligence, listingComparisonResult] = await Promise.all([
-    getPricingIntelligence(item.catalogId),
-    item.listing ? getListingPriceComparison(item.listing.id) : Promise.resolve(null),
-  ])
-  const listingComparison = listingComparisonResult?.comparison ?? null
+  // §11/§37: strongest available specificity — CatalogModel + MarketVariant +
+  // Condition, all already known for any existing ItemInstance (both are
+  // required, non-null fields). Follow-up §1/§6: pricing is optional display
+  // enrichment for this record — a technical failure here must never take
+  // down item identity/lifecycle/seller/listing/order/financial/timeline,
+  // all of which are already fully assembled above this point.
+  const pricingContext = await safeGetAdminPricingContext(
+    {
+      catalogModelId: item.catalogId,
+      marketVariantId: item.marketVariantId,
+      condition: item.condition,
+      asOf: new Date(),
+      includeSignals: true,
+    },
+    { route: 'getItemLifecycleRecord', itemId: item.id, catalogModelId: item.catalogId },
+  )
+  const priceVsRange =
+    item.listing && pricingContext?.pricing.valuation.status === 'valued'
+      ? classifyPriceVsMarketRange(
+          internalPriceToCents(item.listing.price),
+          pricingContext.pricing.valuation.marketRangeLowCents,
+          pricingContext.pricing.valuation.marketRangeHighCents,
+        )
+      : null
 
   const timeline: ItemTimelineEntry[] = []
   if (submission) timeline.push({ title: 'Seller submission created', occurredAt: submission.createdAt, priority: TIMELINE_PRIORITY.submission_created })
@@ -373,7 +400,7 @@ export async function getItemLifecycleRecord(itemId: string): Promise<ItemLifecy
     listing: item.listing,
     order,
     financial,
-    pricing: { intelligence, listingComparison },
+    pricing: { context: pricingContext, priceVsRange },
     lifecycleStage,
     contradictions,
     timeline: sortTimeline(timeline),

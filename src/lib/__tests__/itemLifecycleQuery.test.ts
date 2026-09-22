@@ -22,20 +22,49 @@ vi.mock('@/lib/prisma', () => ({
   },
 }))
 
-vi.mock('@/lib/pricingIntelligenceQuery', () => ({
-  getPricingIntelligence: vi.fn().mockResolvedValue(null),
-  getListingPriceComparison: vi.fn().mockResolvedValue(null),
+// 32B follow-up: canonical replacement for the legacy 14C
+// pricingIntelligenceQuery mock — safeGetAdminPricingContext (the isolated
+// boundary itemLifecycleQuery.ts now calls) resolves to a full
+// AdminPricingContext by default; individual tests override via
+// mockResolvedValueOnce, including a null case for the error-isolation tests.
+vi.mock('@/lib/adminPricingContext', () => ({
+  safeGetAdminPricingContext: vi.fn().mockResolvedValue({
+    pricing: {
+      valuation: { status: 'insufficient_data', catalogModelId: 'cat1', marketVariantId: null, condition: null, asOf: new Date(), reason: 'no_sales' },
+      askSummary: { lowestAskCents: null, medianAskCents: null, availableCopies: 0 },
+      specificityDisclosure: { requested: 'model_variant_condition', resolved: null, exactMatch: false },
+      evidenceDisclosure: null,
+      asOf: new Date(),
+    },
+    askDepth: [],
+    signals: null,
+  }),
 }))
 
 import { prisma } from '@/lib/prisma'
-import { getPricingIntelligence, getListingPriceComparison } from '@/lib/pricingIntelligenceQuery'
+import { safeGetAdminPricingContext } from '@/lib/adminPricingContext'
 import { getItemLifecycleRecord, searchItemsPage } from '@/lib/itemLifecycleQuery'
+
+// 32B: vi.resetAllMocks() (used pervasively below, pre-existing convention)
+// wipes any mockResolvedValue set inside the vi.mock() factory above, so every
+// describe block's reset must be paired with re-establishing this default.
+const DEFAULT_ADMIN_PRICING_CONTEXT = {
+  pricing: {
+    valuation: { status: 'insufficient_data', catalogModelId: 'cat1', marketVariantId: null, condition: null, asOf: new Date(), reason: 'no_sales' },
+    askSummary: { lowestAskCents: null, medianAskCents: null, availableCopies: 0 },
+    specificityDisclosure: { requested: 'model_variant_condition', resolved: null, exactMatch: false },
+    evidenceDisclosure: null,
+    asOf: new Date(),
+  },
+  askDepth: [],
+  signals: null,
+}
 
 const D = (s: string) => new Prisma.Decimal(s)
 
 function baseItem(overrides: Record<string, unknown> = {}) {
   return {
-    id: 'item1', sku: 'CT-0001', catalogId: 'cat1', locationId: 'loc1',
+    id: 'item1', sku: 'CT-0001', catalogId: 'cat1', locationId: 'loc1', marketVariantId: 'variant1',
     cardedOrLoose: 'carded', condition: 'mint', conditionNotes: null,
     purchasePrice: null, listPrice: 20, status: 'available', notes: null,
     sourceType: null, sellerAgreementId: null, sellerPortfolioId: null,
@@ -85,7 +114,10 @@ function mockNoOrders() {
 }
 
 describe('getItemLifecycleRecord — lineage (section 4/5)', () => {
-  beforeEach(() => vi.resetAllMocks())
+  beforeEach(() => {
+    vi.resetAllMocks()
+    ;(safeGetAdminPricingContext as Mock).mockResolvedValue(DEFAULT_ADMIN_PRICING_CONTEXT)
+  })
 
   it('returns null for a missing item rather than throwing', async () => {
     ;(prisma.itemInstance.findUnique as Mock).mockResolvedValueOnce(null)
@@ -213,7 +245,10 @@ describe('getItemLifecycleRecord — lineage (section 4/5)', () => {
 })
 
 describe('getItemLifecycleRecord — listing / order / finance (sections 10/11/12)', () => {
-  beforeEach(() => vi.resetAllMocks())
+  beforeEach(() => {
+    vi.resetAllMocks()
+    ;(safeGetAdminPricingContext as Mock).mockResolvedValue(DEFAULT_ADMIN_PRICING_CONTEXT)
+  })
 
   it('current active listing is selected deterministically (the single Listing row — schema allows at most one)', async () => {
     ;(prisma.itemInstance.findUnique as Mock).mockResolvedValueOnce(baseItem({
@@ -316,7 +351,10 @@ describe('getItemLifecycleRecord — listing / order / finance (sections 10/11/1
 })
 
 describe('getItemLifecycleRecord — current-order selection stays correct beyond any history cap (15C-review section 1/2)', () => {
-  beforeEach(() => vi.resetAllMocks())
+  beforeEach(() => {
+    vi.resetAllMocks()
+    ;(safeGetAdminPricingContext as Mock).mockResolvedValue(DEFAULT_ADMIN_PRICING_CONTEXT)
+  })
 
   it('cancelled order + active listing -> "order" is null and stage is "listed" (item.status/listing drive it, not the stale order)', async () => {
     ;(prisma.itemInstance.findUnique as Mock).mockResolvedValueOnce(baseItem({
@@ -464,7 +502,10 @@ describe('getItemLifecycleRecord — current-order selection stays correct beyon
 })
 
 describe('getItemLifecycleRecord — multiple completed sales (15C-review section 3)', () => {
-  beforeEach(() => vi.resetAllMocks())
+  beforeEach(() => {
+    vi.resetAllMocks()
+    ;(safeGetAdminPricingContext as Mock).mockResolvedValue(DEFAULT_ADMIN_PRICING_CONTEXT)
+  })
 
   it('flags "Needs attention" when more than one completed OrderItem exists for the same item, and does not hide it by silently picking one', async () => {
     ;(prisma.itemInstance.findUnique as Mock).mockResolvedValueOnce(baseItem({ status: 'sold', sourceType: 'company_owned' }))
@@ -497,7 +538,10 @@ describe('getItemLifecycleRecord — multiple completed sales (15C-review sectio
 })
 
 describe('getItemLifecycleRecord — payment vs fulfillment semantics (section 3/4)', () => {
-  beforeEach(() => vi.resetAllMocks())
+  beforeEach(() => {
+    vi.resetAllMocks()
+    ;(safeGetAdminPricingContext as Mock).mockResolvedValue(DEFAULT_ADMIN_PRICING_CONTEXT)
+  })
 
   it('a paid-but-not-yet-completed order yields stage "paid", never "fulfillment" or "completed"', async () => {
     ;(prisma.itemInstance.findUnique as Mock).mockResolvedValueOnce(baseItem({ status: 'reserved' }))
@@ -546,7 +590,10 @@ describe('getItemLifecycleRecord — payment vs fulfillment semantics (section 3
 })
 
 describe('getItemLifecycleRecord — payout matching (15C-review section 4)', () => {
-  beforeEach(() => vi.resetAllMocks())
+  beforeEach(() => {
+    vi.resetAllMocks()
+    ;(safeGetAdminPricingContext as Mock).mockResolvedValue(DEFAULT_ADMIN_PRICING_CONTEXT)
+  })
 
   it('matches SellerPayoutLine to the authoritative current OrderItem by orderItemId, not merely by item/seller', async () => {
     ;(prisma.itemInstance.findUnique as Mock).mockResolvedValueOnce(baseItem({ sourceType: 'consignment', status: 'sold' }))
@@ -573,31 +620,79 @@ describe('getItemLifecycleRecord — payout matching (15C-review section 4)', ()
   })
 })
 
-describe('getItemLifecycleRecord — pricing (14C, section 13)', () => {
-  beforeEach(() => vi.resetAllMocks())
-
-  it('surfaces the 14C pricing intelligence result for the item\'s catalog model', async () => {
-    ;(prisma.itemInstance.findUnique as Mock).mockResolvedValueOnce(baseItem())
-    mockNoOrders()
-    ;(getPricingIntelligence as Mock).mockResolvedValueOnce({ catalogModelId: 'cat1', isAskOnly: false, estimatedValueCents: 2000 })
-    const record = await getItemLifecycleRecord('item1')
-    expect(record!.pricing.intelligence).toMatchObject({ isAskOnly: false, estimatedValueCents: 2000 })
-    expect(getPricingIntelligence).toHaveBeenCalledWith('cat1')
+describe('getItemLifecycleRecord — pricing (32B canonical, section 13)', () => {
+  beforeEach(() => {
+    vi.resetAllMocks()
+    ;(safeGetAdminPricingContext as Mock).mockResolvedValue(DEFAULT_ADMIN_PRICING_CONTEXT)
   })
 
-  it('ask-only semantics are preserved verbatim from the 14C engine, not overridden here', async () => {
+  it('surfaces the canonical Admin Pricing Context for the item\'s exact identity', async () => {
     ;(prisma.itemInstance.findUnique as Mock).mockResolvedValueOnce(baseItem())
     mockNoOrders()
-    ;(getPricingIntelligence as Mock).mockResolvedValueOnce({ catalogModelId: 'cat1', isAskOnly: true, estimatedValueCents: null })
+    const context = {
+      pricing: {
+        valuation: { status: 'valued', catalogModelId: 'cat1', marketVariantId: 'variant1', condition: 'mint', estimatedValueCents: 2000, marketRangeLowCents: 1800, marketRangeHighCents: 2200, confidence: 'high', specificity: 'model_variant_condition', primarySpecificity: 'model_variant_condition', rawSampleCount: 5, usedSampleCount: 5, excludedOutlierCount: 0, internalSampleCount: 5, externalSampleCount: 0, asOf: new Date(), windowStart: new Date(), extendedHistoryUsed: false, sampleTruncated: false, method: 'median_sales', outlierMethod: 'iqr_1_5', fallbackReason: null, latestSaleAt: new Date() },
+        askSummary: { lowestAskCents: null, medianAskCents: null, availableCopies: 0 },
+        specificityDisclosure: { requested: 'model_variant_condition', resolved: 'model_variant_condition', exactMatch: true },
+        evidenceDisclosure: { rawSampleCount: 5, usedSampleCount: 5, excludedOutlierCount: 0, internalSampleCount: 5, externalSampleCount: 0 },
+        asOf: new Date(),
+      },
+      askDepth: [],
+      signals: null,
+    }
+    ;(safeGetAdminPricingContext as Mock).mockResolvedValueOnce(context)
     const record = await getItemLifecycleRecord('item1')
-    expect(record!.pricing.intelligence!.isAskOnly).toBe(true)
+    expect(record!.pricing.context).toEqual(context)
+    expect(safeGetAdminPricingContext).toHaveBeenCalledWith(
+      expect.objectContaining({ catalogModelId: 'cat1', marketVariantId: 'variant1', condition: 'mint', includeSignals: true }),
+      expect.anything(),
+    )
   })
 
-  it('calls getListingPriceComparison only when an active listing exists', async () => {
-    ;(prisma.itemInstance.findUnique as Mock).mockResolvedValueOnce(baseItem())
+  it('classifies the current listing price against the canonical Market Range only when both a listing and a valued range exist', async () => {
+    ;(prisma.itemInstance.findUnique as Mock).mockResolvedValueOnce(baseItem({
+      listing: { id: 'list1', status: 'active', price: 30, version: 1, createdAt: new Date(), updatedAt: new Date() },
+    }))
     mockNoOrders()
-    await getItemLifecycleRecord('item1')
-    expect(getListingPriceComparison).not.toHaveBeenCalled()
+    ;(safeGetAdminPricingContext as Mock).mockResolvedValueOnce({
+      pricing: {
+        valuation: { status: 'valued', marketRangeLowCents: 1800, marketRangeHighCents: 2200, estimatedValueCents: 2000, confidence: 'high' },
+        askSummary: { lowestAskCents: null, medianAskCents: null, availableCopies: 0 },
+        specificityDisclosure: { requested: 'model_variant_condition', resolved: 'model_variant_condition', exactMatch: true },
+        evidenceDisclosure: null,
+        asOf: new Date(),
+      },
+      askDepth: [],
+      signals: null,
+    })
+    const record = await getItemLifecycleRecord('item1')
+    expect(record!.pricing.priceVsRange).toBe('above_range')
+  })
+
+  it('priceVsRange is null when there is no listing', async () => {
+    ;(prisma.itemInstance.findUnique as Mock).mockResolvedValueOnce(baseItem({ listing: null }))
+    mockNoOrders()
+    const record = await getItemLifecycleRecord('item1')
+    expect(record!.pricing.priceVsRange).toBeNull()
+  })
+
+  // Follow-up §11.A: a technical pricing-enrichment failure (isolated inside
+  // safeGetAdminPricingContext in production — simulated here by mocking its
+  // resolved value to null, exactly what it returns after catching) must
+  // never take down the rest of the record — item identity/lifecycle/seller/
+  // listing/order/financial/timeline all assemble independently.
+  it('renders the full record with a null pricing context when the pricing enrichment fetch technically fails', async () => {
+    ;(prisma.itemInstance.findUnique as Mock).mockResolvedValueOnce(baseItem({
+      listing: { id: 'list1', status: 'active', price: 30, version: 1, createdAt: new Date(), updatedAt: new Date() },
+    }))
+    mockNoOrders()
+    ;(safeGetAdminPricingContext as Mock).mockResolvedValueOnce(null)
+
+    const record = await getItemLifecycleRecord('item1')
+    expect(record!.pricing.context).toBeNull()
+    expect(record!.pricing.priceVsRange).toBeNull() // no valuation to compare against
+    expect(record!.item.sku).toBe('CT-0001')
+    expect(record!.listing).toMatchObject({ id: 'list1', status: 'active' })
   })
 
   it('this module never writes Listing.price or any pricing field (read-only, section 23)', () => {
@@ -608,7 +703,10 @@ describe('getItemLifecycleRecord — pricing (14C, section 13)', () => {
 })
 
 describe('getItemLifecycleRecord — timeline (section 9)', () => {
-  beforeEach(() => vi.resetAllMocks())
+  beforeEach(() => {
+    vi.resetAllMocks()
+    ;(safeGetAdminPricingContext as Mock).mockResolvedValue(DEFAULT_ADMIN_PRICING_CONTEXT)
+  })
 
   it('events are returned in deterministic chronological order', async () => {
     ;(prisma.itemInstance.findUnique as Mock).mockResolvedValueOnce(baseItem({
@@ -666,7 +764,10 @@ describe('getItemLifecycleRecord — timeline (section 9)', () => {
 })
 
 describe('searchItemsPage — search & performance (section 14/24)', () => {
-  beforeEach(() => vi.resetAllMocks())
+  beforeEach(() => {
+    vi.resetAllMocks()
+    ;(safeGetAdminPricingContext as Mock).mockResolvedValue(DEFAULT_ADMIN_PRICING_CONTEXT)
+  })
 
   it('searches by item identifier, catalog model, portfolio, and storage — all pushed into the DB-side where clause', async () => {
     ;(prisma.itemInstance.findMany as Mock).mockResolvedValueOnce([])

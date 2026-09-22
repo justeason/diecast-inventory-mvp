@@ -14,7 +14,9 @@ function baseCtx(overrides: Partial<ReadyToListContext> = {}): ReadyToListContex
     completedOrderCount: 0,
     hasOpenReturnCase: false,
     contradictions: [],
-    pricing: { estimatedValueCents: 5000, confidenceLevel: 'high', isAskOnly: false },
+    // 32B: canonical pricing.pricing shape — isAskOnly removed (canonical
+    // valuation is never ask-only; that concept was 14C-specific).
+    pricing: { estimatedValueCents: 5000, confidenceLevel: 'high' },
     ...overrides,
   }
 }
@@ -94,7 +96,7 @@ describe('evaluateReadyToList — lifecycle blockers (item_not_available)', () =
         itemStatus: status,
         // Even a context that would otherwise be perfectly eligible...
         locationId: 'loc1', sourceType: 'buyout',
-        pricing: { estimatedValueCents: 5000, confidenceLevel: 'high', isAskOnly: false },
+        pricing: { estimatedValueCents: 5000, confidenceLevel: 'high' },
       }))
       expect(outcome.status).not.toBe('ready')
       expect(outcome.status).not.toBe('review_required')
@@ -223,37 +225,40 @@ describe('evaluateReadyToList — multiple blockers, deterministic', () => {
 
 describe('evaluateReadyToList — pricing (Part F)', () => {
   it('high confidence: supported, no review needed', () => {
-    const outcome = evaluateReadyToList(baseCtx({ pricing: { estimatedValueCents: 5000, confidenceLevel: 'high', isAskOnly: false } }))
+    const outcome = evaluateReadyToList(baseCtx({ pricing: { estimatedValueCents: 5000, confidenceLevel: 'high' } }))
     expect(outcome.status).toBe('ready')
-    expect(outcome.pricing).toEqual({ status: 'supported', estimatedValueCents: 5000, confidenceLevel: 'high', isAskOnly: false })
+    expect(outcome.pricing).toEqual({ status: 'supported', estimatedValueCents: 5000, confidenceLevel: 'high' })
   })
 
   it('medium confidence: also supported, ready (not just high)', () => {
-    const outcome = evaluateReadyToList(baseCtx({ pricing: { estimatedValueCents: 4000, confidenceLevel: 'medium', isAskOnly: false } }))
+    const outcome = evaluateReadyToList(baseCtx({ pricing: { estimatedValueCents: 4000, confidenceLevel: 'medium' } }))
     expect(outcome.status).toBe('ready')
   })
 
   it('low confidence: review_required, never a hard blocker', () => {
-    const outcome = evaluateReadyToList(baseCtx({ pricing: { estimatedValueCents: 3000, confidenceLevel: 'low', isAskOnly: false } }))
+    const outcome = evaluateReadyToList(baseCtx({ pricing: { estimatedValueCents: 3000, confidenceLevel: 'low' } }))
     expect(outcome.status).toBe('review_required')
     expect(outcome.reviewReasons.map((r) => r.code)).toEqual(['pricing_confidence_low'])
     expect(outcome.blockers).toEqual([])
   })
 
   it('no valuation (insufficient): review_required with pricing_evidence_missing', () => {
-    const outcome = evaluateReadyToList(baseCtx({ pricing: { estimatedValueCents: null, confidenceLevel: 'insufficient', isAskOnly: false } }))
+    const outcome = evaluateReadyToList(baseCtx({ pricing: { estimatedValueCents: null, confidenceLevel: 'insufficient' } }))
     expect(outcome.status).toBe('review_required')
     expect(outcome.reviewReasons.map((r) => r.code)).toEqual(['pricing_evidence_missing'])
   })
 
-  it('ask-only evidence never becomes validated fair value, and does not by itself force review', () => {
-    const outcome = evaluateReadyToList(baseCtx({ pricing: { estimatedValueCents: 4500, confidenceLevel: 'high', isAskOnly: true } }))
+  // 32B: the legacy "ask-only evidence" concept (14C's isAskOnly) has no
+  // canonical equivalent — canonical valuation.status is only ever 'valued'
+  // from executed comparable sales, never from ask evidence, so a high-
+  // confidence canonical pricing summary is structurally never ask-derived.
+  it('high confidence pricing is ready regardless of estimated value magnitude', () => {
+    const outcome = evaluateReadyToList(baseCtx({ pricing: { estimatedValueCents: 4500, confidenceLevel: 'high' } }))
     expect(outcome.status).toBe('ready')
-    expect(outcome.pricing.isAskOnly).toBe(true)
   })
 
   it('pricing never fabricates a value — null estimatedValueCents stays null through to the outcome', () => {
-    const outcome = evaluateReadyToList(baseCtx({ pricing: { estimatedValueCents: null, confidenceLevel: 'insufficient', isAskOnly: false } }))
+    const outcome = evaluateReadyToList(baseCtx({ pricing: { estimatedValueCents: null, confidenceLevel: 'insufficient' } }))
     expect(outcome.pricing.estimatedValueCents).toBeNull()
   })
 
@@ -266,7 +271,7 @@ describe('evaluateReadyToList — pricing (Part F)', () => {
   it('a hard blocker always wins over a pricing review reason — status is "blocked", not "review_required"', () => {
     const outcome = evaluateReadyToList(baseCtx({
       locationId: null,
-      pricing: { estimatedValueCents: null, confidenceLevel: 'insufficient', isAskOnly: false },
+      pricing: { estimatedValueCents: null, confidenceLevel: 'insufficient' },
     }))
     expect(outcome.status).toBe('blocked')
     expect(outcome.reviewReasons).toEqual([])

@@ -25,9 +25,8 @@ import { prisma } from '@/lib/prisma'
 import { detectItemContradictions } from '@/lib/itemLifecycle'
 import { RETURN_PENDING_CASE_TYPES } from '@/lib/itemMutations'
 import { buildSearchWhere, type ItemSearchFilter } from '@/lib/itemLifecycleQuery'
-import { getPricingIntelligence, getPricingIntelligenceBatch } from '@/lib/pricingIntelligenceQuery'
-import { evaluateReadyToList, type ReadyToListContext, type ReadyToListOutcome } from '@/lib/readyToList'
-import type { Confidence } from '@/lib/resaleEstimator'
+import { getValuation, getValuationsBatch } from '@/lib/marketValuation'
+import { evaluateReadyToList, type ReadyToListContext, type ReadyToListOutcome, type ReadyToListConfidence } from '@/lib/readyToList'
 
 // ── Single item (Item Workspace) ────────────────────────────────────────────────
 
@@ -73,10 +72,11 @@ async function buildContextForItem(
 
   let pricing: ReadyToListContext['pricing'] = null
   if (includePricing) {
-    const intel = await getPricingIntelligence(item.catalogId)
-    pricing = intel
-      ? { estimatedValueCents: intel.estimatedValueCents, confidenceLevel: intel.confidence.level, isAskOnly: intel.isAskOnly }
-      : { estimatedValueCents: null, confidenceLevel: 'insufficient', isAskOnly: false }
+    const valuation = await getValuation({ catalogModelId: item.catalogId })
+    pricing =
+      valuation.status === 'valued'
+        ? { estimatedValueCents: valuation.estimatedValueCents, confidenceLevel: valuation.confidence }
+        : { estimatedValueCents: null, confidenceLevel: 'insufficient' }
   }
 
   return {
@@ -136,7 +136,7 @@ async function hydrateReadyToListContexts(items: ListCandidate[]): Promise<Map<s
   const agreementIds = [...new Set(items.map((i) => i.sellerAgreementId).filter((x): x is string => !!x))]
   const catalogIds = [...new Set(items.map((i) => i.catalogId))]
 
-  const [agreements, completedCounts, completedOrderItems, returnCases, pricingMap] = await Promise.all([
+  const [agreements, completedCounts, completedOrderItems, returnCases, valuationMap] = await Promise.all([
     agreementIds.length > 0
       ? prisma.sellerAgreement.findMany({ where: { id: { in: agreementIds } }, select: { id: true, status: true, sellerPortfolioId: true } })
       : Promise.resolve([]),
@@ -146,7 +146,7 @@ async function hydrateReadyToListContexts(items: ListCandidate[]): Promise<Map<s
       where: { itemInstanceId: { in: ids }, caseType: { in: [...RETURN_PENDING_CASE_TYPES] }, status: { in: ['open', 'action_required'] } },
       select: { itemInstanceId: true },
     }),
-    getPricingIntelligenceBatch(catalogIds),
+    getValuationsBatch({ catalogModelIds: catalogIds }),
   ])
 
   const agreementById = new Map(agreements.map((a) => [a.id, a]))
@@ -179,10 +179,11 @@ async function hydrateReadyToListContexts(items: ListCandidate[]): Promise<Map<s
       completedOrderCount,
     })
 
-    const intel = pricingMap.get(item.catalogId) ?? null
-    const pricing: ReadyToListContext['pricing'] = intel
-      ? { estimatedValueCents: intel.estimatedValueCents, confidenceLevel: intel.confidence.level, isAskOnly: intel.isAskOnly }
-      : { estimatedValueCents: null, confidenceLevel: 'insufficient' as Confidence, isAskOnly: false }
+    const valuation = valuationMap.get(item.catalogId)
+    const pricing: ReadyToListContext['pricing'] =
+      valuation && valuation.status === 'valued'
+        ? { estimatedValueCents: valuation.estimatedValueCents, confidenceLevel: valuation.confidence }
+        : { estimatedValueCents: null, confidenceLevel: 'insufficient' as ReadyToListConfidence }
 
     map.set(item.id, {
       itemStatus: item.status,

@@ -6,6 +6,7 @@ import {
   adminCaseTypeLabel,
   isOpenCaseStatus,
 } from '@/lib/adminLifecycleDisplay'
+import { safeGetAdminPricingContext } from '@/lib/adminPricingContext'
 
 export default async function EditListingPage({
   params,
@@ -41,6 +42,19 @@ export default async function EditListingPage({
   })
 
   if (!listing) notFound()
+
+  // Follow-up §1/§5: isolated — a technical failure renders the form with a
+  // neutral unavailable panel while price/title/description/payout
+  // preview/submit stay fully usable.
+  const adminPricingContext = await safeGetAdminPricingContext(
+    {
+      catalogModelId: listing.item.catalogId,
+      marketVariantId: listing.item.marketVariantId,
+      condition: listing.item.condition,
+      asOf: new Date(),
+    },
+    { route: '/admin/listings/[id]/edit', listingId: listing.id },
+  )
 
   // Seller lifecycle cases scoped to this listing's item instance.
   const lifecycleCases = await prisma.sellerLifecycleCase.findMany({
@@ -128,7 +142,7 @@ export default async function EditListingPage({
           </div>
         </div>
       )}
-      <EditListingForm listing={listing} consignmentContext={consignmentContext} />
+      <EditListingForm listing={listing} consignmentContext={consignmentContext} adminPricingContext={adminPricingContext} />
     </>
   )
 }

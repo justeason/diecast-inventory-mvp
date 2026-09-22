@@ -2,28 +2,26 @@ import type { Metadata } from 'next'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { isAdminAuthenticated } from '@/lib/adminAuth'
-import { scanOpportunities, type OpportunityFilter } from '@/lib/pricingIntelligenceQuery'
+import { scanAdminPricingOpportunities, type AdminPricingFilter } from '@/lib/adminPricingListQuery'
+import { ADMIN_CONFIDENCE_LABELS } from '@/lib/adminPricingDisplay'
 import { formatCatalogResult } from '@/lib/catalogFormat'
 import { ValuationSearchForm } from '@/components/admin/ValuationSearchForm'
 
 export const dynamic = 'force-dynamic'
-export const metadata: Metadata = { title: 'Valuation | Admin' }
+export const metadata: Metadata = { title: 'Market Pricing | Admin' }
 
-const FILTERS: { key: OpportunityFilter; label: string }[] = [
+const FILTERS: { key: AdminPricingFilter; label: string }[] = [
   { key: 'low_confidence', label: 'Low confidence' },
   { key: 'high_confidence', label: 'High confidence' },
   { key: 'no_sold_evidence', label: 'No sold evidence' },
-  { key: 'stale_external_evidence', label: 'Stale external evidence' },
   { key: 'high_dispersion', label: 'High dispersion' },
-  { key: 'listing_above_guidance', label: 'Listing above guidance' },
-  { key: 'listing_below_guidance', label: 'Listing below guidance' },
 ]
 
 function usd(cents: number | null): string {
   return cents === null ? '—' : `$${(cents / 100).toFixed(2)}`
 }
 
-function isOpportunityFilter(v: string | undefined): v is OpportunityFilter {
+function isAdminPricingFilter(v: string | undefined): v is AdminPricingFilter {
   return !!v && FILTERS.some(f => f.key === v)
 }
 
@@ -34,16 +32,16 @@ export default async function AdminValuationPage({
 }) {
   if (!await isAdminAuthenticated()) redirect('/admin/login')
   const { filter: rawFilter, after } = await searchParams
-  const filter = isOpportunityFilter(rawFilter) ? rawFilter : null
+  const filter = isAdminPricingFilter(rawFilter) ? rawFilter : null
 
-  const { items, nextCursor } = await scanOpportunities(filter, after || undefined)
+  const { items, nextCursor } = await scanAdminPricingOpportunities(filter, after || undefined)
 
   return (
     <div className="max-w-5xl space-y-8">
       <div>
-        <h1 className="text-2xl font-bold text-gray-900">Pricing &amp; Valuation Intelligence</h1>
+        <h1 className="text-2xl font-bold text-gray-900">Market Pricing</h1>
         <p className="text-sm text-gray-500 mt-1">
-          Blends completed first-party sales, external market research, and current market supply.
+          Canonical Estimated Market Value, Market Range, and current supply from completed comparable sales.
           Advisory only — nothing here changes a listing price automatically.
         </p>
       </div>
@@ -51,7 +49,7 @@ export default async function AdminValuationPage({
       <ValuationSearchForm />
 
       <div>
-        <h2 className="text-sm font-semibold text-gray-700 mb-3">Opportunities</h2>
+        <h2 className="text-sm font-semibold text-gray-700 mb-3">Models</h2>
         <div className="flex flex-wrap gap-2 mb-4 text-xs">
           <Link href="/admin/valuation" className={`px-3 py-1 rounded-full border ${!filter ? 'border-gray-900 bg-gray-900 text-white' : 'border-gray-200 text-gray-600'}`}>
             All
@@ -79,10 +77,11 @@ export default async function AdminValuationPage({
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr className="text-left text-gray-500">
                   <th className="px-4 py-3 font-medium">Model</th>
-                  <th className="px-4 py-3 font-medium">Estimated Value</th>
-                  <th className="px-4 py-3 font-medium">Range</th>
+                  <th className="px-4 py-3 font-medium">Estimated Market Value</th>
+                  <th className="px-4 py-3 font-medium">Market Range</th>
                   <th className="px-4 py-3 font-medium">Confidence</th>
-                  <th className="px-4 py-3 font-medium">Sold Evidence</th>
+                  <th className="px-4 py-3 font-medium">Sales Evidence</th>
+                  <th className="px-4 py-3 font-medium">Current Supply</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -94,16 +93,19 @@ export default async function AdminValuationPage({
                       </Link>
                     </td>
                     <td className="px-4 py-3 tabular-nums">
-                      {row.result.isAskOnly ? <span className="text-amber-600">No sold evidence</span> : usd(row.result.estimatedValueCents)}
+                      {row.valuation.status === 'valued' ? usd(row.valuation.estimatedValueCents) : <span className="text-amber-600">Not enough sales</span>}
                     </td>
                     <td className="px-4 py-3 tabular-nums text-gray-500">
-                      {row.result.recommendedListing.targetCents !== null
-                        ? `${usd(row.result.recommendedListing.lowCents)} – ${usd(row.result.recommendedListing.highCents)}${row.result.isAskOnly ? ' (asks only)' : ''}`
+                      {row.valuation.status === 'valued' && row.valuation.marketRangeLowCents !== null && row.valuation.marketRangeHighCents !== null
+                        ? `${usd(row.valuation.marketRangeLowCents)} – ${usd(row.valuation.marketRangeHighCents)}`
                         : '—'}
                     </td>
-                    <td className="px-4 py-3">{row.result.confidence.level}</td>
+                    <td className="px-4 py-3">{row.valuation.status === 'valued' ? ADMIN_CONFIDENCE_LABELS[row.valuation.confidence] : '—'}</td>
                     <td className="px-4 py-3 tabular-nums text-gray-500">
-                      {row.result.evidence.firstPartySold.count + row.result.evidence.externalSold.count}
+                      {row.valuation.status === 'valued' ? row.valuation.usedSampleCount : 0}
+                    </td>
+                    <td className="px-4 py-3 tabular-nums text-gray-500">
+                      {row.availableCopies > 0 ? `${row.availableCopies} from ${usd(row.lowestAskCents)}` : '—'}
                     </td>
                   </tr>
                 ))}

@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { prisma } from '@/lib/prisma'
 import { CreateListingForm, type ItemWithRelations } from '@/components/admin/ListingForm'
+import { safeGetAdminPricingContext } from '@/lib/adminPricingContext'
 
 export default async function NewListingPage({
   searchParams,
@@ -52,6 +53,23 @@ export default async function NewListingPage({
     ? (eligibleItems.find((item) => item.id === itemId) ?? null)
     : null
 
+  // Follow-up §1/§3: fetched only for the pre-selected item (never every
+  // eligible item — see ListingForm.tsx's item-selection navigation, which
+  // is what keeps `itemId` in sync with the picker), and isolated so a
+  // technical failure renders a neutral unavailable panel instead of losing
+  // the create-listing workflow.
+  const adminPricingContext = preSelectedItem
+    ? await safeGetAdminPricingContext(
+        {
+          catalogModelId: preSelectedItem.catalogId,
+          marketVariantId: preSelectedItem.marketVariantId,
+          condition: preSelectedItem.condition,
+          asOf: new Date(),
+        },
+        { route: '/admin/listings/new', itemId: preSelectedItem.id },
+      )
+    : null
+
   return (
     <>
       <div className="mb-6">
@@ -60,7 +78,7 @@ export default async function NewListingPage({
         </Link>
         <h1 className="text-2xl font-bold text-gray-900 mt-2">New Listing</h1>
       </div>
-      <CreateListingForm items={eligibleItems} preSelectedItem={preSelectedItem} />
+      <CreateListingForm items={eligibleItems} preSelectedItem={preSelectedItem} adminPricingContext={adminPricingContext} />
     </>
   )
 }

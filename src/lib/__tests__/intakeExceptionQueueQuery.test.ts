@@ -11,12 +11,14 @@ vi.mock('@/lib/prisma', () => ({
     sellerAgreement: { findFirst: vi.fn() },
     sellerSubmission: { findUnique: vi.fn() },
     itemInstance: { findUnique: vi.fn() },
+    marketVariant: { findUnique: vi.fn() },
   },
 }))
-vi.mock('@/lib/pricingIntelligenceQuery', () => ({ getPricingIntelligence: vi.fn().mockResolvedValue(null) }))
+// 32B: canonical replacement for the legacy 14C pricingIntelligenceQuery mock.
+vi.mock('@/lib/marketValuation', () => ({ getValuation: vi.fn().mockResolvedValue({ status: 'insufficient_data' }) }))
 
 import { prisma } from '@/lib/prisma'
-import { getPricingIntelligence } from '@/lib/pricingIntelligenceQuery'
+import { getValuation } from '@/lib/marketValuation'
 import { searchExceptionQueue, getExceptionQueueSummary, getExceptionDetail } from '@/lib/intakeExceptionQueueQuery'
 
 function baseDraftRow(overrides: Record<string, unknown> = {}) {
@@ -34,7 +36,10 @@ function baseDraftRow(overrides: Record<string, unknown> = {}) {
 }
 
 describe('searchExceptionQueue — listing/pagination/filters (section 5/6/7)', () => {
-  beforeEach(() => vi.resetAllMocks())
+  beforeEach(() => {
+    vi.resetAllMocks()
+    ;(getValuation as Mock).mockResolvedValue({ status: 'insufficient_data' })
+  })
 
   it('returns rows with resolved seller/portfolio/shipment labels', async () => {
     ;(prisma.intakeDraft.findMany as Mock).mockResolvedValueOnce([baseDraftRow()])
@@ -190,7 +195,10 @@ describe('searchExceptionQueue — listing/pagination/filters (section 5/6/7)', 
 })
 
 describe('getExceptionQueueSummary — DB-side grouped counts (section 5/30)', () => {
-  beforeEach(() => vi.resetAllMocks())
+  beforeEach(() => {
+    vi.resetAllMocks()
+    ;(getValuation as Mock).mockResolvedValue({ status: 'insufficient_data' })
+  })
 
   it('aggregates counts by code via a single groupBy call, never a loaded list', async () => {
     ;(prisma.intakeDraft.groupBy as Mock).mockResolvedValueOnce([
@@ -227,7 +235,10 @@ describe('getExceptionQueueSummary — DB-side grouped counts (section 5/30)', (
 })
 
 describe('getExceptionDetail — bounded detail read (section 9/28)', () => {
-  beforeEach(() => vi.resetAllMocks())
+  beforeEach(() => {
+    vi.resetAllMocks()
+    ;(getValuation as Mock).mockResolvedValue({ status: 'insufficient_data' })
+  })
 
   it('returns null for a missing draft', async () => {
     ;(prisma.intakeDraft.findUnique as Mock).mockResolvedValueOnce(null)
@@ -255,7 +266,8 @@ describe('getExceptionDetail — bounded detail read (section 9/28)', () => {
     ;(prisma.sellerAgreement.findFirst as Mock).mockResolvedValueOnce({ id: 'agr1', status: 'accepted', type: 'consignment' })
     ;(prisma.sellerSubmission.findUnique as Mock).mockResolvedValueOnce({ profileId: 'prof1' })
     ;(prisma.sellerProfile.findUnique as Mock).mockResolvedValueOnce({ profile: { name: 'Alice', email: 'a@x.com' } })
-    ;(getPricingIntelligence as Mock).mockResolvedValueOnce({ catalogModelId: 'cat1', estimatedValueCents: 1850 })
+    ;(prisma.marketVariant.findUnique as Mock).mockResolvedValueOnce({ id: 'variant1' })
+    ;(getValuation as Mock).mockResolvedValueOnce({ status: 'valued', estimatedValueCents: 1850, marketRangeLowCents: 1700, marketRangeHighCents: 2000, confidence: 'high' })
 
     const detail = await getExceptionDetail('d1')
     expect(detail).toMatchObject({
@@ -263,8 +275,10 @@ describe('getExceptionDetail — bounded detail read (section 9/28)', () => {
       sellerLabel: 'Alice', portfolio: { id: 'port1', name: 'Summer' }, agreement: { id: 'agr1', status: 'accepted' },
       shipment: { id: 'ship1', trackingNumber: 'TRACK1', receivedQuantity: 120 },
     })
-    expect(detail!.pricing).toMatchObject({ estimatedValueCents: 1850 })
-    expect(getPricingIntelligence).toHaveBeenCalledWith('cat1')
+    expect(detail!.pricing).toMatchObject({ estimatedValueCents: 1850, marketRangeLowCents: 1700, marketRangeHighCents: 2000, confidence: 'high' })
+    // 32B §55/§11: progressive specificity — packaging is known ('carded'), so a
+    // MarketVariant lookup + variant-level getValuation call are both issued.
+    expect(getValuation).toHaveBeenCalledWith({ catalogModelId: 'cat1', marketVariantId: 'variant1', condition: 'mint' })
   })
 
   it('never fetches pricing when no catalog model is resolved (unknown_model, still unresolved)', async () => {
@@ -279,7 +293,7 @@ describe('getExceptionDetail — bounded detail read (section 9/28)', () => {
     })
     const detail = await getExceptionDetail('d1')
     expect(detail!.pricing).toBeNull()
-    expect(getPricingIntelligence).not.toHaveBeenCalled()
+    expect(getValuation).not.toHaveBeenCalled()
   })
 
   it('this module never mutates — no create/update/delete calls anywhere in the file', () => {

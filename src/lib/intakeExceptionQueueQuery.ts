@@ -9,8 +9,17 @@ import {
   openIntakeExceptionWhere, isKnownExceptionCode, codesForCategory,
   type ExceptionCategory, type ExceptionAgeGroup, type IntakeExceptionCode,
 } from '@/lib/intakeExceptions'
-import { getPricingIntelligence } from '@/lib/pricingIntelligenceQuery'
-import type { PricingIntelligenceResult } from '@/lib/pricingIntelligence'
+import { getValuation } from '@/lib/marketValuation'
+import { findPackagingMarketVariant } from '@/lib/marketVariant'
+
+// 32B §56: canonical replacement for the legacy 14C PricingIntelligenceResult
+// — detail-only, no target/range midpoint/legacy confidence score.
+export type ExceptionPricingSummary = {
+  estimatedValueCents: number | null
+  marketRangeLowCents: number | null
+  marketRangeHighCents: number | null
+  confidence: 'high' | 'medium' | 'low' | 'insufficient'
+}
 import type { Prisma } from '@prisma/client'
 
 const PAGE_SIZE = 25
@@ -241,7 +250,7 @@ export type ExceptionDetail = {
   agreement: { id: string; status: string; type: string } | null
   shipment: { id: string; trackingNumber: string | null; receivedQuantity: number | null } | null
   sellerLabel: string | null
-  pricing: PricingIntelligenceResult | null
+  pricing: ExceptionPricingSummary | null
 }
 
 export async function getExceptionDetail(draftId: string): Promise<ExceptionDetail | null> {
@@ -264,7 +273,7 @@ export async function getExceptionDetail(draftId: string): Promise<ExceptionDeta
   if (!draft || draft.workbenchExceptionCode === null) return null
 
   const submissionId = draft.sellerSubmissionId
-  const [agreement, sellerProfile, intel, convertedItem] = await Promise.all([
+  const [agreement, sellerProfile, pricing, convertedItem] = await Promise.all([
     submissionId
       ? prisma.sellerAgreement.findFirst({
           where: { submissionId, status: { not: 'cancelled' } },
@@ -278,7 +287,29 @@ export async function getExceptionDetail(draftId: string): Promise<ExceptionDeta
       if (!sub) return null
       return prisma.sellerProfile.findUnique({ where: { profileId: sub.profileId }, select: { profile: { select: { name: true, email: true } } } })
     })(),
-    draft.catalogModelId ? getPricingIntelligence(draft.catalogModelId) : Promise.resolve(null),
+    draft.catalogModelId
+      ? (async (): Promise<ExceptionPricingSummary> => {
+          // §55/§11: progressive specificity from whatever the draft has
+          // actually classified so far — never fabricated.
+          const variant = draft.cardedOrLoose
+            ? await findPackagingMarketVariant(prisma, draft.catalogModelId!, draft.cardedOrLoose)
+            : null
+          const marketVariantId = variant?.id ?? null
+          const valuation = await getValuation({
+            catalogModelId: draft.catalogModelId!,
+            ...(marketVariantId !== null ? { marketVariantId } : {}),
+            ...(marketVariantId !== null && draft.condition !== null ? { condition: draft.condition } : {}),
+          })
+          return valuation.status === 'valued'
+            ? {
+                estimatedValueCents: valuation.estimatedValueCents,
+                marketRangeLowCents: valuation.marketRangeLowCents,
+                marketRangeHighCents: valuation.marketRangeHighCents,
+                confidence: valuation.confidence,
+              }
+            : { estimatedValueCents: null, marketRangeLowCents: null, marketRangeHighCents: null, confidence: 'insufficient' }
+        })()
+      : Promise.resolve(null),
     draft.convertedItemId
       ? prisma.itemInstance.findUnique({ where: { id: draft.convertedItemId }, select: { sku: true } })
       : Promise.resolve(null),
@@ -311,6 +342,6 @@ export async function getExceptionDetail(draftId: string): Promise<ExceptionDeta
       ? { id: draft.sellerInboundShipment.id, trackingNumber: draft.sellerInboundShipment.trackingNumber, receivedQuantity: draft.sellerInboundShipment.receivedQuantity }
       : null,
     sellerLabel: sellerProfile ? (sellerProfile.profile.name ?? sellerProfile.profile.email) : null,
-    pricing: intel,
+    pricing,
   }
 }

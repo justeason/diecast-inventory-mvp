@@ -192,15 +192,24 @@ describe('31B — cross-model prohibition at the execution-engine level (§16/§
   })
 })
 
-describe('31B — legacy admin consumers remain legitimately unmigrated (§60/§86)', () => {
-  it('readyToListQuery.ts and intake-exception admin pricing display still import the legacy 14C stack — NOT migrated in 31B (Series 32 scope)', () => {
-    expect(readSrc('src/lib/readyToListQuery.ts')).toContain('pricingIntelligenceQuery')
-    expect(readSrc('src/lib/intakeExceptionQueueQuery.ts')).toMatch(/pricingIntelligenceQuery|getPricingIntelligence/)
+describe('31B/32B — legacy admin consumer migration boundary (§60/§86)', () => {
+  // 32B migrated readyToListQuery.ts/intakeExceptionQueueQuery.ts/the valuation
+  // detail page off the legacy 14C stack onto canonical getValuation/
+  // getAdminPricingContext — the "still unmigrated" assertion this test
+  // originally made is now stale by design; /admin/resale-estimator remains
+  // the one intentionally-retained legacy consumer (§36/§88 — distinct
+  // cross-model comparable research, not folded into canonical EMV).
+  it('readyToListQuery.ts and intake-exception admin pricing display no longer import the legacy 14C stack — migrated in 32B', () => {
+    expect(readSrc('src/lib/readyToListQuery.ts')).not.toMatch(/pricingIntelligenceQuery|getPricingIntelligence/)
+    expect(readSrc('src/lib/intakeExceptionQueueQuery.ts')).not.toMatch(/pricingIntelligenceQuery|getPricingIntelligence/)
+    expect(readSrc('src/lib/readyToListQuery.ts')).toContain("from '@/lib/marketValuation'")
+    expect(readSrc('src/lib/intakeExceptionQueueQuery.ts')).toContain("from '@/lib/marketValuation'")
   })
 
-  it('admin resale-estimator/valuation pages still import the legacy engines — untouched by 31B', () => {
+  it('admin valuation detail page is canonical (32B); resale-estimator intentionally still imports the legacy engine', () => {
     expect(readSrc('src/app/(admin)/admin/resale-estimator/page.tsx')).toContain('computeEstimate')
-    expect(readSrc('src/app/(admin)/admin/valuation/models/[id]/page.tsx')).toMatch(/getPricingIntelligence/)
+    expect(readSrc('src/app/(admin)/admin/valuation/models/[id]/page.tsx')).not.toMatch(/getPricingIntelligence/)
+    expect(readSrc('src/app/(admin)/admin/valuation/models/[id]/page.tsx')).toContain('safeGetAdminPricingContext')
   })
 
   it('legacy engine FILES still exist — not deleted by 31B', () => {

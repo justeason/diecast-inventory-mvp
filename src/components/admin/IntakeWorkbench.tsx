@@ -198,11 +198,16 @@ export function IntakeWorkbench({ context }: { context: WorkbenchContextProps })
   useEffect(() => {
     if (!catalog) return
     let cancelled = false
-    void getWorkbenchPricingAdvisory(catalog.id, catalog.confidence === 'search' ? null : catalog.confidence).then((r) => {
+    void getWorkbenchPricingAdvisory(
+      catalog.id,
+      catalog.confidence === 'search' ? null : catalog.confidence,
+      cardedOrLoose || null,
+      condition || null,
+    ).then((r) => {
       if (!cancelled) setPricing(r)
     })
     return () => { cancelled = true }
-  }, [catalog])
+  }, [catalog, cardedOrLoose, condition])
 
   function onModelSelect(model: CatalogMatchResult | null) {
     setCatalog(model ? { id: model.id, label: `${model.brand} ${model.name}`, confidence: 'search' } : null)
@@ -510,11 +515,10 @@ export function IntakeWorkbench({ context }: { context: WorkbenchContextProps })
           {pricing && (
             <p className="mt-2 text-xs text-gray-500">
               Est. value {pricing.estimatedValueCents != null ? `$${(pricing.estimatedValueCents / 100).toFixed(2)}` : '—'}
-              {pricing.targetCents != null && pricing.lowCents != null && pricing.highCents != null && (
-                <> · Recommended ${(pricing.lowCents / 100).toFixed(0)}–${(pricing.highCents / 100).toFixed(0)}</>
+              {pricing.marketRangeLowCents != null && pricing.marketRangeHighCents != null && (
+                <> · Market Range ${(pricing.marketRangeLowCents / 100).toFixed(0)}–${(pricing.marketRangeHighCents / 100).toFixed(0)}</>
               )}
               {' · '}Confidence {pricing.confidence}
-              {pricing.isAskOnly && ' (ask-only)'}
               {pricing.riskFlags.length > 0 && (
                 <span className="ml-1 text-amber-700">· {pricing.riskFlags.map((f) => f.message).join(' ')}</span>
               )}

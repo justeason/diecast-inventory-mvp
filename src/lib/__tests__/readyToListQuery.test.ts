@@ -1,7 +1,8 @@
 // 15J: DB-boundary tests for readyToListQuery.ts. Reuses detectItemContradictions
-// (15C) and getPricingIntelligenceBatch (14C) directly rather than re-deriving their
-// logic — mocked here at the function boundary; their own correctness is covered by
-// itemLifecycle.test.ts / pricingIntelligence tests. This file checks composition,
+// (15C) and — since 32B — canonical getValuationsBatch (marketValuation.ts) directly
+// rather than re-deriving their logic — mocked here at the function boundary; their
+// own correctness is covered by itemLifecycle.test.ts / marketValuation tests. This
+// file checks composition,
 // batching (no N+1), legacy-null handling, and — the focused-review section 5-10
 // fix — derived-filter pagination correctness across many source chunks with a
 // realistic in-memory keyset-cursor mock (not just a single mocked chunk).
@@ -19,13 +20,14 @@ vi.mock('@/lib/prisma', () => ({
     $queryRaw: vi.fn(),
   },
 }))
-vi.mock('@/lib/pricingIntelligenceQuery', () => ({
-  getPricingIntelligence: vi.fn(),
-  getPricingIntelligenceBatch: vi.fn(),
+// 32B: canonical replacement for the legacy 14C pricingIntelligenceQuery mock.
+vi.mock('@/lib/marketValuation', () => ({
+  getValuation: vi.fn(),
+  getValuationsBatch: vi.fn(),
 }))
 
 import { prisma } from '@/lib/prisma'
-import { getPricingIntelligence, getPricingIntelligenceBatch } from '@/lib/pricingIntelligenceQuery'
+import { getValuation, getValuationsBatch } from '@/lib/marketValuation'
 import { buildSearchWhere, type ItemSearchFilter } from '@/lib/itemLifecycleQuery'
 import {
   getReadyToListContext, getItemReadyToListStatus, searchReadyToListPage,
@@ -57,7 +59,7 @@ describe('getReadyToListContext — single item', () => {
     ;(prisma.orderItem.count as Mock).mockResolvedValue(0)
     ;(prisma.orderItem.findFirst as Mock).mockResolvedValue(null)
     ;(prisma.sellerLifecycleCase.findFirst as Mock).mockResolvedValue(null)
-    ;(getPricingIntelligence as Mock).mockResolvedValue(null)
+    ;(getValuation as Mock).mockResolvedValue({ status: 'insufficient_data' })
 
     const ctx = await getReadyToListContext('item1')
     expect(ctx).toMatchObject({
@@ -66,9 +68,9 @@ describe('getReadyToListContext — single item', () => {
       completedOrderCount: 0, hasOpenReturnCase: false,
     })
     expect(ctx!.contradictions).toEqual([])
-    // getPricingIntelligence returning null (no evidence at all) is reported
-    // honestly as insufficient/no-evidence, never fabricated.
-    expect(ctx!.pricing).toEqual({ estimatedValueCents: null, confidenceLevel: 'insufficient', isAskOnly: false })
+    // getValuation returning insufficient_data (no evidence at all) is
+    // reported honestly as insufficient/no-evidence, never fabricated.
+    expect(ctx!.pricing).toEqual({ estimatedValueCents: null, confidenceLevel: 'insufficient' })
   })
 
   it('a completed sale overrides a stale "available" status via the reused contradiction detector', async () => {
@@ -77,7 +79,7 @@ describe('getReadyToListContext — single item', () => {
     ;(prisma.orderItem.findFirst as Mock).mockResolvedValue({ id: 'oi1' })
     ;(prisma.sellerPayoutLine.count as Mock).mockResolvedValue(0)
     ;(prisma.sellerLifecycleCase.findFirst as Mock).mockResolvedValue(null)
-    ;(getPricingIntelligence as Mock).mockResolvedValue(null)
+    ;(getValuation as Mock).mockResolvedValue({ status: 'insufficient_data' })
 
     const ctx = await getReadyToListContext('item1')
     expect(ctx!.completedOrderCount).toBe(1)
@@ -89,7 +91,7 @@ describe('getReadyToListContext — single item', () => {
     ;(prisma.orderItem.count as Mock).mockResolvedValue(0)
     ;(prisma.orderItem.findFirst as Mock).mockResolvedValue(null)
     ;(prisma.sellerLifecycleCase.findFirst as Mock).mockResolvedValue(null)
-    ;(getPricingIntelligence as Mock).mockResolvedValue(null)
+    ;(getValuation as Mock).mockResolvedValue({ status: 'insufficient_data' })
 
     await getReadyToListContext('item1')
     expect(prisma.sellerAgreement.findUnique).not.toHaveBeenCalled()
@@ -100,7 +102,7 @@ describe('getReadyToListContext — single item', () => {
     ;(prisma.orderItem.count as Mock).mockResolvedValue(0)
     ;(prisma.orderItem.findFirst as Mock).mockResolvedValue(null)
     ;(prisma.sellerLifecycleCase.findFirst as Mock).mockResolvedValue({ id: 'case1' })
-    ;(getPricingIntelligence as Mock).mockResolvedValue(null)
+    ;(getValuation as Mock).mockResolvedValue({ status: 'insufficient_data' })
 
     const ctx = await getReadyToListContext('item1')
     expect(ctx!.hasOpenReturnCase).toBe(true)
@@ -121,7 +123,7 @@ describe('getItemReadyToListStatus', () => {
     ;(prisma.orderItem.count as Mock).mockResolvedValue(0)
     ;(prisma.orderItem.findFirst as Mock).mockResolvedValue(null)
     ;(prisma.sellerLifecycleCase.findFirst as Mock).mockResolvedValue(null)
-    ;(getPricingIntelligence as Mock).mockResolvedValue({ estimatedValueCents: 5000, confidence: { level: 'high' }, isAskOnly: false })
+    ;(getValuation as Mock).mockResolvedValue({ status: 'valued', estimatedValueCents: 5000, confidence: 'high' })
 
     const outcome = await getItemReadyToListStatus('item1')
     expect(outcome!.status).toBe('ready')
@@ -152,7 +154,7 @@ describe('searchReadyToListPage — bounded batch scan (no N+1, no per-row 14C)'
     ;(prisma.orderItem.groupBy as Mock).mockResolvedValue([])
     ;(prisma.orderItem.findMany as Mock).mockResolvedValue([])
     ;(prisma.sellerLifecycleCase.findMany as Mock).mockResolvedValue([])
-    ;(getPricingIntelligenceBatch as Mock).mockResolvedValue(new Map())
+    ;(getValuationsBatch as Mock).mockResolvedValue(new Map())
 
     await searchReadyToListPage('ready', EMPTY_FILTER, null, 10)
 
@@ -160,11 +162,11 @@ describe('searchReadyToListPage — bounded batch scan (no N+1, no per-row 14C)'
     expect(prisma.orderItem.groupBy).toHaveBeenCalledTimes(1)
     expect(prisma.orderItem.findMany).toHaveBeenCalledTimes(1)
     expect(prisma.sellerLifecycleCase.findMany).toHaveBeenCalledTimes(1)
-    expect(getPricingIntelligenceBatch).toHaveBeenCalledTimes(1)
+    expect(getValuationsBatch).toHaveBeenCalledTimes(1)
     expect(prisma.sellerAgreement.findUnique).not.toHaveBeenCalled()
   })
 
-  it('pricing is fetched via the BATCH function (distinct catalog ids), never per-row getPricingIntelligence', async () => {
+  it('pricing is fetched via the BATCH function (distinct catalog ids), never per-row getValuation', async () => {
     const rows = [
       baseItemRow({ id: 'a', sku: 'A', catalog: { brand: 'X', name: 'Y' }, catalogId: 'cat1' }),
       baseItemRow({ id: 'b', sku: 'B', catalog: { brand: 'X', name: 'Y' }, catalogId: 'cat1' }),
@@ -174,11 +176,11 @@ describe('searchReadyToListPage — bounded batch scan (no N+1, no per-row 14C)'
     ;(prisma.orderItem.groupBy as Mock).mockResolvedValue([])
     ;(prisma.orderItem.findMany as Mock).mockResolvedValue([])
     ;(prisma.sellerLifecycleCase.findMany as Mock).mockResolvedValue([])
-    ;(getPricingIntelligenceBatch as Mock).mockResolvedValue(new Map())
+    ;(getValuationsBatch as Mock).mockResolvedValue(new Map())
 
     await searchReadyToListPage('ready', EMPTY_FILTER, null, 10)
-    expect(getPricingIntelligenceBatch).toHaveBeenCalledWith(['cat1'])
-    expect(getPricingIntelligence).not.toHaveBeenCalled()
+    expect(getValuationsBatch).toHaveBeenCalledWith({ catalogModelIds: ['cat1'] })
+    expect(getValuation).not.toHaveBeenCalled()
   })
 
   it('only rows whose full evaluation matches the requested readiness are returned', async () => {
@@ -193,8 +195,8 @@ describe('searchReadyToListPage — bounded batch scan (no N+1, no per-row 14C)'
     ;(prisma.sellerLifecycleCase.findMany as Mock).mockResolvedValue([])
     // High-confidence pricing for cat1 so ready1 lands on 'ready' rather than
     // 'review_required' (an empty pricing map would report no_evidence).
-    ;(getPricingIntelligenceBatch as Mock).mockResolvedValue(
-      new Map([['cat1', { estimatedValueCents: 5000, confidence: { level: 'high' }, isAskOnly: false }]]),
+    ;(getValuationsBatch as Mock).mockResolvedValue(
+      new Map([['cat1', { status: 'valued', estimatedValueCents: 5000, confidence: 'high' }]]),
     )
 
     const result = await searchReadyToListPage('ready', EMPTY_FILTER, null, 10)
@@ -297,8 +299,8 @@ describe('searchReadyToListPage — large-fixture pagination correctness', () =>
     ;(prisma.orderItem.groupBy as Mock).mockResolvedValue([])
     ;(prisma.orderItem.findMany as Mock).mockResolvedValue([])
     ;(prisma.sellerLifecycleCase.findMany as Mock).mockResolvedValue([])
-    ;(getPricingIntelligenceBatch as Mock).mockResolvedValue(
-      new Map([['cat1', { estimatedValueCents: 5000, confidence: { level: 'high' }, isAskOnly: false }]]),
+    ;(getValuationsBatch as Mock).mockResolvedValue(
+      new Map([['cat1', { status: 'valued', estimatedValueCents: 5000, confidence: 'high' }]]),
     )
   }
 
