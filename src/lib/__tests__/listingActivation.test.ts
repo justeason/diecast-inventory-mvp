@@ -9,7 +9,7 @@ import { buildListingActivationContext, createListingAtomic } from '@/lib/listin
 beforeEach(() => vi.resetAllMocks())
 
 function makeTx(overrides: Record<string, unknown> = {}) {
-  return { listing: { create: vi.fn().mockResolvedValue({ id: 'listing1', version: 1 }) }, ...overrides }
+  return { listing: { create: vi.fn().mockResolvedValue({ id: 'listing1', version: 1, price: 10 }) }, ...overrides }
 }
 
 describe('createListingAtomic — the one authoritative Listing-creation boundary', () => {
@@ -18,7 +18,7 @@ describe('createListingAtomic — the one authoritative Listing-creation boundar
     const result = await createListingAtomic(tx as never, { itemId: 'item1', catalogId: 'cat1', title: 'T', price: 10 })
     expect(result).toEqual({ ok: true, id: 'listing1', version: 1 })
     expect(tx.listing.create).toHaveBeenCalledWith({ data: { itemId: 'item1', title: 'T', price: 10, description: undefined, status: 'active' } })
-    expect(createAvailableFanoutJob).toHaveBeenCalledWith(tx, 'cat1', 'listing1', 1)
+    expect(createAvailableFanoutJob).toHaveBeenCalledWith(tx, 'cat1', 'listing1', 1, 10)
   })
 
   it('a P2002 (itemId unique constraint) is caught and reported as already_listed — a defensive backstop, not a crash', async () => {

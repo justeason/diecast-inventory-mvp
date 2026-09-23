@@ -21,8 +21,10 @@
 import { Resend } from 'resend'
 import { prisma } from '@/lib/prisma'
 import { logger } from '@/lib/serverLogger'
-import { buildWantedAvailableEmail, buildWantedPriceChangeEmail } from '@/lib/email/buyerAlertEmail'
+import { buildWantedAvailableEmail, buildWantedPriceChangeEmail, buildWantedPriceTargetReachedEmail } from '@/lib/email/buyerAlertEmail'
 import { generateClaimToken, staleBefore, DELIVERY_LEASE_MS } from '@/lib/buyerAlertsLease'
+import { decimalToCents } from '@/lib/businessAnalyticsMath'
+import { internalPriceToCents } from '@/lib/marketMoney'
 
 const DEFAULT_BATCH_SIZE = 50
 const SEND_TIMEOUT_MS = 8_000
@@ -119,18 +121,28 @@ async function deliverOne(eventId: string, claimToken: string): Promise<Delivery
   }
 
   // Re-check the wanted relationship still exists (buyer may have removed it since creation).
+  // maxDesiredPrice/priceAlertEnabled are selected here (not a second lookup) so a
+  // target-reached event can re-validate its condition below using this same bounded,
+  // already-required read.
   const stillWanted = await prisma.wantedCatalogModel.findUnique({
     where: { customerProfileId_catalogModelId: { customerProfileId: event.customerProfileId, catalogModelId: event.catalogModelId } },
-    select: { id: true },
+    select: { id: true, maxDesiredPrice: true, priceAlertEnabled: true },
   })
   if (!stillWanted) return suppress('wanted_removed')
 
-  // Re-check preferences fresh (buyer may have disabled email since creation).
+  // Re-check preferences fresh (buyer may have disabled email/price-alerts since creation).
   const pref = await prisma.buyerAlertPreference.findUnique({
     where: { customerProfileId: event.customerProfileId },
-    select: { emailAlertsEnabled: true },
+    select: { emailAlertsEnabled: true, wantedPriceChangeAlerts: true },
   })
   if (pref && !pref.emailAlertsEnabled) return suppress('email_disabled')
+
+  // 34B: target is a PRICE alert — re-check both preference layers fresh, same as the
+  // fanout-time eligibility rule (row.priceAlertEnabled AND global wantedPriceChangeAlerts).
+  if (event.alertType === 'wanted_price_target_reached') {
+    if (!stillWanted.priceAlertEnabled) return suppress('price_alerts_disabled')
+    if (pref && !pref.wantedPriceChangeAlerts) return suppress('price_alerts_disabled')
+  }
 
   // Re-check availability is still valid — same predicate as wantedListMatching.ts.
   let priceDollars: number | null = null
@@ -151,19 +163,30 @@ async function deliverOne(eventId: string, claimToken: string): Promise<Delivery
     return 'failed'
   }
 
+  // 34B: do not email "your target price was reached" if the listing has since risen
+  // back above the buyer's target — re-check fresh using the live price read above and
+  // the maxDesiredPrice already fetched by the stillWanted lookup (no extra query).
+  if (event.alertType === 'wanted_price_target_reached') {
+    if (stillWanted.maxDesiredPrice === null) return suppress('target_removed')
+    const targetCents = decimalToCents(stillWanted.maxDesiredPrice)
+    if (internalPriceToCents(priceDollars) > targetCents) return suppress('target_no_longer_met')
+  }
+
   const modelName = `${event.catalogModel.brand} ${event.catalogModel.name}${event.catalogModel.year ? ` (${event.catalogModel.year})` : ''}`
 
   const built = event.alertType === 'wanted_available'
     ? buildWantedAvailableEmail({ modelName, priceDollars, listingUrl })
-    : event.previousPriceCents !== null && event.currentPriceCents !== null
-      ? buildWantedPriceChangeEmail({
-          modelName,
-          previousPriceDollars: event.previousPriceCents / 100,
-          currentPriceDollars: event.currentPriceCents / 100,
-          listingUrl,
-          direction: event.alertType === 'wanted_price_decrease' ? 'decrease' : 'increase',
-        })
-      : null
+    : event.alertType === 'wanted_price_target_reached'
+      ? buildWantedPriceTargetReachedEmail({ modelName, priceDollars, listingUrl })
+      : event.previousPriceCents !== null && event.currentPriceCents !== null
+        ? buildWantedPriceChangeEmail({
+            modelName,
+            previousPriceDollars: event.previousPriceCents / 100,
+            currentPriceDollars: event.currentPriceCents / 100,
+            listingUrl,
+            direction: event.alertType === 'wanted_price_decrease' ? 'decrease' : 'increase',
+          })
+        : null
 
   if (!built) {
     await finalize(eventId, claimToken, { status: 'failed', failureCode: 'invalid_event_shape' })

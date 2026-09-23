@@ -242,7 +242,7 @@ export async function updateListing(
         const staysActive   = before.status === 'active' && updated.status === 'active'
 
         if (becameActive) {
-          await createAvailableFanoutJob(tx, before.item.catalogId, updated.id, updated.version)
+          await createAvailableFanoutJob(tx, before.item.catalogId, updated.id, updated.version, updated.price)
         } else if (staysActive && before.price !== updated.price) {
           await createPriceChangeFanoutJob(tx, before.item.catalogId, updated.id, before.price, updated.price, updated.version)
         }

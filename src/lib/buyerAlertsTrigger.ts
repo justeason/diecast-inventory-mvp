@@ -15,10 +15,14 @@ export async function createAvailableFanoutJob(
   catalogModelId: string,
   listingId: string,
   listingVersion: number,
+  priceDollars: number,
 ): Promise<void> {
   const eventKey = buildAvailableEventKey(listingId, listingVersion)
+  // 34B: currentPriceCents is not part of the event key (unchanged — activation
+  // identity is listingId+version only) but is needed by the fanout processor to
+  // evaluate a recipient's target-price condition on activation.
   await tx.buyerAlertFanout.createMany({
-    data: [{ eventType: 'wanted_available', listingId, catalogModelId, eventKey, listingVersion }],
+    data: [{ eventType: 'wanted_available', listingId, catalogModelId, eventKey, listingVersion, currentPriceCents: toCents(priceDollars) }],
     skipDuplicates: true,
   })
 }

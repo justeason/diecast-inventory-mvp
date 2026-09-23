@@ -217,14 +217,14 @@ describe('buyerAlertsTrigger: createAvailableFanoutJob / createPriceChangeFanout
 
   it('creates exactly one idempotent fan-out row for an availability transition', async () => {
     const tx = fakeTx()
-    await createAvailableFanoutJob(tx as never, 'cat1', 'listing1', 3)
+    await createAvailableFanoutJob(tx as never, 'cat1', 'listing1', 3, 25.00)
 
     expect(tx.buyerAlertFanout.createMany).toHaveBeenCalledTimes(1)
     const call = tx.buyerAlertFanout.createMany.mock.calls[0][0]
     expect(call.skipDuplicates).toBe(true)
     expect(call.data).toEqual([{
       eventType: 'wanted_available', listingId: 'listing1', catalogModelId: 'cat1',
-      eventKey: 'wanted_available:listing1:3', listingVersion: 3,
+      eventKey: 'wanted_available:listing1:3', listingVersion: 3, currentPriceCents: 2500,
     }])
   })
 

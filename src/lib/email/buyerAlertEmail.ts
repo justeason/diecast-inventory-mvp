@@ -21,10 +21,15 @@ function shell(title: string, bodyHtml: string): string {
   <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0;" />
   <p style="font-size:12px;color:#9ca3af;margin:0;">
     You're receiving this because you added this model to your wanted list.
-    Manage alert preferences in your account at any time.
+    <a href="${esc(manageUrl())}" style="color:#6b7280;">Manage alert preferences</a> in your account at any time.
   </p>
 </body>
 </html>`
+}
+
+function manageUrl(): string {
+  const appUrl = (process.env.APP_URL ?? 'https://www.collectntrades.com').replace(/\/$/, '')
+  return `${appUrl}/account/wanted?view=alerts`
 }
 
 type AvailableInput = {
@@ -99,6 +104,42 @@ export function buildWantedPriceChangeEmail(input: PriceChangeInput): { subject:
     modelName,
     `Previous price: ${fmtUsd(previousPriceDollars)}`,
     `New price: ${fmtUsd(currentPriceDollars)} (${direction === 'decrease' ? '-' : '+'}${pct.toFixed(1)}%)`, ``,
+    listingUrl,
+  ].join('\n')
+
+  return { subject, html, text }
+}
+
+// 34B: distinct from buildWantedAvailableEmail — this fires only when the buyer's own
+// maxDesiredPrice was reached on a specific listing, never on "Lowest Ask" (a model-level
+// concept this event has no knowledge of).
+type PriceTargetReachedInput = {
+  modelName: string
+  priceDollars: number
+  listingUrl: string
+}
+
+export function buildWantedPriceTargetReachedEmail(input: PriceTargetReachedInput): { subject: string; html: string; text: string } {
+  const { modelName, priceDollars, listingUrl } = input
+  const subject = `At your target price: ${modelName}`
+
+  const html = shell(subject, `
+  <p style="font-size:15px;margin:0 0 8px;">A listing for a model you want is now at or below your desired price.</p>
+  <p style="font-size:16px;font-weight:600;margin:16px 0 4px;">${esc(modelName)}</p>
+  <p style="font-size:14px;color:#374151;margin:0 0 24px;">Listing price: <strong>${fmtUsd(priceDollars)}</strong></p>
+  <div style="text-align:center;margin:32px 0;">
+    <a href="${esc(listingUrl)}"
+       style="display:inline-block;background:#111827;color:#fff;text-decoration:none;
+              padding:14px 32px;border-radius:6px;font-size:15px;font-weight:600;">
+      View Listing &rarr;
+    </a>
+  </div>`)
+
+  const text = [
+    `CollectNTrades`, ``,
+    `A listing for a model you want is now at or below your desired price.`, ``,
+    modelName,
+    `Listing price: ${fmtUsd(priceDollars)}`, ``,
     listingUrl,
   ].join('\n')
 

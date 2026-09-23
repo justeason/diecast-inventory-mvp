@@ -21,9 +21,10 @@ export const metadata: Metadata = {
 }
 
 const ALERT_LABELS: Record<string, string> = {
-  wanted_available:      'Now available',
-  wanted_price_decrease: 'Price dropped',
-  wanted_price_increase: 'Price increased',
+  wanted_available:            'Now available',
+  wanted_price_decrease:       'Price dropped',
+  wanted_price_increase:       'Price increased',
+  wanted_price_target_reached: 'At your target price',
 }
 
 function fmtUsd(cents: number): string {
@@ -93,6 +94,10 @@ export default async function WantedListPage({
         <AccountNav />
         {header}
         <TabBar activeView="alerts" unreadAlertCount={unreadAlertCount} />
+
+        <p className="text-xs text-gray-400">
+          Availability and price alerts are enabled by default when you add a model to Wanted. You can change them here.
+        </p>
 
         <AlertPreferencesForm preference={preference} />
 

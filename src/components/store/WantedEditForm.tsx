@@ -50,6 +50,7 @@ export function WantedEditForm({ id, defaultMaxPrice, defaultNotes }: Props) {
           placeholder="0.00"
           className="max-w-[12rem] rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
         />
+        <p className="text-xs text-gray-400">When set, price alerts will highlight when a listing reaches this price.</p>
         {errors.maxDesiredPrice && (
           <p className="text-xs text-red-600">{errors.maxDesiredPrice[0]}</p>
         )}

@@ -76,7 +76,7 @@ export async function createListingAtomic(
         status: 'active',
       },
     })
-    await createAvailableFanoutJob(tx, params.catalogId, listing.id, listing.version)
+    await createAvailableFanoutJob(tx, params.catalogId, listing.id, listing.version, listing.price)
     return { ok: true, id: listing.id, version: listing.version }
   } catch (e) {
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {

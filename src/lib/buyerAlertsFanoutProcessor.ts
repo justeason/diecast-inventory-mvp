@@ -6,7 +6,9 @@
 import { prisma } from '@/lib/prisma'
 import { logger } from '@/lib/serverLogger'
 import { isMeaningfulPriceChange } from '@/lib/buyerAlertKeys'
+import { decimalToCents } from '@/lib/businessAnalyticsMath'
 import { generateClaimToken, staleBefore, FANOUT_LEASE_MS } from '@/lib/buyerAlertsLease'
+import type { Prisma } from '@prisma/client'
 
 const FANOUT_PAGE_SIZE = 200
 const JOB_BATCH_SIZE = 20
@@ -16,6 +18,7 @@ type WantedRow = {
   customerProfileId: string
   availabilityAlertEnabled: boolean
   priceAlertEnabled: boolean
+  maxDesiredPrice: Prisma.Decimal | null
 }
 
 // Batch-fetches preferences for a page of profileIds — avoids one query per buyer.
@@ -79,7 +82,7 @@ async function runFanoutJob(jobId: string, claimToken: string): Promise<'complet
       where: { catalogModelId: job.catalogModelId, createdAt: { lte: job.audienceCutoffAt } },
       orderBy: { id: 'asc' },
       take: FANOUT_PAGE_SIZE,
-      select: { id: true, customerProfileId: true, availabilityAlertEnabled: true, priceAlertEnabled: true },
+      select: { id: true, customerProfileId: true, availabilityAlertEnabled: true, priceAlertEnabled: true, maxDesiredPrice: true },
       ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
     })
 
@@ -88,10 +91,45 @@ async function runFanoutJob(jobId: string, claimToken: string): Promise<'complet
       const events: EventInput[] = []
 
       for (const row of rows) {
+        const pref = prefs.get(row.customerProfileId)
+
+        // 34B: a genuine target-price crossing takes precedence over the generic
+        // availability/price-change event for this recipient — never both. Reusing
+        // job.eventKey for the target event (not a second key) is what makes this
+        // safe: @@unique([customerProfileId, eventKey]) guarantees at most one
+        // BuyerAlertEvent per recipient per underlying job either way.
+        // Target is a PRICE alert: it must respect BOTH the per-row priceAlertEnabled
+        // AND the global wantedPriceChangeAlerts toggle — the same two layers that
+        // already gate wanted_price_decrease/increase below. If target eligibility is
+        // false (either layer off), this falls through to the existing branch below
+        // unchanged, so an otherwise-enabled availability alert is never suppressed.
+        const priceAlertsFullyEnabled = row.priceAlertEnabled && (pref?.wantedPriceChangeAlerts ?? true)
+        const targetCents = row.maxDesiredPrice != null ? decimalToCents(row.maxDesiredPrice) : null
+        const targetHit = targetCents !== null && priceAlertsFullyEnabled && (
+          isAvailability
+            ? job.currentPriceCents !== null && job.currentPriceCents <= targetCents
+            : job.previousPriceCents !== null && job.currentPriceCents !== null &&
+              job.previousPriceCents > targetCents && job.currentPriceCents <= targetCents
+        )
+
+        if (targetHit) {
+          const emailEnabled = pref?.emailAlertsEnabled ?? true
+          events.push({
+            customerProfileId: row.customerProfileId,
+            catalogModelId: job.catalogModelId,
+            listingId: job.listingId,
+            alertType: 'wanted_price_target_reached',
+            eventKey: job.eventKey,
+            previousPriceCents: job.previousPriceCents,
+            currentPriceCents: job.currentPriceCents,
+            status: emailEnabled ? 'pending' : 'suppressed',
+          })
+          continue
+        }
+
         if (isAvailability && !row.availabilityAlertEnabled) continue
         if (!isAvailability && !row.priceAlertEnabled) continue
 
-        const pref = prefs.get(row.customerProfileId)
         const typeEnabled = isAvailability ? (pref?.wantedAvailableAlerts ?? true) : (pref?.wantedPriceChangeAlerts ?? true)
         if (!typeEnabled) continue
 
