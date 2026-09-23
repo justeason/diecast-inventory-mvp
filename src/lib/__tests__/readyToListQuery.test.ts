@@ -38,6 +38,9 @@ function baseItemRow(overrides: Record<string, unknown> = {}) {
     id: 'item1', status: 'available', locationId: 'loc1', sourceType: 'buyout',
     sellerAgreementId: null, sellerPortfolioId: null, catalogId: 'cat1',
     listing: null,
+    // 33B: default to photos present — existing tests that don't care about
+    // photos_missing pass overrides.photos: [] explicitly where needed.
+    photos: [{ id: 'photo1' }],
     ...overrides,
   }
 }
@@ -109,6 +112,24 @@ describe('getReadyToListContext — single item', () => {
     const call = (prisma.sellerLifecycleCase.findFirst as Mock).mock.calls[0][0]
     expect(call.where.caseType.in).toEqual(['return_to_seller', 'consignment_expiration', 'seller_withdrawal'])
     expect(call.where.status.in).toEqual(['open', 'action_required'])
+  })
+
+  // 33B §11: hasPhotos is derived from the item's own `photos` relation
+  // (folded into ITEM_SELECT's existing itemInstance.findUnique read) — never
+  // a second query. The absence of any `prisma.photo.*` mock in this file's
+  // vi.mock('@/lib/prisma') factory is itself part of the batch proof: if
+  // production code issued a separate Photo query, this whole suite would
+  // fail with "Cannot read properties of undefined" (as it did before this
+  // change), not silently pass.
+  it('hasPhotos reflects the item photos relation, with zero extra queries', async () => {
+    ;(prisma.itemInstance.findUnique as Mock).mockResolvedValue(baseItemRow({ photos: [] }))
+    ;(prisma.orderItem.count as Mock).mockResolvedValue(0)
+    ;(prisma.orderItem.findFirst as Mock).mockResolvedValue(null)
+    ;(prisma.sellerLifecycleCase.findFirst as Mock).mockResolvedValue(null)
+    ;(getValuation as Mock).mockResolvedValue({ status: 'insufficient_data' })
+
+    const ctx = await getReadyToListContext('item1')
+    expect(ctx!.hasPhotos).toBe(false)
   })
 })
 
@@ -202,6 +223,29 @@ describe('searchReadyToListPage — bounded batch scan (no N+1, no per-row 14C)'
     const result = await searchReadyToListPage('ready', EMPTY_FILTER, null, 10)
     expect(result.items.map((r) => r.id)).toEqual(['ready1'])
   })
+
+  // 33B §39/§40/§42
+  it('photos_missing is a soft review reason, correctly derived per-row from a single page-scoped read — no per-row photo query', async () => {
+    const rows = [
+      baseItemRow({ id: 'withPhoto', sku: 'A', catalog: { brand: 'X', name: 'Y' }, photos: [{ id: 'p1' }] }),
+      baseItemRow({ id: 'noPhoto', sku: 'B', catalog: { brand: 'X', name: 'Y' }, photos: [] }),
+    ]
+    ;(prisma.itemInstance.findMany as Mock).mockResolvedValueOnce(rows)
+    ;(prisma.sellerAgreement.findMany as Mock).mockResolvedValue([])
+    ;(prisma.orderItem.groupBy as Mock).mockResolvedValue([])
+    ;(prisma.orderItem.findMany as Mock).mockResolvedValue([])
+    ;(prisma.sellerLifecycleCase.findMany as Mock).mockResolvedValue([])
+    ;(getValuationsBatch as Mock).mockResolvedValue(
+      new Map([['cat1', { status: 'valued', estimatedValueCents: 5000, confidence: 'high' }]]),
+    )
+
+    // 'review_required' is the readiness value being requested — both rows
+    // are otherwise ready, so only the photo-absent row should match it.
+    const result = await searchReadyToListPage('review_required', EMPTY_FILTER, null, 10)
+    expect(result.items.map((r) => r.id)).toEqual(['noPhoto'])
+    expect(result.items[0].outcome.reviewReasons.map((r) => r.code)).toContain('photos_missing')
+    expect(result.items[0].outcome.status).toBe('review_required') // never 'blocked'
+  })
 })
 
 describe('searchReadyToListPage — ordinary-filter composition (15J composable-filters focused review)', () => {
@@ -253,6 +297,11 @@ describe('searchReadyToListPage — large-fixture pagination correctness', () =>
       locationId: ready ? 'loc1' : null, // null -> storage_missing -> blocked
       sourceType: 'buyout', sellerAgreementId: null, sellerPortfolioId: null,
       catalogId: 'cat1', catalog: { brand: 'X', name: 'Y' }, listing: null,
+      // 33B: every fixture row has a photo — this suite is about readiness
+      // pagination mechanics, not photos_missing (covered in readyToList.test.ts
+      // and a dedicated describe block below), so it must not perturb the
+      // existing ready/blocked classification.
+      photos: [{ id: 'photo1' }],
     }
   })
   const READY_IDS = ALL_ROWS.filter((_, i) => i % 3 === 0).map((r) => r.id)

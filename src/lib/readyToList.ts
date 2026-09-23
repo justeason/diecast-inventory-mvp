@@ -67,7 +67,11 @@ export type ReadyToListContradictionReasonCode =
 
 export type ReadyToListReasonCode = ReadyToListOwnReasonCode | ReadyToListContradictionReasonCode
 
-export type ReadyToListReviewCode = 'pricing_evidence_missing' | 'pricing_confidence_low'
+// 33B §8/§9/§10: photos_missing is a LISTING QUALITY signal (evidence
+// disclosure), never fraud/identity/condition — soft review only, same
+// mechanism as the existing pricing review reasons, never a blocker. No new
+// state machine (§10) — reuses the existing ready/review_required/blocked shape.
+export type ReadyToListReviewCode = 'pricing_evidence_missing' | 'pricing_confidence_low' | 'photos_missing'
 
 export type ReadyToListBlocker = { code: ReadyToListReasonCode; message: string }
 export type ReadyToListReview = { code: ReadyToListReviewCode; message: string }
@@ -106,6 +110,10 @@ export type ReadyToListContext = {
   // intentionally skips a pricing read — see Part Q) — reported as
   // 'not_evaluated', never fabricated as 'no_evidence'.
   pricing: { estimatedValueCents: number | null; confidenceLevel: ReadyToListConfidence } | null
+  // 33B §8/§13: true iff this ItemInstance has >=1 Photo row of ANY type —
+  // presence only, never a quality/count/angle judgment (no min-count rule,
+  // no front+back requirement).
+  hasPhotos: boolean
 }
 
 // Messages only for 15J's OWN reason codes — contradiction-derived blockers use the
@@ -217,6 +225,8 @@ export function evaluateReadyToList(ctx: ReadyToListContext): ReadyToListOutcome
   const reviewReasons: ReadyToListReview[] = []
   if (pricing.status === 'no_evidence') reviewReasons.push({ code: 'pricing_evidence_missing', message: 'No pricing evidence is available for this catalog model.' })
   else if (pricing.status === 'low_confidence') reviewReasons.push({ code: 'pricing_confidence_low', message: 'Pricing evidence exists but confidence is low.' })
+  // 33B §9: soft only — never added to `blockers`, never a hard block.
+  if (!ctx.hasPhotos) reviewReasons.push({ code: 'photos_missing', message: 'This item has no photos yet.' })
 
   if (reviewReasons.length > 0) {
     return { status: 'review_required', blockers: [], reviewReasons, listingPath, pricing }

@@ -34,6 +34,9 @@ const ITEM_SELECT = {
   id: true, status: true, locationId: true, sourceType: true,
   sellerAgreementId: true, sellerPortfolioId: true, catalogId: true,
   listing: { select: { status: true } },
+  // 33B §11: folded into the existing item read — a bounded, per-parent-row
+  // take:1 on the relation, not a second query, not N+1.
+  photos: { take: 1, select: { id: true } },
 } as const
 
 type ReadyToListItemRow = Prisma.ItemInstanceGetPayload<{ select: typeof ITEM_SELECT }>
@@ -90,6 +93,7 @@ async function buildContextForItem(
     hasOpenReturnCase: !!openReturnCase,
     contradictions,
     pricing,
+    hasPhotos: item.photos.length > 0,
   }
 }
 
@@ -125,6 +129,10 @@ const LIST_CANDIDATE_SELECT = {
   sellerAgreementId: true, sellerPortfolioId: true, catalogId: true,
   catalog: { select: { brand: true, name: true } },
   listing: { select: { status: true } },
+  // 33B §11/§12: bounded per-row take:1 folded into the same page-scoped
+  // findMany that already fetches this chunk — never a second per-page query,
+  // never N x per-item queries.
+  photos: { take: 1, select: { id: true } },
 } as const
 
 type ListCandidate = Prisma.ItemInstanceGetPayload<{ select: typeof LIST_CANDIDATE_SELECT }>
@@ -196,6 +204,7 @@ async function hydrateReadyToListContexts(items: ListCandidate[]): Promise<Map<s
       hasOpenReturnCase: returnCaseItemIds.has(item.id),
       contradictions,
       pricing,
+      hasPhotos: item.photos.length > 0,
     })
   }
   return map

@@ -17,6 +17,9 @@ function baseCtx(overrides: Partial<ReadyToListContext> = {}): ReadyToListContex
     // 32B: canonical pricing.pricing shape — isAskOnly removed (canonical
     // valuation is never ask-only; that concept was 14C-specific).
     pricing: { estimatedValueCents: 5000, confidenceLevel: 'high' },
+    // 33B: default to photos present — tests exercising photos_missing pass
+    // hasPhotos: false explicitly.
+    hasPhotos: true,
     ...overrides,
   }
 }
@@ -276,7 +279,54 @@ describe('evaluateReadyToList — pricing (Part F)', () => {
     expect(outcome.status).toBe('blocked')
     expect(outcome.reviewReasons).toEqual([])
   })
+})
 
+// 33B §8/§9/§10: photos_missing — a LISTING QUALITY signal, soft/review-only,
+// never a blocker, never a new state machine (reuses ready/review_required/
+// blocked verbatim).
+describe('evaluateReadyToList — photos_missing (33B)', () => {
+  it('photos present: ready, no photos_missing reason', () => {
+    const outcome = evaluateReadyToList(baseCtx({ hasPhotos: true }))
+    expect(outcome.status).toBe('ready')
+    expect(outcome.reviewReasons).toEqual([])
+  })
+
+  it('photos absent: review_required with a photos_missing reason, never blocked', () => {
+    const outcome = evaluateReadyToList(baseCtx({ hasPhotos: false }))
+    expect(outcome.status).toBe('review_required')
+    expect(outcome.reviewReasons.map((r) => r.code)).toEqual(['photos_missing'])
+  })
+
+  it('photos_missing never appears in blockers, only reviewReasons', () => {
+    const outcome = evaluateReadyToList(baseCtx({ hasPhotos: false }))
+    expect(outcome.blockers.map((b) => b.code)).not.toContain('photos_missing')
+  })
+
+  it('a hard blocker always wins over photos_missing — status is "blocked", not "review_required"', () => {
+    const outcome = evaluateReadyToList(baseCtx({ locationId: null, hasPhotos: false }))
+    expect(outcome.status).toBe('blocked')
+    expect(outcome.reviewReasons).toEqual([])
+  })
+
+  it('photos_missing and a pricing review reason can coexist in reviewReasons — neither replaces the other', () => {
+    const outcome = evaluateReadyToList(baseCtx({
+      hasPhotos: false,
+      pricing: { estimatedValueCents: null, confidenceLevel: 'insufficient' },
+    }))
+    expect(outcome.status).toBe('review_required')
+    expect(outcome.reviewReasons.map((r) => r.code).sort()).toEqual(['photos_missing', 'pricing_evidence_missing'])
+  })
+
+  it('existing zero-photo inventory is never blocked/hidden solely by this signal — operational eligibility is untouched', () => {
+    // A fully eligible, zero-photo item: no locationId/agreement/return-case
+    // issues, no contradictions — the ONLY signal present is hasPhotos: false.
+    const outcome = evaluateReadyToList(baseCtx({ hasPhotos: false }))
+    expect(outcome.status).not.toBe('blocked')
+    expect(outcome.listingPath).toBe('create') // reactivation/creation eligibility unaffected
+  })
+})
+
+describe('evaluateReadyToList — misc (Part F)', () => {
   it('Ready status is independent of 15F listing approval — the engine never inspects any approval state', () => {
     // The context type itself has no approval/risk field at all — this is a static
     // guarantee, verified structurally in readyToListSafety.test.ts. Behaviorally:

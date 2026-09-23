@@ -133,6 +133,16 @@ export default async function ListingDetailPage({
         <div className="space-y-4">
           <PhotoGallery photos={photos} title={listing.title} />
 
+          {/* 33B §3: affirmative disclosure — means ONLY that these images are
+              attached to this exact ItemInstance (Photo.itemId), never a claim
+              about condition verification, authentication, immutability, or
+              quality review. Mirrors the existing absent-case disclosure below,
+              which it can never co-render with (photos.length is either >0 or
+              ===0, never both branches). */}
+          {photos.length > 0 && (
+            <p className="text-xs text-gray-500">Photos of this item</p>
+          )}
+
           {photos.length === 0 && catalogPhoto && (
             <div className="rounded-md border border-gray-100 bg-gray-50 p-4">
               <p className="text-sm font-medium text-gray-700 mb-0.5">Model reference image</p>

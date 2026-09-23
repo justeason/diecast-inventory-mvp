@@ -379,6 +379,13 @@ function blockerFixLink(code: string, itemId: string, portfolioId: string | null
   return null
 }
 
+// 33B: photos_missing is a listing-quality reason, not a pricing one — it
+// must not reuse the pricing-review-reasons' "Review valuation" link.
+function reviewFixLink(code: string, itemId: string, catalogId: string): { label: string; href: string } {
+  if (code === 'photos_missing') return { label: 'Add photos →', href: `/admin/items/${itemId}/edit` }
+  return { label: 'Review valuation →', href: `/admin/valuation/models/${catalogId}` }
+}
+
 function ReadyToListCard({
   readiness, itemId, listingId, portfolioId, catalogId,
 }: {
@@ -419,12 +426,15 @@ function ReadyToListCard({
 
       {readiness.status === 'review_required' && (
         <ul className="space-y-1.5 mb-3">
-          {readiness.reviewReasons.map((r) => (
-            <li key={r.code} className="text-sm text-amber-800">
-              • {r.message}
-              <Link href={`/admin/valuation/models/${catalogId}`} className="ml-2 text-xs text-blue-600 hover:underline">Review valuation →</Link>
-            </li>
-          ))}
+          {readiness.reviewReasons.map((r) => {
+            const fix = reviewFixLink(r.code, itemId, catalogId)
+            return (
+              <li key={r.code} className="text-sm text-amber-800">
+                • {r.message}
+                <Link href={fix.href} className="ml-2 text-xs text-blue-600 hover:underline">{fix.label}</Link>
+              </li>
+            )
+          })}
         </ul>
       )}
 
