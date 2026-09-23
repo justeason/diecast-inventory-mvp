@@ -5,7 +5,8 @@ import { prisma } from '@/lib/prisma'
 import { redirect } from 'next/navigation'
 import { createAvailableFanoutJob, createPriceChangeFanoutJob } from '@/lib/buyerAlertsTrigger'
 import { processFanoutJobs } from '@/lib/buyerAlertsFanoutProcessor'
-import { getPricingIntelligence } from '@/lib/pricingIntelligenceQuery'
+import { fetchRiskPricingEvidence } from '@/lib/riskPricingQuery'
+import { internalPriceToCents } from '@/lib/marketMoney'
 import { getItemReadyToListStatus } from '@/lib/readyToListQuery'
 import { checkRiskGate, consumeApprovedRiskGate, markApprovalConsumed } from '@/lib/actions/riskApprovals'
 import { buildListingActivationContext, createListingAtomic } from '@/lib/listingActivation'
@@ -81,8 +82,17 @@ export async function createListing(
 
   // 15F: activation is gated by item value, not by price-vs-guidance (that check is
   // listing_price_change's job) — a normal-value listing activates automatically.
-  const intel = await getPricingIntelligence(item.catalogId)
-  const riskContext = buildListingActivationContext(itemId, item.catalogId, Math.round(Number(price) * 100), intel?.estimatedValueCents ?? null, item.sellerAgreement)
+  // 32C §5: strongest known identity — ItemInstance already has canonical
+  // MarketVariant + condition. A technical getValuation failure propagates and
+  // aborts the mutation (never a silent allow — see riskPricingQuery.ts).
+  const proposedPriceCents = internalPriceToCents(Number(price))
+  const pricingEvidence = await fetchRiskPricingEvidence({
+    catalogModelId: item.catalogId, marketVariantId: item.marketVariantId, condition: item.condition, asOf: new Date(),
+  })
+  const riskContext: ListingActivationContext = {
+    ...buildListingActivationContext(itemId, item.catalogId, proposedPriceCents, pricingEvidence?.estimatedValueCents ?? null, item.sellerAgreement),
+    pricingEvidence,
+  }
   const gate = await checkRiskGate({ action: 'listing_activation', context: riskContext, targetType: 'item_instance', targetId: itemId, requestedBy: 'admin' })
   if (gate.decision === 'deny') return { errors: { _form: [gate.reasons.join(' ')] } }
   if (gate.decision === 'pending') {
@@ -123,13 +133,13 @@ export async function updateListing(
     where: { id },
     select: {
       itemId: true, price: true, status: true,
-      item: { select: { catalogId: true, status: true, sellerAgreement: { select: { type: true, agreedBuyoutAmount: true, acceptedItemCount: true } } } },
+      item: { select: { catalogId: true, status: true, marketVariantId: true, condition: true, sellerAgreement: { select: { type: true, agreedBuyoutAmount: true, acceptedItemCount: true } } } },
     },
   })
   if (!before) return { errors: { _form: ['Listing not found.'] } }
 
-  const proposedPriceCents = Math.round(Number(price) * 100)
-  const oldPriceCents = Math.round(before.price * 100)
+  const proposedPriceCents = internalPriceToCents(Number(price))
+  const oldPriceCents = internalPriceToCents(before.price)
 
   // 15F-review section 1/2: reactivation (archived/sold -> active) is the SAME
   // commercial-activation risk as a brand-new listing — must go through the same
@@ -140,6 +150,18 @@ export async function updateListing(
   // never in a separate, earlier transaction (an approval must never be marked
   // consumed except alongside the exact mutation it authorizes).
   const willBecomeActive = before.status !== 'active' && status === 'active'
+  const priceIsChanging = proposedPriceCents !== oldPriceCents
+
+  // 32C §4/§29: ONE canonical valuation read, ONE shared asOf, for this whole
+  // decision — reused by both gates below when both apply to the same request
+  // (e.g. reactivating while also changing price). Never two independent reads.
+  const asOf = new Date()
+  const pricingEvidence = willBecomeActive || priceIsChanging
+    ? await fetchRiskPricingEvidence({
+        catalogModelId: before.item.catalogId, marketVariantId: before.item.marketVariantId, condition: before.item.condition, asOf,
+      })
+    : null
+
   let activationGate: Awaited<ReturnType<typeof checkRiskGate>> | null = null
   let activationContext: ListingActivationContext | null = null
   if (willBecomeActive) {
@@ -149,8 +171,10 @@ export async function updateListing(
     if (readiness?.status === 'blocked') {
       return { errors: { status: readiness.blockers.map((b) => b.message) } }
     }
-    const activationIntel = await getPricingIntelligence(before.item.catalogId)
-    activationContext = buildListingActivationContext(before.itemId, before.item.catalogId, proposedPriceCents, activationIntel?.estimatedValueCents ?? null, before.item.sellerAgreement)
+    activationContext = {
+      ...buildListingActivationContext(before.itemId, before.item.catalogId, proposedPriceCents, pricingEvidence?.estimatedValueCents ?? null, before.item.sellerAgreement),
+      pricingEvidence,
+    }
     activationGate = await checkRiskGate({ action: 'listing_activation', context: activationContext, targetType: 'item_instance', targetId: before.itemId, requestedBy: 'admin' })
     if (activationGate.decision === 'deny') return { errors: { status: [activationGate.reasons.join(' ')] } }
     if (activationGate.decision === 'pending') {
@@ -162,22 +186,8 @@ export async function updateListing(
   // alone stays frictionless.
   let gate: Awaited<ReturnType<typeof checkRiskGate>> | null = null
   let riskContext: ListingPriceChangeContext | null = null
-  if (proposedPriceCents !== oldPriceCents) {
-    const intel = await getPricingIntelligence(before.item.catalogId)
-    riskContext = {
-      listingId: id,
-      oldPriceCents,
-      proposedPriceCents,
-      pricing: intel
-        ? {
-            isAskOnly: intel.isAskOnly,
-            confidenceLevel: intel.confidence.level,
-            estimatedValueCents: intel.estimatedValueCents,
-            recommendedLowCents: intel.recommendedListing.lowCents,
-            recommendedHighCents: intel.recommendedListing.highCents,
-          }
-        : null,
-    }
+  if (priceIsChanging) {
+    riskContext = { pricingContextVersion: 2, listingId: id, oldPriceCents, proposedPriceCents, pricingEvidence }
     gate = await checkRiskGate({ action: 'listing_price_change', context: riskContext, targetType: 'listing', targetId: id, requestedBy: 'admin' })
     if (gate.decision === 'deny') return { errors: { price: [gate.reasons.join(' ')] } }
     if (gate.decision === 'pending') {

@@ -4,6 +4,7 @@
 import { prisma } from '@/lib/prisma'
 import type { Prisma } from '@prisma/client'
 import type { RiskPolicySnapshot, RiskAction } from '@/lib/riskPolicy'
+import { internalPriceToCents } from '@/lib/marketMoney'
 
 const PAGE_SIZE = 25
 
@@ -164,7 +165,14 @@ export async function getApprovalStaleness(detail: ApprovalDetail): Promise<Appr
   if (detail.action === 'listing_price_change') {
     const listing = await prisma.listing.findUnique({ where: { id: detail.targetId }, select: { price: true } })
     if (!listing) return { checked: true, stale: true, currentValueLabel: 'Listing no longer exists.' }
-    const currentCents = Math.round(listing.price * 100)
+    // 32C §25/§26: a historical (pre-V2) approval stored oldPriceCents using
+    // legacy Math.round(price*100) semantics — reinterpreting it with the
+    // canonical rounding rule (which can differ by 1 cent for a genuine
+    // sub-cent price, see marketMoney.ts) would silently misreport an
+    // unrelated historical approval as stale. Only a pricingContextVersion===2
+    // record is compared using canonical internalPriceToCents.
+    const isV2 = detail.decisionContext.pricingContextVersion === 2
+    const currentCents = isV2 ? internalPriceToCents(listing.price) : Math.round(listing.price * 100)
     const requestedOld = detail.decisionContext.oldPriceCents as number | undefined
     return { checked: true, stale: requestedOld !== undefined && currentCents !== requestedOld, currentValueLabel: `$${(currentCents / 100).toFixed(2)}` }
   }

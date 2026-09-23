@@ -55,9 +55,14 @@ describe('32B §62 — risk-policy/manual-risk-evidence boundary untouched (32C 
     expect(src).not.toMatch(/from ['"]@\/lib\/adminPricingDisplay['"]/)
   })
 
-  it('actions/listings.ts and actions/items.ts still source risk evidence from the legacy engine — not migrated in 32B', () => {
-    expect(readSrc('src/lib/actions/listings.ts')).toContain('getPricingIntelligence')
-    expect(readSrc('src/lib/actions/items.ts')).toContain('getPricingIntelligence')
+  // 32C migrated manual risk evidence onto canonical fetchRiskPricingEvidence —
+  // this assertion is now inverted from its 32B-era intent (see riskPolicy.test.ts
+  // / riskGateIntegration.test.ts for the canonical-migration coverage).
+  it('actions/listings.ts and actions/items.ts source risk evidence from canonical getValuation (32C), no legacy engine left', () => {
+    expect(readSrc('src/lib/actions/listings.ts')).not.toMatch(/getPricingIntelligence|pricingIntelligenceQuery/)
+    expect(readSrc('src/lib/actions/items.ts')).not.toMatch(/getPricingIntelligence|pricingIntelligenceQuery/)
+    expect(readSrc('src/lib/actions/listings.ts')).toContain('fetchRiskPricingEvidence')
+    expect(readSrc('src/lib/actions/items.ts')).toContain('fetchRiskPricingEvidence')
   })
 })
 

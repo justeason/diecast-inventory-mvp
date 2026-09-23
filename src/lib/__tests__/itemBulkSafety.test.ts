@@ -77,18 +77,20 @@ describe('physical identity invariants', () => {
   })
 })
 
-// ── Part Q: no 14C valuation for storage/condition; only catalog reassignment ────
+// ── Part Q: no canonical valuation for storage/condition; only catalog
+// reassignment. 32C migrated this off legacy getPricingIntelligence onto
+// canonical fetchRiskPricingEvidence (riskPricingQuery.ts). ──────────────────
 describe('Part Q — valuation query scope', () => {
-  it('getPricingIntelligence is imported once and used only inside setItemCatalog', () => {
-    const importCount = (itemMutationsSrc.match(/getPricingIntelligence/g) ?? []).length
+  it('fetchRiskPricingEvidence is imported once and used only inside setItemCatalog', () => {
+    const importCount = (itemMutationsSrc.match(/fetchRiskPricingEvidence/g) ?? []).length
     // One import + one call site = 2 occurrences total.
     expect(importCount).toBe(2)
     const catalogFnStart = itemMutationsSrc.indexOf('export async function setItemCatalog')
-    const callIdx = itemMutationsSrc.indexOf('getPricingIntelligence(', catalogFnStart)
+    const callIdx = itemMutationsSrc.indexOf('fetchRiskPricingEvidence(', catalogFnStart)
     expect(callIdx).toBeGreaterThan(catalogFnStart)
   })
 
-  it('setItemStorage and setItemCondition never reference getPricingIntelligence', () => {
+  it('setItemStorage and setItemCondition never reference fetchRiskPricingEvidence, and the file no longer imports legacy 14C pricing', () => {
     const storageFn = itemMutationsSrc.slice(
       itemMutationsSrc.indexOf('export async function setItemStorage'),
       itemMutationsSrc.indexOf('export async function setItemCondition'),
@@ -97,8 +99,9 @@ describe('Part Q — valuation query scope', () => {
       itemMutationsSrc.indexOf('export async function setItemCondition'),
       itemMutationsSrc.indexOf('export async function setItemCatalog'),
     )
-    expect(storageFn).not.toContain('getPricingIntelligence')
-    expect(conditionFn).not.toContain('getPricingIntelligence')
+    expect(storageFn).not.toContain('fetchRiskPricingEvidence')
+    expect(conditionFn).not.toContain('fetchRiskPricingEvidence')
+    expect(itemMutationsSrc).not.toMatch(/getPricingIntelligence|pricingIntelligenceQuery/)
   })
 })
 

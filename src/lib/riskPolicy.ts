@@ -4,6 +4,8 @@
 // riskPolicyQuery.ts (reads) and actions/riskApprovals.ts (approval lifecycle) for
 // the DB boundary. All money/percentage math is integer cents/bps, never floats.
 import crypto from 'crypto'
+import type { ValuationResult } from '@/lib/marketValuation'
+import type { SpecificityTier, ValuationConfidence } from '@/lib/marketValuationMath'
 
 // ── Action taxonomy — only actions that correspond to real, existing workflows
 // (confirmed by code inspection; see 15F final report for what was intentionally
@@ -123,25 +125,69 @@ export type SellerCommissionOverrideContext = {
   effectiveToIso: string | null
 }
 
+// 32C: canonical Pricing Intelligence V2 evidence, embedded verbatim into
+// decisionContext (checkRiskGate persists the whole context as-is — see
+// actions/riskApprovals.ts) — this IS the audit snapshot, never a separate
+// persistence step. null means valuation.status !== 'valued' (no valued
+// comparable-sale evidence at all) — distinct from, and never conflated
+// with, a low-but-real confidence value (§16). Deliberately excludes Lowest
+// Ask/Available Copies/Ask Depth/Market Signals — none affect a risk
+// decision (32C-A audit §19/§20/§32-34).
+export type PricingEvidence = {
+  asOf: string
+  estimatedValueCents: number
+  marketRangeLowCents: number | null
+  marketRangeHighCents: number | null
+  confidence: ValuationConfidence
+  extendedHistoryUsed: boolean
+  requestedSpecificity: SpecificityTier
+  resolvedSpecificity: SpecificityTier
+  rawSampleCount: number
+  usedSampleCount: number
+  excludedOutlierCount: number
+  internalSampleCount: number
+  externalSampleCount: number
+} | null
+
+// Pure transform — no DB access. valuation.primarySpecificity IS the
+// requested tier (marketValuation.ts: "REQUEST-relative"); valuation.specificity
+// is what was actually resolved, possibly a within-model fallback (§13/§14).
+export function buildPricingEvidence(valuation: ValuationResult, asOf: Date): PricingEvidence {
+  if (valuation.status !== 'valued') return null
+  return {
+    asOf: asOf.toISOString(),
+    estimatedValueCents: valuation.estimatedValueCents,
+    marketRangeLowCents: valuation.marketRangeLowCents,
+    marketRangeHighCents: valuation.marketRangeHighCents,
+    confidence: valuation.confidence,
+    extendedHistoryUsed: valuation.extendedHistoryUsed,
+    requestedSpecificity: valuation.primarySpecificity,
+    resolvedSpecificity: valuation.specificity,
+    rawSampleCount: valuation.rawSampleCount,
+    usedSampleCount: valuation.usedSampleCount,
+    excludedOutlierCount: valuation.excludedOutlierCount,
+    internalSampleCount: valuation.internalSampleCount,
+    externalSampleCount: valuation.externalSampleCount,
+  }
+}
+
 export type ListingActivationContext = {
+  pricingContextVersion: 2
   itemId: string
   catalogModelId: string
   proposedPriceCents: number
+  // §8: display/audit only — listing_activation is an absolute-value
+  // threshold check (resolveAuthoritativeItemValueCents below) and never
+  // consumes Market Range.
+  pricingEvidence: PricingEvidence
 } & ItemValueInputs
 
-export type PricingGuidance = {
-  isAskOnly: boolean
-  confidenceLevel: 'high' | 'medium' | 'low' | 'insufficient'
-  estimatedValueCents: number | null
-  recommendedLowCents: number | null
-  recommendedHighCents: number | null
-} | null
-
 export type ListingPriceChangeContext = {
+  pricingContextVersion: 2
   listingId: string
   oldPriceCents: number
   proposedPriceCents: number
-  pricing: PricingGuidance
+  pricingEvidence: PricingEvidence
 }
 
 export type SellerPayoutMarkPaidContext = {
@@ -157,10 +203,15 @@ export type SellerPayoutMarkPaidContext = {
 }
 
 export type ItemCatalogReassignmentContext = {
+  pricingContextVersion: 2
   itemId: string
   oldCatalogModelId: string
   newCatalogModelId: string
   hasCompletedSale: boolean
+  // §6: evidence for the DESTINATION CatalogModel, model-level (the
+  // destination MarketVariant is not yet resolved at decision time — see
+  // actions/items.ts). Display/audit only, same as activation.
+  pricingEvidence: PricingEvidence
 } & ItemValueInputs
 
 // 15F-review (catalog-merge pass): one administrative action, potentially many
@@ -263,25 +314,34 @@ function evaluateListingActivation(context: ListingActivationContext, policy: Ri
 }
 
 function evaluateListingPriceChange(context: ListingPriceChangeContext, policy: RiskPolicySnapshot): RiskDecision {
-  const { pricing, proposedPriceCents } = context
-  if (!pricing || pricing.recommendedLowCents == null || pricing.recommendedHighCents == null) {
-    return { outcome: 'allow', reasons: ['No 14C recommended range is available for this catalog model; price change accepted without a deviation check.'] }
+  const { pricingEvidence, proposedPriceCents } = context
+  // §16: valuation.status !== 'valued' (represented here as a null
+  // PricingEvidence) means no canonical range exists at all — fail open,
+  // never fabricated, never equivalent to a low-but-real confidence value.
+  if (!pricingEvidence || pricingEvidence.marketRangeLowCents == null || pricingEvidence.marketRangeHighCents == null) {
+    return { outcome: 'allow', reasons: ['No canonical Market Range is available for this catalog model; price change accepted without a deviation check.'] }
   }
-  const { recommendedLowCents: lowCents, recommendedHighCents: highCents, isAskOnly, confidenceLevel, estimatedValueCents } = pricing
+  const { marketRangeLowCents: lowCents, marketRangeHighCents: highCents, confidence, extendedHistoryUsed, requestedSpecificity, resolvedSpecificity, estimatedValueCents } = pricingEvidence
   const cls = classifyPriceDeviation(proposedPriceCents, lowCents, highCents, policy.priceDeviationToleranceBps)
-  const authorityNote = isAskOnly ? ' Guidance is ask-only (derived from active asking prices, not confirmed sales) and is never treated as authoritative fair value.' : ''
+  // §13/§14: low authority — canonical confidence 'low', stale (extended-
+  // history) evidence, or a fallback all the way down to model-level
+  // (crossing packaging/condition specificity entirely). A condition->variant
+  // fallback (still the same MarketVariant, just a broader condition pool)
+  // retains full authority — only a fallback that lands on 'model' is low.
+  const fallbackToModel = requestedSpecificity !== 'model' && resolvedSpecificity === 'model'
+  const lowAuthority = confidence === 'low' || extendedHistoryUsed || fallbackToModel
+  const authorityNote = lowAuthority ? ' Market evidence has reduced authority for this decision and is never treated as authoritative fair value.' : ''
   if (cls === 'within_range') {
-    return { outcome: 'allow', reasons: [`Proposed price ${formatCents(proposedPriceCents)} is within the recommended range (${formatCents(lowCents)}–${formatCents(highCents)}).${authorityNote}`] }
+    return { outcome: 'allow', reasons: [`Proposed price ${formatCents(proposedPriceCents)} is within the canonical Market Range (${formatCents(lowCents)}–${formatCents(highCents)}).${authorityNote}`] }
   }
   const pct = percentDeviationFromRange(proposedPriceCents, lowCents, highCents)
-  const direction = proposedPriceCents < lowCents ? 'below the recommended low' : 'above the recommended high'
+  const direction = proposedPriceCents < lowCents ? 'below the Market Range low' : 'above the Market Range high'
   const reasons = [
-    `Proposed listing price is ${pct}% ${direction} of the recommended range.${authorityNote}`,
-    `Estimated value: ${estimatedValueCents != null ? formatCents(estimatedValueCents) : 'unavailable'}. Recommended range: ${formatCents(lowCents)}–${formatCents(highCents)}. Proposed price: ${formatCents(proposedPriceCents)}.`,
+    `Proposed listing price is ${pct}% ${direction} of the canonical Market Range.${authorityNote}`,
+    `Estimated Market Value: ${formatCents(estimatedValueCents)}. Market Range: ${formatCents(lowCents)}–${formatCents(highCents)}. Proposed price: ${formatCents(proposedPriceCents)}.`,
   ]
-  // Low-confidence or ask-only guidance is never authoritative enough to justify the
-  // highest risk tier by itself — capped at medium regardless of deviation magnitude.
-  const lowAuthority = isAskOnly || confidenceLevel === 'low' || confidenceLevel === 'insufficient'
+  // Low-authority evidence is never enough to justify the highest risk tier by
+  // itself — capped at medium regardless of deviation magnitude (§15).
   if (cls === 'extreme_deviation' && !lowAuthority) {
     return { outcome: 'require_approval', riskLevel: 'high', policyCode: 'price_deviation_extreme', reasons }
   }

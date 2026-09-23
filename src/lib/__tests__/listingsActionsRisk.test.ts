@@ -15,7 +15,8 @@ vi.mock('@/lib/prisma', () => ({
     $transaction: vi.fn(),
   },
 }))
-vi.mock('@/lib/pricingIntelligenceQuery', () => ({ getPricingIntelligence: vi.fn().mockResolvedValue(null) }))
+// 32C: canonical replacement for the legacy 14C pricingIntelligenceQuery mock.
+vi.mock('@/lib/riskPricingQuery', () => ({ fetchRiskPricingEvidence: vi.fn().mockResolvedValue(null) }))
 vi.mock('@/lib/buyerAlertsTrigger', () => ({ createAvailableFanoutJob: vi.fn(), createPriceChangeFanoutJob: vi.fn() }))
 vi.mock('@/lib/buyerAlertsFanoutProcessor', () => ({ processFanoutJobs: vi.fn().mockResolvedValue(undefined) }))
 vi.mock('next/navigation', () => ({ redirect: vi.fn(() => { throw new Error('REDIRECT') }) }))
@@ -28,6 +29,7 @@ vi.mock('@/lib/actions/riskApprovals', () => ({
 import { prisma } from '@/lib/prisma'
 import { createListing, updateListing } from '@/lib/actions/listings'
 import { checkRiskGate, consumeApprovedRiskGate, markApprovalConsumed } from '@/lib/actions/riskApprovals'
+import { fetchRiskPricingEvidence } from '@/lib/riskPricingQuery'
 
 function makeTx(overrides: Record<string, unknown> = {}) {
   return {
@@ -159,6 +161,26 @@ describe('updateListing — reactivation triggers listing_activation, price chan
     expect(markApprovalConsumed).toHaveBeenCalledWith(tx, 'appr-activation')
     expect(markApprovalConsumed).toHaveBeenCalledWith(tx, 'appr-price')
     expect(tx.listing.update).toHaveBeenCalledTimes(1)
+    // 32C §4/§29/§52: both gates apply to this one request, but only ONE
+    // canonical valuation read is issued and reused for both.
+    expect(fetchRiskPricingEvidence).toHaveBeenCalledTimes(1)
+  })
+
+  it('32C §29: a reactivation-only request (no price change) still fetches pricing evidence exactly once', async () => {
+    mockBefore()
+    ;(checkRiskGate as Mock).mockResolvedValueOnce({ decision: 'allow' })
+    const tx = makeTx()
+    mockTransaction(tx)
+    await expect(updateListing('l1', null, createFormData({ title: 'x', price: '10', status: 'active' }))).rejects.toThrow('REDIRECT')
+    expect(fetchRiskPricingEvidence).toHaveBeenCalledTimes(1)
+  })
+
+  it('32C §29: neither gate applies (title-only edit) -> pricing evidence is never fetched at all', async () => {
+    mockBefore({ status: 'active' })
+    const tx = makeTx()
+    mockTransaction(tx)
+    await expect(updateListing('l1', null, createFormData({ title: 'new title', price: '10', status: 'active' }))).rejects.toThrow('REDIRECT')
+    expect(fetchRiskPricingEvidence).not.toHaveBeenCalled()
   })
 
   it('title/description-only edits on an already-active listing (no price or status change) never call the gate at all', async () => {

@@ -157,4 +157,32 @@ describe('getApprovalStaleness (section 28) — best-effort live comparison', ()
     const staleness = await getApprovalStaleness(baseDetail({ action: 'seller_commission_override' }) as never)
     expect(staleness).toEqual({ checked: false, stale: false })
   })
+
+  // 32C §25/§26/§55: a historical (pre-V2) approval used legacy
+  // Math.round(price*100) semantics when it stored oldPriceCents — that
+  // record must NEVER be silently reinterpreted through the canonical
+  // rounding rule, which can diverge by 1 cent for a genuine sub-cent price.
+  describe('version-aware staleness — sub-cent divergence ($2.675)', () => {
+    it('legacy (versionless) approval: current value uses legacy Math.round(price*100) — matches a legacy-stored oldPriceCents of 268', async () => {
+      ;(prisma.listing.findUnique as Mock).mockResolvedValueOnce({ price: 2.675 })
+      const staleness = await getApprovalStaleness(baseDetail({ decisionContext: { oldPriceCents: 268 } }) as never)
+      expect(staleness.stale).toBe(false)
+      expect(staleness.currentValueLabel).toBe('$2.68')
+    })
+
+    it('V2 approval: current value uses canonical internalPriceToCents — matches a V2-stored oldPriceCents of 267, NOT the legacy 268', async () => {
+      ;(prisma.listing.findUnique as Mock).mockResolvedValueOnce({ price: 2.675 })
+      const staleness = await getApprovalStaleness(baseDetail({ decisionContext: { pricingContextVersion: 2, oldPriceCents: 267 } }) as never)
+      expect(staleness.stale).toBe(false)
+      expect(staleness.currentValueLabel).toBe('$2.67')
+    })
+
+    it('a legacy-stored oldPriceCents (268) is never falsely reported stale against the canonical reading — the version discriminator selects the correct comparison, never a mixed one', async () => {
+      ;(prisma.listing.findUnique as Mock).mockResolvedValueOnce({ price: 2.675 })
+      const legacy = await getApprovalStaleness(baseDetail({ decisionContext: { oldPriceCents: 268 } }) as never)
+      const v2 = await getApprovalStaleness(baseDetail({ decisionContext: { pricingContextVersion: 2, oldPriceCents: 268 } }) as never)
+      expect(legacy.stale).toBe(false) // legacy rounding: 268 === 268
+      expect(v2.stale).toBe(true) // canonical rounding: 267 !== 268
+    })
+  })
 })

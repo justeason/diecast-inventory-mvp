@@ -104,7 +104,7 @@ describe('evaluateRiskPolicy — listing_activation (section 8)', () => {
   it('allows a normal-value item automatically', () => {
     const d = evaluateRiskPolicy({
       action: 'listing_activation',
-      context: { itemId: 'i1', catalogModelId: 'c1', proposedPriceCents: 5_000, estimatedValueCents: 5_000 },
+      context: { pricingContextVersion: 2, itemId: 'i1', catalogModelId: 'c1', proposedPriceCents: 5_000, estimatedValueCents: 5_000, pricingEvidence: null },
       policy, asOf: new Date(),
     })
     expect(d.outcome).toBe('allow')
@@ -113,7 +113,7 @@ describe('evaluateRiskPolicy — listing_activation (section 8)', () => {
   it('requires medium approval at the high-value threshold, high approval at the very-high-value threshold', () => {
     const medium = evaluateRiskPolicy({
       action: 'listing_activation',
-      context: { itemId: 'i1', catalogModelId: 'c1', proposedPriceCents: 20_000, estimatedValueCents: 20_000 },
+      context: { pricingContextVersion: 2, itemId: 'i1', catalogModelId: 'c1', proposedPriceCents: 20_000, estimatedValueCents: 20_000, pricingEvidence: null },
       policy, asOf: new Date(),
     })
     expect(medium.outcome).toBe('require_approval')
@@ -122,7 +122,7 @@ describe('evaluateRiskPolicy — listing_activation (section 8)', () => {
 
     const high = evaluateRiskPolicy({
       action: 'listing_activation',
-      context: { itemId: 'i1', catalogModelId: 'c1', proposedPriceCents: 100_000, estimatedValueCents: 100_000 },
+      context: { pricingContextVersion: 2, itemId: 'i1', catalogModelId: 'c1', proposedPriceCents: 100_000, estimatedValueCents: 100_000, pricingEvidence: null },
       policy, asOf: new Date(),
     })
     expect(high.outcome).toBe('require_approval')
@@ -133,65 +133,158 @@ describe('evaluateRiskPolicy — listing_activation (section 8)', () => {
   it('never blocks merely because no valuation is available (section 7)', () => {
     const d = evaluateRiskPolicy({
       action: 'listing_activation',
-      context: { itemId: 'i1', catalogModelId: 'c1', proposedPriceCents: 5_000 },
+      context: { pricingContextVersion: 2, itemId: 'i1', catalogModelId: 'c1', proposedPriceCents: 5_000, pricingEvidence: null },
       policy, asOf: new Date(),
     })
     expect(d.outcome).toBe('allow')
+  })
+
+  it('canonical EMV (a valued pricingEvidence.estimatedValueCents) drives the same threshold behavior as any other value tier — never Market Range', () => {
+    const d = evaluateRiskPolicy({
+      action: 'listing_activation',
+      context: {
+        pricingContextVersion: 2, itemId: 'i1', catalogModelId: 'c1', proposedPriceCents: 100_000, estimatedValueCents: 100_000,
+        pricingEvidence: { asOf: '2026-01-01T00:00:00.000Z', estimatedValueCents: 100_000, marketRangeLowCents: 1, marketRangeHighCents: 2, confidence: 'high', extendedHistoryUsed: false, requestedSpecificity: 'model', resolvedSpecificity: 'model', rawSampleCount: 8, usedSampleCount: 8, excludedOutlierCount: 0, internalSampleCount: 8, externalSampleCount: 0 },
+      },
+      policy, asOf: new Date(),
+    })
+    // §8: a tiny Market Range on the attached evidence never substitutes for
+    // estimatedValueCents in the threshold decision — high risk from the
+    // (separately supplied) 100_000 value, not from the range.
+    if (d.outcome !== 'require_approval') throw new Error('unreachable')
+    expect(d.riskLevel).toBe('high')
   })
 })
 
 describe('evaluateRiskPolicy — listing_price_change (section 7)', () => {
-  const guidance = { isAskOnly: false, confidenceLevel: 'high' as const, estimatedValueCents: 12_000, recommendedLowCents: 11_000, recommendedHighCents: 13_500 }
+  const pricingEvidence = {
+    asOf: '2026-01-01T00:00:00.000Z',
+    estimatedValueCents: 12_000,
+    marketRangeLowCents: 11_000,
+    marketRangeHighCents: 13_500,
+    confidence: 'high' as const,
+    extendedHistoryUsed: false,
+    requestedSpecificity: 'model_variant_condition' as const,
+    resolvedSpecificity: 'model_variant_condition' as const,
+    rawSampleCount: 8, usedSampleCount: 8, excludedOutlierCount: 0, internalSampleCount: 8, externalSampleCount: 0,
+  }
 
-  it('allows a price within the recommended range', () => {
+  it('allows a price within the canonical Market Range', () => {
     const d = evaluateRiskPolicy({
       action: 'listing_price_change',
-      context: { listingId: 'l1', oldPriceCents: 12_000, proposedPriceCents: 12_500, pricing: guidance },
+      context: { pricingContextVersion: 2, listingId: 'l1', oldPriceCents: 12_000, proposedPriceCents: 12_500, pricingEvidence },
       policy, asOf: new Date(),
     })
     expect(d.outcome).toBe('allow')
   })
 
-  it('requires approval when materially outside guidance', () => {
+  it('requires approval when materially outside the Market Range', () => {
     const d = evaluateRiskPolicy({
       action: 'listing_price_change',
-      context: { listingId: 'l1', oldPriceCents: 12_000, proposedPriceCents: 6_400, pricing: guidance },
+      context: { pricingContextVersion: 2, listingId: 'l1', oldPriceCents: 12_000, proposedPriceCents: 6_400, pricingEvidence },
       policy, asOf: new Date(),
     })
     expect(d.outcome).toBe('require_approval')
   })
 
-  it('never treats ask-only guidance as authoritative — caps at medium even for an extreme deviation', () => {
-    const askOnly = { ...guidance, isAskOnly: true }
+  it('full-authority evidence + extreme deviation -> high risk', () => {
     const d = evaluateRiskPolicy({
       action: 'listing_price_change',
-      context: { listingId: 'l1', oldPriceCents: 12_000, proposedPriceCents: 1, pricing: askOnly },
+      context: { pricingContextVersion: 2, listingId: 'l1', oldPriceCents: 12_000, proposedPriceCents: 1, pricingEvidence },
       policy, asOf: new Date(),
     })
-    expect(d.outcome).toBe('require_approval')
     if (d.outcome !== 'require_approval') throw new Error('unreachable')
-    expect(d.riskLevel).toBe('medium')
-    expect(d.reasons.join(' ')).toMatch(/ask-only/)
+    expect(d.riskLevel).toBe('high')
   })
 
-  it('low/insufficient confidence also caps at medium', () => {
-    const low = { ...guidance, confidenceLevel: 'insufficient' as const }
+  it('low confidence caps extreme deviation at medium — never treated as authoritative', () => {
+    const low = { ...pricingEvidence, confidence: 'low' as const }
     const d = evaluateRiskPolicy({
       action: 'listing_price_change',
-      context: { listingId: 'l1', oldPriceCents: 12_000, proposedPriceCents: 1, pricing: low },
+      context: { pricingContextVersion: 2, listingId: 'l1', oldPriceCents: 12_000, proposedPriceCents: 1, pricingEvidence: low },
       policy, asOf: new Date(),
     })
     if (d.outcome !== 'require_approval') throw new Error('unreachable')
     expect(d.riskLevel).toBe('medium')
+    expect(d.reasons.join(' ')).toMatch(/reduced authority/)
   })
 
-  it('no valuation available never fabricates a block', () => {
+  it('extended-history evidence caps extreme deviation at medium — stale evidence is context, not a block', () => {
+    const extended = { ...pricingEvidence, extendedHistoryUsed: true }
     const d = evaluateRiskPolicy({
       action: 'listing_price_change',
-      context: { listingId: 'l1', oldPriceCents: 12_000, proposedPriceCents: 999, pricing: null },
+      context: { pricingContextVersion: 2, listingId: 'l1', oldPriceCents: 12_000, proposedPriceCents: 1, pricingEvidence: extended },
+      policy, asOf: new Date(),
+    })
+    if (d.outcome !== 'require_approval') throw new Error('unreachable')
+    expect(d.riskLevel).toBe('medium')
+  })
+
+  it('condition->variant fallback retains FULL authority (still the same MarketVariant)', () => {
+    const fallback = { ...pricingEvidence, resolvedSpecificity: 'model_variant' as const }
+    const d = evaluateRiskPolicy({
+      action: 'listing_price_change',
+      context: { pricingContextVersion: 2, listingId: 'l1', oldPriceCents: 12_000, proposedPriceCents: 1, pricingEvidence: fallback },
+      policy, asOf: new Date(),
+    })
+    if (d.outcome !== 'require_approval') throw new Error('unreachable')
+    expect(d.riskLevel).toBe('high')
+  })
+
+  it('condition->model fallback caps extreme deviation at medium (crosses all the way to model level)', () => {
+    const fallback = { ...pricingEvidence, resolvedSpecificity: 'model' as const }
+    const d = evaluateRiskPolicy({
+      action: 'listing_price_change',
+      context: { pricingContextVersion: 2, listingId: 'l1', oldPriceCents: 12_000, proposedPriceCents: 1, pricingEvidence: fallback },
+      policy, asOf: new Date(),
+    })
+    if (d.outcome !== 'require_approval') throw new Error('unreachable')
+    expect(d.riskLevel).toBe('medium')
+  })
+
+  it('variant->model fallback caps extreme deviation at medium', () => {
+    const fallback = { ...pricingEvidence, requestedSpecificity: 'model_variant' as const, resolvedSpecificity: 'model' as const }
+    const d = evaluateRiskPolicy({
+      action: 'listing_price_change',
+      context: { pricingContextVersion: 2, listingId: 'l1', oldPriceCents: 12_000, proposedPriceCents: 1, pricingEvidence: fallback },
+      policy, asOf: new Date(),
+    })
+    if (d.outcome !== 'require_approval') throw new Error('unreachable')
+    expect(d.riskLevel).toBe('medium')
+  })
+
+  it('requested model / resolved model is NOT a fallback (no narrower tier was ever requested) — full authority', () => {
+    const noFallback = { ...pricingEvidence, requestedSpecificity: 'model' as const, resolvedSpecificity: 'model' as const }
+    const d = evaluateRiskPolicy({
+      action: 'listing_price_change',
+      context: { pricingContextVersion: 2, listingId: 'l1', oldPriceCents: 12_000, proposedPriceCents: 1, pricingEvidence: noFallback },
+      policy, asOf: new Date(),
+    })
+    if (d.outcome !== 'require_approval') throw new Error('unreachable')
+    expect(d.riskLevel).toBe('high')
+  })
+
+  it('moderate deviation is always medium risk regardless of authority', () => {
+    // low=11_000, tolerance=15% -> tolLow=9_350, 2x tolerance=30% -> extLow=7_700.
+    // 8_500 sits strictly between the two -> moderate, not extreme.
+    const d = evaluateRiskPolicy({
+      action: 'listing_price_change',
+      context: { pricingContextVersion: 2, listingId: 'l1', oldPriceCents: 12_000, proposedPriceCents: 8_500, pricingEvidence },
+      policy, asOf: new Date(),
+    })
+    if (d.outcome !== 'require_approval') throw new Error('unreachable')
+    expect(d.riskLevel).toBe('medium')
+    expect(d.policyCode).toBe('price_deviation_exceeds_tolerance')
+  })
+
+  it('no canonical Market Range available never fabricates a block — fails open (section 12/16)', () => {
+    const d = evaluateRiskPolicy({
+      action: 'listing_price_change',
+      context: { pricingContextVersion: 2, listingId: 'l1', oldPriceCents: 12_000, proposedPriceCents: 999, pricingEvidence: null },
       policy, asOf: new Date(),
     })
     expect(d.outcome).toBe('allow')
+    expect(d.reasons.join(' ')).not.toMatch(/14C|recommended range/)
   })
 })
 
@@ -218,7 +311,7 @@ describe('evaluateRiskPolicy — item_catalog_reassignment (section 10)', () => 
   it('denies outright when the item has a completed sale — never an approval bypass', () => {
     const d = evaluateRiskPolicy({
       action: 'item_catalog_reassignment',
-      context: { itemId: 'i1', oldCatalogModelId: 'c1', newCatalogModelId: 'c2', hasCompletedSale: true, completedSaleAmountCents: 5000 },
+      context: { pricingContextVersion: 2, itemId: 'i1', oldCatalogModelId: 'c1', newCatalogModelId: 'c2', hasCompletedSale: true, completedSaleAmountCents: 5000, pricingEvidence: null },
       policy, asOf: new Date(),
     })
     expect(d.outcome).toBe('deny')
@@ -229,7 +322,7 @@ describe('evaluateRiskPolicy — item_catalog_reassignment (section 10)', () => 
   it('allows a routine correction on an unsold, non-high-value item', () => {
     const d = evaluateRiskPolicy({
       action: 'item_catalog_reassignment',
-      context: { itemId: 'i1', oldCatalogModelId: 'c1', newCatalogModelId: 'c2', hasCompletedSale: false, estimatedValueCents: 1_000 },
+      context: { pricingContextVersion: 2, itemId: 'i1', oldCatalogModelId: 'c1', newCatalogModelId: 'c2', hasCompletedSale: false, estimatedValueCents: 1_000, pricingEvidence: null },
       policy, asOf: new Date(),
     })
     expect(d.outcome).toBe('allow')
@@ -238,7 +331,7 @@ describe('evaluateRiskPolicy — item_catalog_reassignment (section 10)', () => 
   it('requires approval for a high-value unsold item, scaling to high risk at the very-high-value threshold', () => {
     const medium = evaluateRiskPolicy({
       action: 'item_catalog_reassignment',
-      context: { itemId: 'i1', oldCatalogModelId: 'c1', newCatalogModelId: 'c2', hasCompletedSale: false, estimatedValueCents: 20_000 },
+      context: { pricingContextVersion: 2, itemId: 'i1', oldCatalogModelId: 'c1', newCatalogModelId: 'c2', hasCompletedSale: false, estimatedValueCents: 20_000, pricingEvidence: null },
       policy, asOf: new Date(),
     })
     if (medium.outcome !== 'require_approval') throw new Error('unreachable')
@@ -246,7 +339,7 @@ describe('evaluateRiskPolicy — item_catalog_reassignment (section 10)', () => 
 
     const high = evaluateRiskPolicy({
       action: 'item_catalog_reassignment',
-      context: { itemId: 'i1', oldCatalogModelId: 'c1', newCatalogModelId: 'c2', hasCompletedSale: false, estimatedValueCents: 100_000 },
+      context: { pricingContextVersion: 2, itemId: 'i1', oldCatalogModelId: 'c1', newCatalogModelId: 'c2', hasCompletedSale: false, estimatedValueCents: 100_000, pricingEvidence: null },
       policy, asOf: new Date(),
     })
     if (high.outcome !== 'require_approval') throw new Error('unreachable')

@@ -93,7 +93,7 @@ describe('checkRiskGate (section 2/26/27)', () => {
   it('deny decisions never create an approval request (section 29)', async () => {
     const result = await checkRiskGate({
       action: 'item_catalog_reassignment',
-      context: { itemId: 'i1', oldCatalogModelId: 'c1', newCatalogModelId: 'c2', hasCompletedSale: true, completedSaleAmountCents: 100 },
+      context: { pricingContextVersion: 2, itemId: 'i1', oldCatalogModelId: 'c1', newCatalogModelId: 'c2', hasCompletedSale: true, completedSaleAmountCents: 100, pricingEvidence: null },
       targetType: 'item_instance', targetId: 'i1', requestedBy: 'admin',
     })
     expect(result.decision).toBe('deny')

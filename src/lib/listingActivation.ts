@@ -24,6 +24,14 @@ type TxClient = Prisma.TransactionClient
 // itself (via whichever client — global or an open transaction — is authoritative
 // for its own call site) and passes the resulting `estimatedValueCents` in directly,
 // so risk evaluation always uses the EXACT SAME evidence as the price it is judging.
+// 32C: signature intentionally UNCHANGED — autoListingExecution.ts calls this
+// with a plain estimatedValueCents (its own canonical EMV, already computed
+// from its own transaction-scoped PricingContext) and must not be touched.
+// `pricingEvidence` is always null from this shared builder; manual callers
+// (actions/listings.ts) overlay their own fetched PricingEvidence afterward —
+// see riskPricingQuery.ts. Automation never sets/reads pricingEvidence at all
+// (it evaluates risk via evaluateRiskPolicy directly, never checkRiskGate, so
+// this context is never persisted for automation).
 export function buildListingActivationContext(
   itemId: string,
   catalogId: string,
@@ -32,6 +40,7 @@ export function buildListingActivationContext(
   sellerAgreement: { type: string; agreedBuyoutAmount: unknown; acceptedItemCount: number | null } | null,
 ): ListingActivationContext {
   return {
+    pricingContextVersion: 2,
     itemId,
     catalogModelId: catalogId,
     proposedPriceCents,
@@ -42,6 +51,7 @@ export function buildListingActivationContext(
       sellerAgreement?.type === 'buyout' && sellerAgreement.acceptedItemCount === 1 && sellerAgreement.agreedBuyoutAmount
         ? Math.round(parseFloat((sellerAgreement.agreedBuyoutAmount as { toString(): string }).toString()) * 100)
         : null,
+    pricingEvidence: null,
   }
 }
 

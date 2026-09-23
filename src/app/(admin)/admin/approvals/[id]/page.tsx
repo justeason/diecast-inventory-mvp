@@ -4,6 +4,8 @@ import { isAdminAuthenticated } from '@/lib/adminAuth'
 import { prisma } from '@/lib/prisma'
 import { getApprovalDetail, getApprovalStaleness } from '@/lib/riskPolicyQuery'
 import { RiskApprovalDecisionForm } from '@/components/admin/RiskApprovalDecisionForm'
+import { ADMIN_CONFIDENCE_LABELS } from '@/lib/adminPricingDisplay'
+import type { PricingEvidence } from '@/lib/riskPolicy'
 
 export const dynamic = 'force-dynamic'
 
@@ -12,6 +14,32 @@ const NOTE_REQUIRED_ACTIONS = new Set(['agreement_commission_override', 'seller_
 function catalogLabel(m: { brand: string; name: string; year: number | null } | null): string {
   if (!m) return '(deleted)'
   return [m.brand, m.name, m.year ? `(${m.year})` : null].filter(Boolean).join(' ')
+}
+
+function usd(cents: number): string {
+  return `$${(cents / 100).toFixed(2)}`
+}
+
+const SPECIFICITY_LABELS: Record<string, string> = {
+  model_variant_condition: 'Exact packaging + condition',
+  model_variant: 'Packaging-level',
+  model: 'Model-level',
+}
+
+// 32C §35/§36: canonical (pricingContextVersion === 2) pricing summary, shared
+// across listing_activation/listing_price_change/item_catalog_reassignment —
+// display-only, never invents Recommended/Target/Fair-Value language (§39).
+// Legacy (pre-V2) decisionContext shapes are never reinterpreted through this
+// path — they fall through to the raw-JSON section below unchanged (§37/§38).
+type PricingSummary = { proposedPriceCents: number | null; oldPriceCents: number | null; evidence: PricingEvidence }
+
+function buildPricingSummary(decisionContext: Record<string, unknown>): PricingSummary | null {
+  if (decisionContext.pricingContextVersion !== 2) return null
+  return {
+    proposedPriceCents: typeof decisionContext.proposedPriceCents === 'number' ? decisionContext.proposedPriceCents : null,
+    oldPriceCents: typeof decisionContext.oldPriceCents === 'number' ? decisionContext.oldPriceCents : null,
+    evidence: (decisionContext.pricingEvidence as PricingEvidence | undefined) ?? null,
+  }
 }
 
 export default async function ApprovalDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -36,6 +64,8 @@ export default async function ApprovalDetailPage({ params }: { params: Promise<{
     ])
     mergeSummary = { sourceLabel: catalogLabel(source), canonicalLabel: catalogLabel(canonical) }
   }
+
+  const pricingSummary = buildPricingSummary(detail.decisionContext)
 
   return (
     <div className="max-w-3xl">
@@ -69,6 +99,37 @@ export default async function ApprovalDetailPage({ params }: { params: Promise<{
           <Link href="/admin/catalog/duplicates" className="mt-3 inline-block text-blue-600 hover:underline">
             View catalog duplicates queue →
           </Link>
+        </div>
+      )}
+
+      {pricingSummary && (
+        <div className="mt-4 rounded-md border border-gray-200 bg-white p-4 text-sm">
+          <p className="text-xs text-gray-500 mb-2">Pricing summary</p>
+          <dl className="space-y-1.5">
+            {pricingSummary.proposedPriceCents != null && (
+              <div className="flex gap-3"><dt className="text-gray-500 w-48 shrink-0">Proposed Listing Price</dt><dd className="text-gray-900">{usd(pricingSummary.proposedPriceCents)}</dd></div>
+            )}
+            {pricingSummary.oldPriceCents != null && (
+              <div className="flex gap-3"><dt className="text-gray-500 w-48 shrink-0">Previous Listing Price</dt><dd className="text-gray-900">{usd(pricingSummary.oldPriceCents)}</dd></div>
+            )}
+            {pricingSummary.evidence ? (
+              <>
+                <div className="flex gap-3"><dt className="text-gray-500 w-48 shrink-0">Estimated Market Value</dt><dd className="text-gray-900">{usd(pricingSummary.evidence.estimatedValueCents)}</dd></div>
+                {pricingSummary.evidence.marketRangeLowCents != null && pricingSummary.evidence.marketRangeHighCents != null && (
+                  <div className="flex gap-3"><dt className="text-gray-500 w-48 shrink-0">Market Range</dt><dd className="text-gray-900">{usd(pricingSummary.evidence.marketRangeLowCents)}–{usd(pricingSummary.evidence.marketRangeHighCents)}</dd></div>
+                )}
+                <div className="flex gap-3"><dt className="text-gray-500 w-48 shrink-0">Confidence</dt><dd className="text-gray-900">{ADMIN_CONFIDENCE_LABELS[pricingSummary.evidence.confidence]}</dd></div>
+                <div className="flex gap-3"><dt className="text-gray-500 w-48 shrink-0">Pricing Evidence</dt><dd className="text-gray-900">{pricingSummary.evidence.usedSampleCount} used ({pricingSummary.evidence.rawSampleCount} raw, {pricingSummary.evidence.excludedOutlierCount} excluded)</dd></div>
+                <div className="flex gap-3"><dt className="text-gray-500 w-48 shrink-0">Requested Specificity</dt><dd className="text-gray-900">{SPECIFICITY_LABELS[pricingSummary.evidence.requestedSpecificity]}</dd></div>
+                <div className="flex gap-3"><dt className="text-gray-500 w-48 shrink-0">Used Specificity</dt><dd className="text-gray-900">{SPECIFICITY_LABELS[pricingSummary.evidence.resolvedSpecificity]}</dd></div>
+                {pricingSummary.evidence.extendedHistoryUsed && (
+                  <div className="flex gap-3"><dt className="text-gray-500 w-48 shrink-0">Extended History</dt><dd className="text-gray-900">Includes older sales beyond the recent window.</dd></div>
+                )}
+              </>
+            ) : (
+              <p className="text-gray-500">No canonical pricing evidence was available at request time.</p>
+            )}
+          </dl>
         </div>
       )}
 

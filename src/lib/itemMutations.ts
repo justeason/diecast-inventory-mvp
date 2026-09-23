@@ -10,9 +10,10 @@
 
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
-import { getPricingIntelligence } from '@/lib/pricingIntelligenceQuery'
+import { fetchRiskPricingEvidence } from '@/lib/riskPricingQuery'
 import { checkRiskGate, consumeApprovedRiskGate, markApprovalConsumed } from '@/lib/actions/riskApprovals'
-import type { ItemCatalogReassignmentContext } from '@/lib/riskPolicy'
+import { internalPriceToCents } from '@/lib/marketMoney'
+import type { ItemCatalogReassignmentContext, PricingEvidence } from '@/lib/riskPolicy'
 
 type TxClient = Prisma.TransactionClient
 
@@ -137,24 +138,30 @@ export type CatalogReassignmentSourceItem = {
   sellerAgreement: { type: string; agreedBuyoutAmount: { toString(): string } | null; acceptedItemCount: number | null } | null
 }
 
+// 32C: pricingEvidence comes from the DESTINATION CatalogModel, model-level
+// only — the destination MarketVariant is never guessed/reused from the old
+// model (§6). estimatedValueCents for the authoritative-value hierarchy is
+// derived from the same evidence, never fetched twice.
 export function buildItemCatalogReassignmentContext(
   itemId: string,
   newCatalogModelId: string,
   existing: CatalogReassignmentSourceItem,
-  estimatedValueCents: number | null,
+  pricingEvidence: PricingEvidence,
 ): ItemCatalogReassignmentContext {
   return {
+    pricingContextVersion: 2,
     itemId,
     oldCatalogModelId: existing.catalogId,
     newCatalogModelId,
     hasCompletedSale: existing.status === 'sold' || existing.orderItems.length > 0,
-    completedSaleAmountCents: existing.orderItems[0] ? Math.round(existing.orderItems[0].price * 100) : null,
-    currentListingPriceCents: existing.listing ? Math.round(existing.listing.price * 100) : null,
-    estimatedValueCents,
+    completedSaleAmountCents: existing.orderItems[0] ? internalPriceToCents(existing.orderItems[0].price) : null,
+    currentListingPriceCents: existing.listing ? internalPriceToCents(existing.listing.price) : null,
+    estimatedValueCents: pricingEvidence?.estimatedValueCents ?? null,
     agreementBuyoutTotalCents:
       existing.sellerAgreement?.type === 'buyout' && existing.sellerAgreement.acceptedItemCount === 1 && existing.sellerAgreement.agreedBuyoutAmount
         ? Math.round(parseFloat(existing.sellerAgreement.agreedBuyoutAmount.toString()) * 100)
         : null,
+    pricingEvidence,
   }
 }
 
@@ -176,8 +183,8 @@ export async function setItemCatalog(itemId: string, catalogId: string, requeste
   // never generate an approval request (section 25).
   if (catalogId === existing.catalogId) return { outcome: 'unchanged' }
 
-  const intel = await getPricingIntelligence(catalogId)
-  const riskContext = buildItemCatalogReassignmentContext(itemId, catalogId, existing, intel?.estimatedValueCents ?? null)
+  const pricingEvidence = await fetchRiskPricingEvidence({ catalogModelId: catalogId, asOf: new Date() })
+  const riskContext = buildItemCatalogReassignmentContext(itemId, catalogId, existing, pricingEvidence)
 
   const gate = await checkRiskGate({ action: 'item_catalog_reassignment', context: riskContext, targetType: 'item_instance', targetId: itemId, requestedBy })
   if (gate.decision === 'deny') return { outcome: 'denied', reason: gate.reasons.join(' ') }

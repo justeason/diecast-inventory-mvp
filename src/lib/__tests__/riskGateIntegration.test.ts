@@ -374,10 +374,10 @@ describe('15F-review section 6/7: server-authoritative context reconstruction, n
     expect(mutationsSrc).toMatch(/hasCompletedSale:\s*existing\.status === 'sold'/)
   })
 
-  it('listings.ts: listing_price_change old price and guidance come from a fresh DB read (before.price) and 14C, never from the submitted "price" field alone', () => {
+  it('listings.ts: listing_price_change old price and canonical evidence come from a fresh DB read (before.price/before.item), never from the submitted "price" field alone', () => {
     const src = readSrc('src/lib/actions/listings.ts')
-    expect(src).toMatch(/oldPriceCents = Math\.round\(before\.price \* 100\)/)
-    expect(src).toMatch(/getPricingIntelligence\(before\.item\.catalogId\)/)
+    expect(src).toMatch(/oldPriceCents = internalPriceToCents\(before\.price\)/)
+    expect(src).toMatch(/fetchRiskPricingEvidence\(\{\s*\n\s*catalogModelId: before\.item\.catalogId/)
   })
 
   it('sellerAgreements.ts: the override commission terms bound into the fingerprint come from the persisted agreement row (fresh, re-fetched), never from acceptance formData (which only carries acceptanceMethod)', () => {

@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { redirect } from 'next/navigation'
-import { getPricingIntelligence } from '@/lib/pricingIntelligenceQuery'
+import { fetchRiskPricingEvidence } from '@/lib/riskPricingQuery'
 import { checkRiskGate, consumeApprovedRiskGate, markApprovalConsumed, type RiskGateCheckResult } from '@/lib/actions/riskApprovals'
 import type { ItemCatalogReassignmentContext } from '@/lib/riskPolicy'
 import { ITEM_CONDITIONS, validateItemStorageMove, buildItemCatalogReassignmentContext } from '@/lib/itemMutations'
@@ -159,8 +159,10 @@ export async function updateItemInstance(
   let gate: RiskGateCheckResult | null = null
   let riskContext: ItemCatalogReassignmentContext | null = null
   if (catalogChanging) {
-    const intel = await getPricingIntelligence(catalogId)
-    riskContext = buildItemCatalogReassignmentContext(id, catalogId, existing, intel?.estimatedValueCents ?? null)
+    // §6: destination-model evidence, model-level only — the destination
+    // MarketVariant isn't resolved until inside the mutation transaction below.
+    const pricingEvidence = await fetchRiskPricingEvidence({ catalogModelId: catalogId, asOf: new Date() })
+    riskContext = buildItemCatalogReassignmentContext(id, catalogId, existing, pricingEvidence)
     gate = await checkRiskGate({ action: 'item_catalog_reassignment', context: riskContext, targetType: 'item_instance', targetId: id, requestedBy: 'admin' })
     if (gate.decision === 'deny') return { errors: { catalogId: [gate.reasons.join(' ')] } }
     if (gate.decision === 'pending') {

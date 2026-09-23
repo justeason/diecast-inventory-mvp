@@ -18,7 +18,8 @@ vi.mock('@/lib/prisma', () => ({
     $transaction: vi.fn(),
   },
 }))
-vi.mock('@/lib/pricingIntelligenceQuery', () => ({ getPricingIntelligence: vi.fn().mockResolvedValue(null) }))
+// 32C: canonical replacement for the legacy 14C pricingIntelligenceQuery mock.
+vi.mock('@/lib/riskPricingQuery', () => ({ fetchRiskPricingEvidence: vi.fn().mockResolvedValue(null) }))
 vi.mock('@/lib/actions/riskApprovals', () => ({
   checkRiskGate: vi.fn(),
   consumeApprovedRiskGate: vi.fn(),

@@ -13,7 +13,8 @@ vi.mock('@/lib/prisma', () => ({
     $transaction: vi.fn(),
   },
 }))
-vi.mock('@/lib/pricingIntelligenceQuery', () => ({ getPricingIntelligence: vi.fn().mockResolvedValue(null) }))
+// 32C: canonical replacement for the legacy 14C pricingIntelligenceQuery mock.
+vi.mock('@/lib/riskPricingQuery', () => ({ fetchRiskPricingEvidence: vi.fn().mockResolvedValue(null) }))
 vi.mock('@/lib/buyerAlertsTrigger', () => ({ createAvailableFanoutJob: vi.fn(), createPriceChangeFanoutJob: vi.fn() }))
 vi.mock('@/lib/buyerAlertsFanoutProcessor', () => ({ processFanoutJobs: vi.fn().mockResolvedValue(undefined) }))
 vi.mock('next/navigation', () => ({ redirect: vi.fn(() => { throw new Error('REDIRECT') }) }))
