@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
+import Image from 'next/image'
 
 type Photo = {
   url: string
@@ -52,12 +53,14 @@ export function PhotoGallery({ photos, title }: Props) {
           type="button"
           onClick={() => setLightboxOpen(true)}
           aria-label={`View larger — ${current.type}`}
-          className="block w-full aspect-[4/3] rounded-lg overflow-hidden bg-gray-100 cursor-zoom-in focus:outline-none focus:ring-2 focus:ring-gray-900"
+          className="relative block w-full aspect-[4/3] rounded-lg overflow-hidden bg-gray-100 cursor-zoom-in focus:outline-none focus:ring-2 focus:ring-gray-900"
         >
-          <img
+          <Image
             src={current.url}
             alt={`${current.type} view — ${title}`}
-            className="w-full h-full object-contain"
+            fill
+            sizes="(min-width: 1024px) 50vw, 100vw"
+            className="object-contain"
           />
         </button>
 
@@ -79,16 +82,18 @@ export function PhotoGallery({ photos, title }: Props) {
                 onClick={() => setSelectedIndex(i)}
                 aria-pressed={i === selectedIndex}
                 aria-label={`${photo.type} view`}
-                className={`shrink-0 w-16 h-16 rounded overflow-hidden border-2 transition-colors ${
+                className={`relative shrink-0 w-16 h-16 rounded overflow-hidden border-2 transition-colors ${
                   i === selectedIndex
                     ? 'border-gray-900'
                     : 'border-transparent hover:border-gray-300'
                 }`}
               >
-                <img
+                <Image
                   src={photo.url}
                   alt={`${photo.type} view`}
-                  className="w-full h-full object-cover"
+                  fill
+                  sizes="64px"
+                  className="object-cover"
                 />
               </button>
             ))}
@@ -126,11 +131,20 @@ export function PhotoGallery({ photos, title }: Props) {
               type="button"
               onClick={() => setLightboxOpen(false)}
               aria-label="Close image"
-              className="absolute -top-9 right-0 flex h-8 w-8 items-center justify-center text-white/80 hover:text-white text-xl leading-none"
+              className="absolute -top-11 right-0 flex h-11 w-11 items-center justify-center text-white/80 hover:text-white text-xl leading-none"
             >
               ✕
             </button>
 
+            {/* 37B: intentionally left as a raw <img>, not next/image — Photo
+                has no stored width/height, and this element relies on the
+                browser's natural intrinsic-sizing (shrink-to-fit within
+                85vw/85vh, preserving the image's own aspect ratio) rather than
+                filling a pre-sized box. next/image's `fill` mode stretches to
+                its parent's box via object-fit and cannot replicate that
+                without either fabricated dimensions or a second JS-measured
+                sizing pass — a real incompatibility, not a lint workaround. */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={current.url}
               alt={`${current.type} view — ${title}`}

@@ -650,9 +650,10 @@ describe('16M: AccountIntentActions — Want continuation (Part Q/R)', () => {
 })
 
 describe('16M: AccountIntentActions — Own continuation (Part S/T)', () => {
-  it('not owned → Continue — Add to Collection, bound to the unmodified addToCollectionAction (existing redirect/quantity-1 semantics preserved)', () => {
+  it('not owned → Continue — Add to Collection, calling the unmodified addToCollectionAction (existing redirect/quantity-1 semantics preserved)', () => {
     expect(intentActionsSrc).toContain('Continue — Add to Collection')
-    expect(intentActionsSrc).toContain('addToCollectionAction.bind(null, catalogModelId)')
+    // 37B: wrapped call instead of a bare .bind — see catalogModelDomainActions.ts
+    expect(intentActionsSrc).toContain('await addToCollectionAction(catalogModelId, formData)')
   })
   it('already owned → "✓ Own N" from relationship.ownedQuantity, no add-mutation form, offers View Collection Item + Sell One', () => {
     expect(intentActionsSrc).toContain('✓ Own{relationship.ownedQuantity !== null')

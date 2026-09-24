@@ -294,17 +294,22 @@ describe('16G Final Reconciliation: CatalogActionsPopup nesting and client-state
 
 describe('16G Final Reconciliation: accessible-name plumbing and PendingActionButton usage sites', () => {
   it('Want, Unwant, and Add to Collection each render through PendingActionButton with an explicit ariaLabel prop (not left to default text)', () => {
-    const wantFormIdx = actionsSrc.indexOf('wantAction.bind(null, catalogModelId)')
+    // 37B: bare `.bind(null, catalogModelId)` form actions were replaced with
+    // explicit `async (formData) => { await xAction(catalogModelId, ...) }`
+    // wrappers so they type-check against <form>'s Promise<void> action prop
+    // now that wantAction/unwantAction/addToCollectionAction return
+    // CatalogModelActionState — same functions, same args, called not bound.
+    const wantFormIdx = actionsSrc.indexOf('await wantAction(catalogModelId, formData)')
     const wantBlock = actionsSrc.slice(wantFormIdx - 50, wantFormIdx + 350)
     expect(wantBlock).toContain('PendingActionButton')
     expect(wantBlock).toContain('ariaLabel={`Want ${modelName}`}')
 
-    const unwantFormIdx = actionsSrc.indexOf('unwantAction.bind')
+    const unwantFormIdx = actionsSrc.indexOf('await unwantAction(catalogModelId,')
     const unwantBlock = actionsSrc.slice(unwantFormIdx - 50, unwantFormIdx + 350)
     expect(unwantBlock).toContain('PendingActionButton')
     expect(unwantBlock).toContain('ariaLabel={`Remove ${modelName} from Wanted`}')
 
-    const addFormIdx = actionsSrc.indexOf('addToCollectionAction.bind')
+    const addFormIdx = actionsSrc.indexOf('await addToCollectionAction(catalogModelId,')
     const addBlock = actionsSrc.slice(addFormIdx - 50, addFormIdx + 350)
     expect(addBlock).toContain('PendingActionButton')
     expect(addBlock).toContain('ariaLabel={`I Own It — ${modelName}`}')

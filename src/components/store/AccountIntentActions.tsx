@@ -73,7 +73,7 @@ export function AccountIntentActions({ action, catalogModelId, modelName, relati
       )
     }
     return (
-      <form action={addToCollectionAction.bind(null, catalogModelId)}>
+      <form action={async (formData: FormData) => { await addToCollectionAction(catalogModelId, formData) }}>
         <PendingActionButton
           label="Continue — Add to Collection"
           pendingLabel="Adding…"

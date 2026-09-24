@@ -36,12 +36,15 @@ function fmtUsd(cents: number): string {
 // Matches →" already points here) even though it is now reachable via the
 // "Available Now" tab too.
 function TabBar({ activeView, unreadAlertCount }: { activeView: 'all' | 'available' | 'alerts'; unreadAlertCount: number }) {
+  // 37B: same overflow-x-auto/shrink-0/whitespace-nowrap pattern as AccountNav
+  // — a two-digit unread count ("(12)") pushed this bar past 375px with no
+  // wrap/scroll handling; now it scrolls instead of silently clipping a tab.
   const tabCls = (active: boolean) =>
-    `px-3 py-2 text-sm border-b-2 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-900 ${
+    `shrink-0 whitespace-nowrap px-3 py-2 text-sm border-b-2 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-900 ${
       active ? 'border-gray-900 text-gray-900 font-medium' : 'border-transparent text-gray-500 hover:text-gray-900'
     }`
   return (
-    <nav aria-label="Wanted & Alerts views" className="flex gap-1 border-b border-gray-200">
+    <nav aria-label="Wanted & Alerts views" className="flex gap-1 overflow-x-auto border-b border-gray-200">
       <Link href="/account/wanted" aria-current={activeView === 'all' ? 'page' : undefined} className={tabCls(activeView === 'all')}>
         All Wanted
       </Link>

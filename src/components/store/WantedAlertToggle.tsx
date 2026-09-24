@@ -26,7 +26,7 @@ export function WantedAlertToggle({
         role="switch"
         aria-checked={enabled}
         aria-label={`${enabled ? 'Disable' : 'Enable'} ${label.toLowerCase()} alerts for ${modelName}`}
-        className={`text-xs rounded-full px-2 py-0.5 border transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-900 ${
+        className={`min-h-11 inline-flex items-center text-xs rounded-full px-3 border transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-900 ${
           enabled
             ? 'border-gray-300 bg-gray-100 text-gray-700 hover:bg-gray-200'
             : 'border-gray-200 bg-white text-gray-400 hover:bg-gray-50'

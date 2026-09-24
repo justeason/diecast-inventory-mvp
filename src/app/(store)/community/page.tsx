@@ -35,34 +35,36 @@ export default async function CommunityPage({
           <h2 className="text-base font-semibold text-gray-900 mb-1">Largest collections</h2>
           <p className="text-xs text-gray-400 mb-4">Based on public collection items only.</p>
           <div className="rounded-lg border border-gray-200 overflow-hidden">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
-                <tr>
-                  <th className="px-4 py-2 text-left w-10">#</th>
-                  <th className="px-4 py-2 text-left">Collector</th>
-                  <th className="px-4 py-2 text-right">Models</th>
-                  <th className="px-4 py-2 text-right">Items</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {leaderboards.largestCollections.map(entry => (
-                  <tr key={entry.handle} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-4 py-3 text-gray-400 text-xs">{entry.rank}</td>
-                    <td className="px-4 py-3">
-                      <Link
-                        href={`/community/${entry.handle}`}
-                        className="font-medium text-gray-900 hover:text-gray-600"
-                      >
-                        {entry.displayName}
-                      </Link>
-                      <span className="ml-2 text-xs text-gray-400">@{entry.handle}</span>
-                    </td>
-                    <td className="px-4 py-3 text-right text-gray-700">{entry.distinctModels}</td>
-                    <td className="px-4 py-3 text-right text-gray-700">{entry.totalItems}</td>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
+                  <tr>
+                    <th className="px-4 py-2 text-left w-10">#</th>
+                    <th className="px-4 py-2 text-left">Collector</th>
+                    <th className="px-4 py-2 text-right">Models</th>
+                    <th className="px-4 py-2 text-right">Items</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {leaderboards.largestCollections.map(entry => (
+                    <tr key={entry.handle} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-4 py-3 text-gray-400 text-xs">{entry.rank}</td>
+                      <td className="px-4 py-3">
+                        <Link
+                          href={`/community/${entry.handle}`}
+                          className="font-medium text-gray-900 hover:text-gray-600"
+                        >
+                          {entry.displayName}
+                        </Link>
+                        <span className="ml-2 text-xs text-gray-400">@{entry.handle}</span>
+                      </td>
+                      <td className="px-4 py-3 text-right text-gray-700">{entry.distinctModels}</td>
+                      <td className="px-4 py-3 text-right text-gray-700">{entry.totalItems}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </section>
       )}
@@ -73,34 +75,36 @@ export default async function CommunityPage({
           <h2 className="text-base font-semibold text-gray-900 mb-1">Active collectors</h2>
           <p className="text-xs text-gray-400 mb-4">Most additions to their collection in the last 30 days.</p>
           <div className="rounded-lg border border-gray-200 overflow-hidden">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
-                <tr>
-                  <th className="px-4 py-2 text-left w-10">#</th>
-                  <th className="px-4 py-2 text-left">Collector</th>
-                  <th className="px-4 py-2 text-right">Additions</th>
-                  <th className="px-4 py-2 text-right">Models</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {leaderboards.activeCollectors.map(entry => (
-                  <tr key={entry.handle} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-4 py-3 text-gray-400 text-xs">{entry.rank}</td>
-                    <td className="px-4 py-3">
-                      <Link
-                        href={`/community/${entry.handle}`}
-                        className="font-medium text-gray-900 hover:text-gray-600"
-                      >
-                        {entry.displayName}
-                      </Link>
-                      <span className="ml-2 text-xs text-gray-400">@{entry.handle}</span>
-                    </td>
-                    <td className="px-4 py-3 text-right text-gray-700">{entry.additions}</td>
-                    <td className="px-4 py-3 text-right text-gray-700">{entry.distinctModels}</td>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
+                  <tr>
+                    <th className="px-4 py-2 text-left w-10">#</th>
+                    <th className="px-4 py-2 text-left">Collector</th>
+                    <th className="px-4 py-2 text-right">Additions</th>
+                    <th className="px-4 py-2 text-right">Models</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {leaderboards.activeCollectors.map(entry => (
+                    <tr key={entry.handle} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-4 py-3 text-gray-400 text-xs">{entry.rank}</td>
+                      <td className="px-4 py-3">
+                        <Link
+                          href={`/community/${entry.handle}`}
+                          className="font-medium text-gray-900 hover:text-gray-600"
+                        >
+                          {entry.displayName}
+                        </Link>
+                        <span className="ml-2 text-xs text-gray-400">@{entry.handle}</span>
+                      </td>
+                      <td className="px-4 py-3 text-right text-gray-700">{entry.additions}</td>
+                      <td className="px-4 py-3 text-right text-gray-700">{entry.distinctModels}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </section>
       )}
@@ -111,32 +115,34 @@ export default async function CommunityPage({
           <h2 className="text-base font-semibold text-gray-900 mb-1">Verified marketplace collectors</h2>
           <p className="text-xs text-gray-400 mb-4">Collectors with confirmed purchases in the last 180 days.</p>
           <div className="rounded-lg border border-gray-200 overflow-hidden">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
-                <tr>
-                  <th className="px-4 py-2 text-left w-10">#</th>
-                  <th className="px-4 py-2 text-left">Collector</th>
-                  <th className="px-4 py-2 text-right">Items purchased</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {leaderboards.verifiedCollectors.map(entry => (
-                  <tr key={entry.handle} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-4 py-3 text-gray-400 text-xs">{entry.rank}</td>
-                    <td className="px-4 py-3">
-                      <Link
-                        href={`/community/${entry.handle}`}
-                        className="font-medium text-gray-900 hover:text-gray-600"
-                      >
-                        {entry.displayName}
-                      </Link>
-                      <span className="ml-2 text-xs text-gray-400">@{entry.handle}</span>
-                    </td>
-                    <td className="px-4 py-3 text-right text-gray-700">{entry.completedItemCount}</td>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
+                  <tr>
+                    <th className="px-4 py-2 text-left w-10">#</th>
+                    <th className="px-4 py-2 text-left">Collector</th>
+                    <th className="px-4 py-2 text-right">Items purchased</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {leaderboards.verifiedCollectors.map(entry => (
+                    <tr key={entry.handle} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-4 py-3 text-gray-400 text-xs">{entry.rank}</td>
+                      <td className="px-4 py-3">
+                        <Link
+                          href={`/community/${entry.handle}`}
+                          className="font-medium text-gray-900 hover:text-gray-600"
+                        >
+                          {entry.displayName}
+                        </Link>
+                        <span className="ml-2 text-xs text-gray-400">@{entry.handle}</span>
+                      </td>
+                      <td className="px-4 py-3 text-right text-gray-700">{entry.completedItemCount}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </section>
       )}

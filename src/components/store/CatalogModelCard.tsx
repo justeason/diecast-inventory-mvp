@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import { PhotoThumbnail } from '@/components/shared/PhotoThumbnail'
-import { PendingActionButton } from './PendingActionButton'
+import { CatalogActionForm } from './CatalogActionForm'
 import { wantAction, unwantAction, addToCollectionAction } from '@/lib/actions/catalogModelDomainActions'
 import { buildAccountIntentHref } from '@/lib/customerModelIntent'
 import { centsToDisplay } from '@/lib/marketModelPageDisplay'
@@ -119,13 +119,15 @@ export function CatalogModelCard({ model, availability, relationship, marketValu
               Want
             </Link>
           ) : wanted ? (
-            <form action={unwantAction.bind(null, model.id, wantedId!)}>
-              <PendingActionButton label="Wanted" pendingLabel="…" ariaLabel={`Remove ${modelName} from Wanted`} className={`w-full ${actionBtnActiveCls}`} />
-            </form>
+            <CatalogActionForm
+              action={unwantAction.bind(null, model.id, wantedId!)}
+              label="Wanted" pendingLabel="…" ariaLabel={`Remove ${modelName} from Wanted`} className={`w-full ${actionBtnActiveCls}`}
+            />
           ) : (
-            <form action={wantAction.bind(null, model.id)}>
-              <PendingActionButton label="Want" pendingLabel="…" ariaLabel={`Want this — ${modelName}`} className={`w-full ${actionBtnCls}`} />
-            </form>
+            <CatalogActionForm
+              action={wantAction.bind(null, model.id)}
+              label="Want" pendingLabel="…" ariaLabel={`Want this — ${modelName}`} className={`w-full ${actionBtnCls}`}
+            />
           )}
 
           {!isAuthenticated ? (
@@ -146,9 +148,10 @@ export function CatalogModelCard({ model, availability, relationship, marketValu
               <span className="hidden md:inline">Owned{ownedQuantity !== null ? ` ${ownedQuantity}` : ''}</span>
             </Link>
           ) : (
-            <form action={addToCollectionAction.bind(null, model.id)}>
-              <PendingActionButton label="Own" pendingLabel="…" ariaLabel={`I Own It — ${modelName}`} className={`w-full ${actionBtnCls}`} />
-            </form>
+            <CatalogActionForm
+              action={addToCollectionAction.bind(null, model.id)}
+              label="Own" pendingLabel="…" ariaLabel={`I Own It — ${modelName}`} className={`w-full ${actionBtnCls}`}
+            />
           )}
 
           <Link href={sellHref} aria-label={`Sell this item — ${modelName}`} className={actionBtnCls}>

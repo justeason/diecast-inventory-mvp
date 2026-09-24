@@ -175,6 +175,7 @@ export function CartPage() {
                 id="buyerName"
                 name="buyerName"
                 type="text"
+                autoComplete="name"
                 required
                 className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
               />
@@ -191,6 +192,8 @@ export function CartPage() {
                 id="buyerEmail"
                 name="buyerEmail"
                 type="email"
+                inputMode="email"
+                autoComplete="email"
                 required
                 className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
               />
@@ -208,6 +211,8 @@ export function CartPage() {
                 id="buyerPhone"
                 name="buyerPhone"
                 type="tel"
+                inputMode="tel"
+                autoComplete="tel"
                 className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
               />
             </div>
@@ -228,7 +233,7 @@ export function CartPage() {
             <button
               type="submit"
               disabled={isPending}
-              className="rounded-md bg-gray-900 px-6 py-2 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50 transition-colors"
+              className="min-h-11 rounded-md bg-gray-900 px-6 py-2 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50 transition-colors"
             >
               {isPending ? 'Submitting…' : 'Request Order'}
             </button>

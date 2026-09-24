@@ -51,11 +51,11 @@ export function CatalogModelActions({
           ♡ Want
         </Link>
       ) : wanted ? (
-        <form action={unwantAction.bind(null, catalogModelId, wantedId!)}>
+        <form action={async () => { await unwantAction(catalogModelId, wantedId!) }}>
           <PendingActionButton label="♥ Wanted" pendingLabel="Removing…" ariaLabel={`Remove ${modelName} from Wanted`} className={wantedBtnCls} />
         </form>
       ) : (
-        <form action={wantAction.bind(null, catalogModelId)}>
+        <form action={async (formData: FormData) => { await wantAction(catalogModelId, formData) }}>
           <PendingActionButton label="♡ Want" pendingLabel="Wanting…" ariaLabel={`Want ${modelName}`} className={btnCls} />
         </form>
       )}
@@ -71,7 +71,7 @@ export function CatalogModelActions({
           Owned{ownedQuantity !== null ? ` ${ownedQuantity}` : ''}
         </Link>
       ) : (
-        <form action={addToCollectionAction.bind(null, catalogModelId)}>
+        <form action={async (formData: FormData) => { await addToCollectionAction(catalogModelId, formData) }}>
           <PendingActionButton label="I Own It" pendingLabel="Adding…" ariaLabel={`I Own It — ${modelName}`} className={btnCls} />
         </form>
       )}

@@ -173,8 +173,13 @@ describe('16L/16M: anonymous candidate actions preserve intent through sign-in, 
 // ── Part G/H: Own — not owned / owned ────────────────────────────────────────────
 
 describe('16L/20A: "I Own It" reuses createCollectionItem flow unmodified', () => {
-  it('not-owned branch submits addToCollectionAction.bind(null, catalogModelId) — same P2002/uniqueness path as /catalog/[id]', () => {
-    expect(actionsCompSrc).toContain('addToCollectionAction.bind(null, catalogModelId)')
+  it('not-owned branch submits addToCollectionAction(catalogModelId, ...) — same P2002/uniqueness path as /catalog/[id]', () => {
+    // 37B: the bare `.bind(null, catalogModelId)` form call was replaced with an
+    // explicit wrapper `action={async (formData) => { await addToCollectionAction(catalogModelId, formData) }}`
+    // so it type-checks against <form>'s Promise<void> action prop now that
+    // addToCollectionAction returns CatalogModelActionState — same function,
+    // same args, same mutation, just called instead of bound.
+    expect(actionsCompSrc).toContain('await addToCollectionAction(catalogModelId, formData)')
   })
   it('owned branch renders a Link to Collection detail, never another Add button, never a remove-ownership action', () => {
     const ownedBlockIdx = actionsCompSrc.indexOf('collectionItemId ? (')

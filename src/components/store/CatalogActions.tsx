@@ -62,7 +62,7 @@ function SecondaryActions({
   return (
     <>
       {!collectionItemId && (
-        <form action={addToCollectionAction.bind(null, catalogModelId)}>
+        <form action={async (formData: FormData) => { await addToCollectionAction(catalogModelId, formData) }}>
           <PendingActionButton
             label="I Own It"
             pendingLabel="Adding…"
@@ -132,7 +132,7 @@ export function CatalogActions({
             ♡ Want
           </Link>
         ) : wanted ? (
-          <form action={unwantAction.bind(null, catalogModelId, wantedId!)}>
+          <form action={async () => { await unwantAction(catalogModelId, wantedId!) }}>
             <PendingActionButton
               label="♥ Wanted"
               pendingLabel="Removing…"
@@ -141,7 +141,7 @@ export function CatalogActions({
             />
           </form>
         ) : (
-          <form action={wantAction.bind(null, catalogModelId)}>
+          <form action={async (formData: FormData) => { await wantAction(catalogModelId, formData) }}>
             <PendingActionButton
               label="♡ Want"
               pendingLabel="Wanting…"

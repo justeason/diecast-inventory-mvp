@@ -44,6 +44,7 @@ export function WantedEditForm({ id, defaultMaxPrice, defaultNotes }: Props) {
           id="edit-maxDesiredPrice"
           name="maxDesiredPrice"
           type="number"
+          inputMode="decimal"
           min="0.01"
           step="0.01"
           defaultValue={defaultMaxPrice}

@@ -83,7 +83,7 @@ export function CaptureCandidateActions({ catalogModelId, modelName, initialRela
           Owned{ownedQuantity !== null ? ` ${ownedQuantity}` : ''}
         </Link>
       ) : (
-        <form action={addToCollectionAction.bind(null, catalogModelId)}>
+        <form action={async (formData: FormData) => { await addToCollectionAction(catalogModelId, formData) }}>
           <PendingActionButton label="I Own It" pendingLabel="Adding…" ariaLabel={`I Own It — ${modelName}`} className={btnCls} />
         </form>
       )}

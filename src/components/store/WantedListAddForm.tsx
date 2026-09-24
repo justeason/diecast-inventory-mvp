@@ -64,6 +64,7 @@ export function WantedListAddForm() {
             id="maxDesiredPrice"
             name="maxDesiredPrice"
             type="number"
+            inputMode="decimal"
             min="0"
             step="0.01"
             placeholder="0.00"

@@ -408,7 +408,11 @@ describe('16H: Want/Unwant revalidate the hub path narrowly, without broadening 
   })
 
   it('unwantAction now takes catalogModelId as an explicit param (needed to build the hub path) — the shared removeFromWantedList itself is unchanged', () => {
-    expect(domainActionsSrc).toContain('export async function unwantAction(catalogModelId: string, wantedId: string): Promise<void>')
+    // 37B: unwantAction's return type widened from Promise<void> to
+    // Promise<CatalogModelActionState> so a lost session surfaces as a real
+    // error instead of a silent no-op — removeFromWantedList itself (the
+    // underlying shared mutation) is untouched, still Promise<void>.
+    expect(domainActionsSrc).toContain('export async function unwantAction(catalogModelId: string, wantedId: string): Promise<CatalogModelActionState>')
     const wantedListSrc = readSrc('src/lib/actions/wantedList.ts')
     expect(wantedListSrc).toContain('export async function removeFromWantedList(id: string): Promise<void>')
   })
