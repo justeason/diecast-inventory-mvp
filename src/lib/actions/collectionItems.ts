@@ -22,9 +22,15 @@ export async function toggleCollectionItemPublic(id: string, isPublic: boolean):
 
   const existing = await prisma.collectionItem.findFirst({
     where: { id, profileId: session.profileId },
-    select: { id: true },
+    select: { id: true, catalogId: true },
   })
   if (!existing) return
+
+  // 35B: freeform items (no catalog link) cannot be newly published — the public
+  // showcase has no honest way to identify/display them. Existing rows that were
+  // already isPublic=true before this rule stay as-is in the DB (no backfill) but
+  // public queries exclude them regardless (see communityLeaderboardsQuery.ts).
+  if (isPublic && existing.catalogId === null) return
 
   await prisma.collectionItem.update({ where: { id }, data: { isPublic } })
   updateTag('community-leaderboards')
@@ -147,7 +153,7 @@ export async function createCollectionItem(
   const enumErrors = validateEnums(result.data)
   if (Object.keys(enumErrors).length > 0) return { errors: enumErrors }
 
-  const isPublic = formData.get('isPublic') === 'on'
+  const requestedPublic = formData.get('isPublic') === 'on'
 
   let resolvedCatalogId: string | null = null
   if (catalogIdRaw) {
@@ -186,6 +192,9 @@ export async function createCollectionItem(
   const sourceRaw = formData.get('source')?.toString()
   const source: AcquisitionSource = sourceRaw === 'i_own_it' ? 'i_own_it' : 'manual'
   const unitRecordedCostCents = dbFields.purchasePrice !== null ? internalPriceToCents(dbFields.purchasePrice) : null
+  // 35B: freeform items (no catalog link) cannot be newly published — see
+  // toggleCollectionItemPublic for the same rule applied to the toggle path.
+  const isPublic = requestedPublic && resolvedCatalogId !== null
 
   let item: { id: string }
   try {
@@ -280,7 +289,8 @@ export async function updateCollectionItem(
     resolvedCatalogId = found.id
   }
 
-  const isPublic = formData.get('isPublic') === 'on'
+  // 35B: freeform items (no catalog link) cannot be newly published.
+  const isPublic = formData.get('isPublic') === 'on' && resolvedCatalogId !== null
 
   // 26B §20: quantity is ledger-derived (Σ AcquisitionLot.remainingQuantity) —
   // the general edit form never mutates it directly, regardless of what was

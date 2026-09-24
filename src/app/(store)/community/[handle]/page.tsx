@@ -93,6 +93,9 @@ export default async function PublicProfilePage({ params }: Props) {
                     {item.catalogColor && (
                       <p className="text-xs text-gray-400 truncate">{item.catalogColor}</p>
                     )}
+                    {item.photoUrl && (
+                      <p className="text-xs text-gray-400 mt-1">Model reference image</p>
+                    )}
                   </div>
                 </div>
               )

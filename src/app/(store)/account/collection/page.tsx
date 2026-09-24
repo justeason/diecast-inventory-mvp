@@ -466,18 +466,20 @@ export default async function CollectionListPage({
                           {item.quantity > 1 && (
                             <span className="text-xs text-gray-500">You own {item.quantity}</span>
                           )}
-                          <form action={toggleCollectionItemPublic.bind(null, item.id, !item.isPublic)}>
-                            <button
-                              type="submit"
-                              className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium transition-colors ${
-                                item.isPublic
-                                  ? 'bg-blue-100 text-blue-700 hover:bg-blue-200'
-                                  : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-                              }`}
-                            >
-                              {item.isPublic ? 'Public' : 'Private'}
-                            </button>
-                          </form>
+                          {item.catalogId && (
+                            <form action={toggleCollectionItemPublic.bind(null, item.id, !item.isPublic)}>
+                              <button
+                                type="submit"
+                                className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium transition-colors ${
+                                  item.isPublic
+                                    ? 'bg-blue-100 text-blue-700 hover:bg-blue-200'
+                                    : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                                }`}
+                              >
+                                {item.isPublic ? 'Public' : 'Private'}
+                              </button>
+                            </form>
+                          )}
                         </div>
 
                         {holding && (

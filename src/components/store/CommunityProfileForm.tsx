@@ -45,14 +45,17 @@ export function CommunityProfileForm({ existing }: { existing: Existing }) {
       <div>
         <label className="block text-sm font-medium text-gray-900 mb-1">Handle</label>
         <p className="text-xs text-gray-500 mb-2">
-          3–24 characters, lowercase letters/numbers/underscores. Public URL: /community/yourhandle
+          {existing
+            ? 'Your public handle cannot currently be changed.'
+            : '3–24 characters, lowercase letters/numbers/underscores. Public URL: /community/yourhandle'}
         </p>
         <input
           name="handle"
           type="text"
           defaultValue={existing?.handle ?? ''}
           placeholder="yourhandle"
-          className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+          readOnly={!!existing}
+          className={`w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900 ${existing ? 'bg-gray-50 text-gray-500' : ''}`}
         />
         {state?.errors?.handle && (
           <p className="mt-1 text-xs text-red-600">{state.errors.handle[0]}</p>

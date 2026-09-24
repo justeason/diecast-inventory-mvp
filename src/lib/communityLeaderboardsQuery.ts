@@ -1,4 +1,5 @@
 import { unstable_cache } from 'next/cache'
+import type { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import {
   computeLargestCollections,
@@ -20,6 +21,15 @@ const SCAN_BATCH = 100
 const MS_PER_DAY = 24 * 60 * 60 * 1000
 export const DIRECTORY_PAGE_SIZE = 24
 const PROFILE_RECENT_LIMIT = 24
+
+// 35B: the ONE canonical public-holding eligibility predicate — every public
+// Community query must filter through this, not a hand-rolled subset, so
+// leaderboard/profile semantics can never drift apart again. A holding is
+// eligible iff it is explicitly public, catalog-linked (freeform items have no
+// honest public identity), and still owned (quantity > 0).
+function publicHoldingWhere(extra: Prisma.CollectionItemWhereInput): Prisma.CollectionItemWhereInput {
+  return { ...extra, isPublic: true, catalogId: { not: null }, quantity: { gt: 0 } }
+}
 
 async function scanOptInProfiles(): Promise<QualifyingProfile[]> {
   const results: QualifyingProfile[] = []
@@ -49,7 +59,7 @@ async function scanCollectionItems(
 
   for (;;) {
     const batch = await prisma.collectionItem.findMany({
-      where: { profileId: { in: profileIds }, isPublic: true, quantity: { gt: 0 } },
+      where: publicHoldingWhere({ profileId: { in: profileIds } }),
       select: { id: true, profileId: true, catalogId: true, quantity: true },
       orderBy: { id: 'asc' },
       take: SCAN_BATCH,
@@ -72,7 +82,7 @@ async function scanRecentCollectionItems(
 
   for (;;) {
     const batch = await prisma.collectionItem.findMany({
-      where: { profileId: { in: profileIds }, isPublic: true, createdAt: { gte: windowStart } },
+      where: publicHoldingWhere({ profileId: { in: profileIds }, createdAt: { gte: windowStart } }),
       select: { id: true, profileId: true, catalogId: true, createdAt: true },
       orderBy: { id: 'asc' },
       take: SCAN_BATCH,
@@ -233,7 +243,7 @@ export async function getPublicProfile(handle: string): Promise<PublicProfileDat
 
   const [recentRows, allCatalogRows, recentCount, totalItems, verifiedCount] = await Promise.all([
     prisma.collectionItem.findMany({
-      where: { profileId: community.profileId, isPublic: true, catalogId: { not: null } },
+      where: publicHoldingWhere({ profileId: community.profileId }),
       orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
       take: PROFILE_RECENT_LIMIT,
       select: {
@@ -253,14 +263,14 @@ export async function getPublicProfile(handle: string): Promise<PublicProfileDat
       },
     }),
     prisma.collectionItem.findMany({
-      where: { profileId: community.profileId, isPublic: true, catalogId: { not: null } },
+      where: publicHoldingWhere({ profileId: community.profileId }),
       select: { catalogId: true },
     }),
     prisma.collectionItem.count({
-      where: { profileId: community.profileId, isPublic: true, createdAt: { gte: windowStart } },
+      where: publicHoldingWhere({ profileId: community.profileId, createdAt: { gte: windowStart } }),
     }),
     prisma.collectionItem.aggregate({
-      where: { profileId: community.profileId, isPublic: true },
+      where: publicHoldingWhere({ profileId: community.profileId }),
       _sum: { quantity: true },
     }),
     // Verified buyer: at least one completed OrderItem via authoritative FK

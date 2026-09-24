@@ -305,18 +305,21 @@ export function CollectionItemForm(props: Props) {
       {/* ── Visibility ────────────────────────────────────────────── */}
       <section className="space-y-4 pt-4 border-t border-gray-100">
         <h2 className="text-sm font-semibold text-gray-900">Visibility</h2>
-        <label className="flex items-start gap-3 cursor-pointer">
+        <label className={`flex items-start gap-3 ${catalogDefaultId ? 'cursor-pointer' : 'cursor-not-allowed'}`}>
           <input
             type="checkbox"
             name="isPublic"
             value="on"
             defaultChecked={item?.isPublic ?? false}
-            className="mt-0.5 h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-900"
+            disabled={!catalogDefaultId}
+            className="mt-0.5 h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-900 disabled:opacity-50"
           />
           <span className="text-sm text-gray-700">
             Show on my public community profile
             <span className="block text-xs text-gray-400 mt-0.5">
-              Only visible if you have a public community profile.
+              {catalogDefaultId
+                ? 'Only visible if you have a public community profile.'
+                : 'Only catalog-matched items can be shown publicly.'}
             </span>
           </span>
         </label>

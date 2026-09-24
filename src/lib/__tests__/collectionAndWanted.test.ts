@@ -368,32 +368,47 @@ describe('wantedListMatching.ts', () => {
 describe('communityLeaderboardsQuery.ts: isPublic + quantity filter', () => {
   const src_ = src('src/lib/communityLeaderboardsQuery.ts')
 
-  it('scanCollectionItems filters isPublic: true', () => {
-    const fnIdx = src_.indexOf('async function scanCollectionItems')
-    expect(src_.indexOf('isPublic: true', fnIdx)).toBeGreaterThan(fnIdx)
+  // 35B: the isPublic/catalogId/quantity filter was consolidated into one shared
+  // publicHoldingWhere() predicate (see §3 of the 35B spec) so every public query
+  // uses the exact same eligibility rule — these tests now assert (a) the shared
+  // predicate itself is correct and (b) every relevant call site invokes it,
+  // rather than asserting the filter text is duplicated inline per function.
+  it('publicHoldingWhere enforces isPublic + catalogId not null + quantity > 0', () => {
+    const fnIdx = src_.indexOf('function publicHoldingWhere')
+    const fnSrc = src_.slice(fnIdx, src_.indexOf('\n}', fnIdx))
+    expect(fnSrc).toContain('isPublic: true')
+    expect(fnSrc).toContain('catalogId: { not: null }')
+    expect(fnSrc).toContain('quantity: { gt: 0 }')
   })
 
-  it('scanCollectionItems filters quantity > 0 to prevent malformed inflation', () => {
+  it('scanCollectionItems (leaderboard totals) uses the shared predicate', () => {
     const fnIdx = src_.indexOf('async function scanCollectionItems')
-    expect(src_.indexOf('quantity: { gt: 0 }', fnIdx)).toBeGreaterThan(fnIdx)
+    const nextFnIdx = src_.indexOf('async function scanRecentCollectionItems')
+    const fnSrc = src_.slice(fnIdx, nextFnIdx)
+    expect(fnSrc).toContain('publicHoldingWhere(')
   })
 
-  it('scanRecentCollectionItems filters isPublic: true', () => {
+  it('scanRecentCollectionItems (Active Collectors) uses the shared predicate', () => {
     const fnIdx = src_.indexOf('async function scanRecentCollectionItems')
-    expect(src_.indexOf('isPublic: true', fnIdx)).toBeGreaterThan(fnIdx)
+    const nextFnIdx = src_.indexOf('async function scanVerifiedOrderItems')
+    const fnSrc = src_.slice(fnIdx, nextFnIdx)
+    expect(fnSrc).toContain('publicHoldingWhere(')
   })
 
-  it('getPublicProfile recentRows query filters isPublic: true', () => {
+  it('getPublicProfile recentRows/allCatalogRows/recentCount/totalItems all use the shared predicate', () => {
     const fnIdx = src_.indexOf('export async function getPublicProfile')
-    expect(src_.indexOf('isPublic: true', fnIdx)).toBeGreaterThan(fnIdx)
+    const fnSrc = src_.slice(fnIdx)
+    const occurrences = (fnSrc.match(/publicHoldingWhere\(/g) ?? []).length
+    expect(occurrences).toBeGreaterThanOrEqual(4) // recentRows, allCatalogRows, recentCount, totalItems aggregate
   })
 
-  it('getPublicProfile aggregate filters isPublic: true (private items excluded from totals)', () => {
-    const fnIdx = src_.indexOf('export async function getPublicProfile')
-    const aggregateIdx = src_.indexOf('_sum: { quantity', fnIdx)
-    const beforeAggregate = src_.slice(fnIdx, aggregateIdx)
-    const publicOccurrences = (beforeAggregate.match(/isPublic: true/g) ?? []).length
-    expect(publicOccurrences).toBeGreaterThanOrEqual(3)
+  it('no query in this file re-implements isPublic/catalogId/quantity filtering ad hoc outside the shared predicate', () => {
+    // Every CollectionItem query in the file must route through publicHoldingWhere
+    // for eligibility — the verified-order-item and community-profile queries are
+    // unrelated models and correctly excluded from this check.
+    const collectionItemFindManyCalls = (src_.match(/prisma\.collectionItem\.(findMany|count|aggregate)\(/g) ?? []).length
+    const publicHoldingWhereCalls = (src_.match(/publicHoldingWhere\(/g) ?? []).length - 1 // -1 for the definition itself
+    expect(publicHoldingWhereCalls).toBe(collectionItemFindManyCalls)
   })
 })
 

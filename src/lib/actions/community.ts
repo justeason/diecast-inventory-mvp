@@ -56,12 +56,25 @@ export async function saveCommunityProfile(
   if (bioError) errors.bio = [bioError]
   if (Object.keys(errors).length > 0) return { errors }
 
-  const existing = await prisma.customerCommunityProfile.findUnique({
-    where: { handle },
-    select: { profileId: true },
+  // 35B: handle is immutable once set — a rename would free the old handle for
+  // another customer to claim, creating public-link identity confusion. Case-only
+  // resubmission is not a rename (handle is already normalized above).
+  const ownExisting = await prisma.customerCommunityProfile.findUnique({
+    where: { profileId: session.profileId },
+    select: { handle: true },
   })
-  if (existing && existing.profileId !== session.profileId) {
-    return { errors: { handle: ['This handle is already taken.'] } }
+  if (ownExisting && handle !== ownExisting.handle) {
+    return { errors: { handle: ['Your public handle cannot currently be changed.'] } }
+  }
+
+  if (!ownExisting) {
+    const existing = await prisma.customerCommunityProfile.findUnique({
+      where: { handle },
+      select: { profileId: true },
+    })
+    if (existing && existing.profileId !== session.profileId) {
+      return { errors: { handle: ['This handle is already taken.'] } }
+    }
   }
 
   try {
