@@ -187,8 +187,13 @@ describe('updateCustomerAccountInfo: narrow revalidation on success only', () =>
   })
 
   it('/account overview genuinely does not display CustomerProfile.name/phone (proves the dropped /account revalidation is safe, not just assumed)', () => {
+    // 36B: the page now legitimately renders CatalogModel-derived `.name` (via
+    // its own `entry`/`candidate.model` personalization objects, never a
+    // CustomerProfile-shaped one) — narrowed to the actual identifiers a
+    // CustomerProfile read would use, rather than every `.name` occurrence.
     const overviewPageSrc = readSrc('src/app/(store)/account/page.tsx')
-    expect(overviewPageSrc).not.toMatch(/\.name\b|\.phone\b/)
+    expect(overviewPageSrc).not.toMatch(/session\.name\b|customerProfile\.name\b|overview\.name\b/)
+    expect(overviewPageSrc).not.toMatch(/\.phone\b/)
   })
 
   it('/account/community genuinely does not read CustomerProfile.name/phone (proves the dropped revalidation there is safe)', () => {

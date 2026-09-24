@@ -2,8 +2,12 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 import { getBuyerSession } from '@/lib/buyerSession'
 import { getAccountOverview } from '@/lib/accountOverviewQuery'
+import { getAccountPersonalization, type AccountPersonalization } from '@/lib/accountPersonalizationQuery'
+import { logger } from '@/lib/serverLogger'
 import { BuyerOrderAccessForm } from '@/components/store/BuyerOrderAccessForm'
 import { AccountNav } from '@/components/store/AccountNav'
+import { PhotoThumbnail } from '@/components/shared/PhotoThumbnail'
+import { CatalogModelCard } from '@/components/store/CatalogModelCard'
 
 export const dynamic = 'force-dynamic'
 
@@ -51,6 +55,18 @@ export default async function AccountOverviewPage() {
 
   const overview = await getAccountOverview(session.profileId)
   const ordersEmpty = overview.orders.activeCount === 0 && overview.orders.recent.length === 0
+
+  // 36B: optional account enrichment, isolated from the core dashboard summary
+  // above — a technical failure here must never make Orders/Collection/
+  // Wanted/Selling unusable (mirrors 32B's optional-context principle). Never
+  // catches the auth/session check above, only this personalization read.
+  let personalization: AccountPersonalization | null = null
+  try {
+    personalization = await getAccountPersonalization(session.profileId)
+  } catch (err) {
+    logger.error('account_personalization_failed', err, { route: '/account' })
+    personalization = null
+  }
 
   return (
     <div className="max-w-3xl">
@@ -164,6 +180,52 @@ export default async function AccountOverviewPage() {
           </div>
         )}
       </div>
+
+      {personalization && personalization.recentlyAdded.length > 0 && (
+        <div className="mt-10">
+          <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Recently added to your Collection</h2>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            {personalization.recentlyAdded.map((entry) => (
+              <Link
+                key={entry.id}
+                href={`/account/collection/${entry.id}`}
+                className="block rounded-lg border border-gray-200 overflow-hidden bg-white hover:border-gray-400 transition-colors"
+              >
+                <div className="aspect-square overflow-hidden relative">
+                  <PhotoThumbnail photoUrl={entry.photoUrl} alt={`${entry.brand} ${entry.name}`} size="fill" />
+                </div>
+                <div className="p-3">
+                  <p className="text-xs font-medium text-gray-900 line-clamp-2 leading-snug">
+                    {entry.brand} {entry.name}{entry.year ? ` (${entry.year})` : ''}
+                  </p>
+                  {entry.series && <p className="text-xs text-gray-400 mt-0.5 truncate">{entry.series}</p>}
+                  {entry.quantity > 1 && <p className="text-xs text-gray-500 mt-0.5">You own {entry.quantity}</p>}
+                </div>
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {personalization && personalization.continueCollecting.length > 0 && (
+        <div className="mt-10">
+          <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Continue collecting</h2>
+          <p className="text-sm text-gray-500 mb-3">Explore models related to your Collection.</p>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-6">
+            {personalization.continueCollecting.map((candidate) => (
+              <div key={candidate.model.id}>
+                <p className="text-xs text-gray-500 mb-1.5">{candidate.reason.label}</p>
+                <CatalogModelCard
+                  model={candidate.model}
+                  availability={candidate.availability}
+                  relationship={candidate.relationship}
+                  marketValuation={candidate.marketValuation}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
