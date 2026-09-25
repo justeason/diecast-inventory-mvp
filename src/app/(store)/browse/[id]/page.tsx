@@ -2,8 +2,13 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { prisma } from '@/lib/prisma'
+import { getValuation } from '@/lib/marketValuation'
+import { internalPriceToCents } from '@/lib/marketMoney'
+import { evaluateComparableSalesEligibility, type ComparableSalesEvidence } from '@/lib/listingComparableSales'
+import { logger } from '@/lib/serverLogger'
 import { AddToCartButton } from '@/components/store/AddToCartButton'
 import { PhotoGallery } from '@/components/store/PhotoGallery'
+import { ListingComparableSales } from '@/components/store/ListingComparableSales'
 import type { CartItem } from '@/lib/cart'
 
 const CONDITION_LABELS: Record<string, string> = {
@@ -81,6 +86,8 @@ export default async function ListingDetailPage({
           cardedOrLoose: true,
           condition: true,
           conditionNotes: true,
+          catalogId: true,
+          marketVariantId: true,
           catalog: {
             select: {
               brand: true,
@@ -107,6 +114,26 @@ export default async function ListingDetailPage({
   const { catalog } = item
   const photos = item.photos
   const catalogPhoto = catalog.photos[0] ?? null
+
+  // 38B: "how does this physical copy's asking price compare with completed
+  // sales of comparable copies" — uses the SAME canonical customer-facing
+  // getValuation() the Market Model Page uses, at the exact recorded
+  // marketVariantId/condition of THIS ItemInstance (never derived from display
+  // text). Optional enrichment, isolated from the core Listing detail — a
+  // failure here must never take down purchasing/identity (§13).
+  let comparableSalesEvidence: ComparableSalesEvidence | null = null
+  try {
+    const valuation = await getValuation({
+      catalogModelId: item.catalogId,
+      marketVariantId: item.marketVariantId,
+      condition: item.condition,
+      asOf: new Date(),
+    })
+    comparableSalesEvidence = evaluateComparableSalesEligibility(valuation)
+  } catch (err) {
+    logger.error('listing_comparable_sales_failed', err, { route: '/browse/[id]', listingId: id })
+    comparableSalesEvidence = null
+  }
 
   const mainPhotoUrl = photos.find((p) => p.type === 'front')?.url ?? photos[0]?.url ?? null
 
@@ -225,6 +252,26 @@ export default async function ListingDetailPage({
               <div className="mt-4 rounded-md bg-gray-50 border border-gray-200 p-3">
                 <p className="text-xs font-medium text-gray-600 mb-1">Condition Notes</p>
                 <p className="text-sm text-gray-700">{item.conditionNotes}</p>
+              </div>
+            )}
+
+            {/* 38B: secondary, factual context — below identity/condition/price/
+                purchase action, per §15's information-hierarchy requirement. */}
+            {comparableSalesEvidence?.eligible && (
+              <ListingComparableSales
+                askCents={internalPriceToCents(listing.price)}
+                evidence={comparableSalesEvidence}
+                marketPageHref={`/catalog/${item.catalogId}`}
+              />
+            )}
+            {comparableSalesEvidence && !comparableSalesEvidence.eligible && (
+              <div className="mt-6 border-t border-gray-200 pt-6">
+                <Link
+                  href={`/catalog/${item.catalogId}`}
+                  className="text-xs text-gray-500 hover:text-gray-900 underline underline-offset-2"
+                >
+                  View market history for this model →
+                </Link>
               </div>
             )}
           </div>
