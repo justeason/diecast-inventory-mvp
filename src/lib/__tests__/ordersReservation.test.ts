@@ -18,12 +18,14 @@ vi.mock('@/lib/prisma', () => ({
   },
 }))
 vi.mock('@/lib/stripe', () => ({ getStripe: vi.fn() }))
+vi.mock('@/lib/buyerSession', () => ({ getBuyerSession: vi.fn().mockResolvedValue(null) }))
 vi.mock('@/lib/actions/sellerPayouts', () => ({ ensureConsignmentPayoutLinesForCompletedOrder: vi.fn() }))
 vi.mock('@/lib/actions/sellerLifecycle', () => ({ ensureSellerLifecycleEvent: vi.fn() }))
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }))
 vi.mock('next/navigation', () => ({ redirect: vi.fn(() => { throw new Error('REDIRECT') }) }))
 
 import { prisma } from '@/lib/prisma'
+import { getBuyerSession } from '@/lib/buyerSession'
 import { createOrder } from '@/lib/actions/orders'
 
 function listingRow(overrides: Record<string, unknown> = {}) {
@@ -69,6 +71,7 @@ function twoItemFormData(): FormData {
 beforeEach(() => {
   vi.resetAllMocks()
   ;(prisma.customerProfile.upsert as Mock).mockResolvedValue({ id: 'prof1' })
+  ;(getBuyerSession as Mock).mockResolvedValue(null)
 })
 
 describe('A. available item — conditional reservation count=1 — order succeeds', () => {

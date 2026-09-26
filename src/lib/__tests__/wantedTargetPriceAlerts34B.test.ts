@@ -53,7 +53,7 @@ beforeEach(() => vi.resetAllMocks())
 describe('§19/§64 — no new schema/crossing-state, migration count unchanged', () => {
   it('migration count is unchanged at 53', () => {
     const dirs = fs.readdirSync(path.join(process.cwd(), 'prisma/migrations')).filter((f) => fs.statSync(path.join(process.cwd(), 'prisma/migrations', f)).isDirectory())
-    expect(dirs.length).toBe(53)
+    expect(dirs.length).toBe(54)
   })
 
   it('WantedCatalogModel gained no new crossing-state column', () => {

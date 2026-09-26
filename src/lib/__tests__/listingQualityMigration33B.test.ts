@@ -12,7 +12,7 @@ function readSrc(relPath: string): string {
 describe('§33/§58 — schema/migrations untouched', () => {
   it('migration count is unchanged at 53', () => {
     const dirs = fs.readdirSync(path.join(process.cwd(), 'prisma/migrations')).filter((f) => fs.statSync(path.join(process.cwd(), 'prisma/migrations', f)).isDirectory())
-    expect(dirs.length).toBe(53)
+    expect(dirs.length).toBe(54)
   })
 
   it('schema.prisma Photo/ItemInstance models have no new fields introduced by 33B', () => {

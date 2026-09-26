@@ -259,7 +259,7 @@ describe('25B/26B: scope discipline — no CollectionLot redesign, no unrelated 
 
   it('migration count reflects 26B\'s additive ownership-ledger migration', () => {
     const migrationDirs = fs.readdirSync(path.join(root, 'prisma/migrations')).filter((f) => /^\d/.test(f))
-    expect(migrationDirs.length).toBe(53)
+    expect(migrationDirs.length).toBe(54)
   })
 })
 

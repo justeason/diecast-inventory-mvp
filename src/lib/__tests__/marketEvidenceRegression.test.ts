@@ -69,7 +69,7 @@ describe('§53 — schema/migration footprint', () => {
   it('migration count reflects all milestones through 26B (22B itself added none)', () => {
     const migrationsDir = path.join(root, 'prisma/migrations')
     const dirs = fs.readdirSync(migrationsDir).filter((d) => fs.statSync(path.join(migrationsDir, d)).isDirectory())
-    expect(dirs.length).toBe(53) // 26B added the ownership-ledger migration
+    expect(dirs.length).toBe(54) // 26B added the ownership-ledger migration
   })
 })
 

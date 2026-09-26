@@ -9,6 +9,8 @@ import { normalizeEmail } from '@/lib/normalizeEmail'
 import { ensureConsignmentPayoutLinesForCompletedOrder } from '@/lib/actions/sellerPayouts'
 import { reconcileCollectionDisposalsForCompletedOrder } from '@/lib/collectionDisposalReconciliation'
 import { ensureSellerLifecycleEvent } from '@/lib/actions/sellerLifecycle'
+import { computeInitialReservationExpiry } from '@/lib/orderReservation'
+import { getBuyerSession } from '@/lib/buyerSession'
 
 const OrderSchema = z.object({
   buyerName: z.string().min(1, 'Name is required'),
@@ -59,7 +61,20 @@ export async function createOrder(
     include: {
       // 21B: read once here, snapshotted onto the new OrderItem at creation below —
       // the authoritative source for the immutable sale-time facts.
-      item: { select: { catalogId: true, marketVariantId: true, cardedOrLoose: true, condition: true } },
+      item: {
+        select: {
+          catalogId: true,
+          marketVariantId: true,
+          cardedOrLoose: true,
+          condition: true,
+          // 39B: durable consignor identity chain for the self-trade check below —
+          // ItemInstance -> SellerAgreement -> SellerProfile -> CustomerProfile.id.
+          // NEVER the buyer's typed checkout email. Company-owned inventory
+          // (sellerAgreement null, or sellerAgreement.sellerProfile null) has no
+          // determinable consignor and stays purchasable by design.
+          sellerAgreement: { select: { sellerProfile: { select: { profileId: true } } } },
+        },
+      },
     },
   })
 
@@ -86,6 +101,35 @@ export async function createOrder(
     profileId = profile.id
   } catch (err) {
     console.error('[createOrder] customerProfile upsert failed:', err instanceof Error ? err.name : 'UnknownError')
+  }
+
+  // 39B (corrected): self-trade hard block — uses ONLY the cryptographically
+  // verified buyer session (getBuyerSession(), backed by CustomerSession —
+  // established exclusively via a consumed magic-link token or a correct
+  // password, never from a client-typed value read at request time). The
+  // email-upserted `profileId` above is NOT proof of identity — a guest can
+  // type ANY email, including a real consignor's, and the upsert would
+  // resolve to that same CustomerProfile.id without ever proving the typed
+  // email belongs to the person submitting this request. That profileId is
+  // used only for the Order.customerProfileId lookup convenience field below,
+  // never for this security decision.
+  //
+  // KNOWN LIMITATION (reported, not silently worked around): a guest checkout
+  // with no verified session cannot have self-trade reliably prevented —
+  // there is no durable, non-spoofable identity signal available for an
+  // unauthenticated request. Only a logged-in buyer's session is checked here.
+  const verifiedBuyerSession = await getBuyerSession()
+  if (verifiedBuyerSession) {
+    const selfTrade = listings.some(
+      (listing) => listing.item.sellerAgreement?.sellerProfile?.profileId === verifiedBuyerSession.profileId,
+    )
+    if (selfTrade) {
+      return {
+        errors: {
+          form: ['You cannot purchase an item you consigned. Please remove it from your cart and try again.'],
+        },
+      }
+    }
   }
 
   let orderId: string
@@ -125,6 +169,10 @@ export async function createOrder(
           notes: notes ?? null,
           status: 'pending',
           customerProfileId: profileId,
+          // 39B: protects the pre-Stripe-session interval (cart submitted, no
+          // payment link generated yet). Extended to the Stripe session's own
+          // expires_at once createAndSendStripeCheckoutSession runs.
+          reservationExpiresAt: computeInitialReservationExpiry(),
         },
       })
 
@@ -274,6 +322,8 @@ export async function updateOrderStatus(
   const order = await prisma.order.findUnique({
     where: { id },
     select: {
+      status: true,
+      paymentStatus: true,
       stripeSessionId: true,
       completedAt: true,
       orderItems: { select: { itemId: true, listingId: true } },
@@ -290,8 +340,36 @@ export async function updateOrderStatus(
   const listingIds = order.orderItems.map((oi) => oi.listingId)
 
   if (status === 'cancelled') {
+    // 39B: a paid or completed order must never have its stock silently
+    // returned to sale via a bare status change — this schema has no
+    // refund/reversal process, so cancellation of a paid order is rejected
+    // outright rather than faked. Before this guard, ANY order (including
+    // paid/complete) could transition to 'cancelled' and release its items.
+    if (order.paymentStatus === 'paid' || order.status === 'complete') {
+      return {
+        errors: {
+          form: [
+            'This order has already been paid or completed and cannot be cancelled here. A paid order requires a refund process (not currently supported) before its items can be released.',
+          ],
+        },
+      }
+    }
+
     await prisma.$transaction(async (tx) => {
-      await tx.order.update({ where: { id }, data: { status: 'cancelled' } })
+      await tx.order.update({
+        where: { id },
+        data: {
+          status: 'cancelled',
+          // Follow-up fix: previously left set after cancellation, which let a
+          // stale/replaced Stripe session still id+stripeSessionId-match this
+          // (now-cancelled, released) Order in the webhook — a late payment on
+          // that stale session could otherwise appear to target a live order.
+          stripeSessionId: null,
+          stripeSessionExpiresAt: null,
+          reservationExpiresAt: null,
+          paymentLink: null,
+        },
+      })
       // Only update items currently reserved — guards against double-effects and
       // avoids touching items that may have already moved to another status.
       await tx.itemInstance.updateMany({

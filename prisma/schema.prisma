@@ -434,6 +434,11 @@ model Order {
   stripeSessionId        String?
   stripeSessionExpiresAt DateTime?
   stripePaymentIntentId  String?
+  // 39B: durable reservation deadline. Set to now+30min at createOrder (protects
+  // the pre-Stripe-session interval); updated to the Stripe Checkout Session's own
+  // authoritative expires_at once a session is created. Null only for legacy
+  // pre-39B orders — never blindly expired (see orderReservation.ts).
+  reservationExpiresAt   DateTime?
   customerProfileId      String?
   customerProfile        CustomerProfile? @relation(fields: [customerProfileId], references: [id])
   createdAt              DateTime         @default(now())

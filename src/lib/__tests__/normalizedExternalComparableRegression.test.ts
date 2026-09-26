@@ -79,7 +79,7 @@ describe('§39 — schema/migration footprint', () => {
   it('migration count is still 52 — no new migration added', () => {
     const migrationsDir = path.join(root, 'prisma/migrations')
     const dirs = fs.readdirSync(migrationsDir).filter((d) => fs.statSync(path.join(migrationsDir, d)).isDirectory())
-    expect(dirs.length).toBe(53) // 26B added the ownership-ledger migration
+    expect(dirs.length).toBe(54) // 26B added the ownership-ledger migration
   })
   it('schema.prisma has no snapshotProvenance-style normalizedCondition/version field on ExternalMarketObservation', () => {
     const schema = readSrc('prisma/schema.prisma')

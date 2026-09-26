@@ -21,12 +21,14 @@ vi.mock('@/lib/prisma', () => ({
   },
 }))
 vi.mock('@/lib/stripe', () => ({ getStripe: vi.fn() }))
+vi.mock('@/lib/buyerSession', () => ({ getBuyerSession: vi.fn().mockResolvedValue(null) }))
 vi.mock('@/lib/actions/sellerPayouts', () => ({ ensureConsignmentPayoutLinesForCompletedOrder: vi.fn() }))
 vi.mock('@/lib/actions/sellerLifecycle', () => ({ ensureSellerLifecycleEvent: vi.fn() }))
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }))
 vi.mock('next/navigation', () => ({ redirect: vi.fn(() => { throw new Error('REDIRECT') }) }))
 
 import { prisma } from '@/lib/prisma'
+import { getBuyerSession } from '@/lib/buyerSession'
 import { createOrder } from '@/lib/actions/orders'
 
 function listingRow(overrides: Record<string, unknown> = {}) {
@@ -68,6 +70,7 @@ describe('createOrder — OrderItem snapshot (21B)', () => {
   beforeEach(() => {
     vi.resetAllMocks()
     ;(prisma.customerProfile.upsert as Mock).mockResolvedValue({ id: 'prof1' })
+    ;(getBuyerSession as Mock).mockResolvedValue(null)
   })
 
   it('copies catalogModelId, marketVariantId, snapshotPackagingType, and snapshotCondition from the authoritative ItemInstance at creation, tagged sale_time (21C)', async () => {
@@ -111,7 +114,13 @@ describe('createOrder — OrderItem snapshot (21B)', () => {
 
     const call = (prisma.listing.findMany as Mock).mock.calls[0][0]
     expect(call.include).toEqual({
-      item: { select: { catalogId: true, marketVariantId: true, cardedOrLoose: true, condition: true } },
+      item: {
+        select: {
+          catalogId: true, marketVariantId: true, cardedOrLoose: true, condition: true,
+          // 39B: self-trade identity chain, read in the same query — never a second query.
+          sellerAgreement: { select: { sellerProfile: { select: { profileId: true } } } },
+        },
+      },
     })
   })
 

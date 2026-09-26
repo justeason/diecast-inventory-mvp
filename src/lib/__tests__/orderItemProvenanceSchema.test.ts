@@ -40,7 +40,7 @@ describe('migration — exactly one new migration (§4/§47)', () => {
   const dirs = fs.readdirSync(migrationsDir).filter((d) => fs.statSync(path.join(migrationsDir, d)).isDirectory())
 
   it('migration count is exactly 52', () => {
-    expect(dirs.length).toBe(53) // 26B added the ownership-ledger migration
+    expect(dirs.length).toBe(54) // 26B added the ownership-ledger migration
   })
 
   it('the new migration exists and is the snapshot-provenance migration', () => {

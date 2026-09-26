@@ -476,7 +476,7 @@ describe('§23 — behavioral: comparable-sales query failure isolation', () => 
 describe('Schema/migrations/packages unchanged', () => {
   it('migration count is unchanged at 53', () => {
     const dirs = fs.readdirSync(path.join(root, 'prisma/migrations')).filter((f) => fs.statSync(path.join(root, 'prisma/migrations', f)).isDirectory())
-    expect(dirs.length).toBe(53)
+    expect(dirs.length).toBe(54)
   })
 })
 

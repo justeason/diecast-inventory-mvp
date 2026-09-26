@@ -516,7 +516,7 @@ describe('§61 — no changes to unrelated domains (import-boundary check)', () 
 describe('§62 — schema/migrations unchanged', () => {
   it('migration count is unchanged at 53', () => {
     const dirs = fs.readdirSync(path.join(root, 'prisma/migrations')).filter((f) => fs.statSync(path.join(root, 'prisma/migrations', f)).isDirectory())
-    expect(dirs.length).toBe(53)
+    expect(dirs.length).toBe(54)
   })
 
   it('CustomerCommunityProfile/CollectionItem schema fields unchanged (no new visibility columns)', () => {

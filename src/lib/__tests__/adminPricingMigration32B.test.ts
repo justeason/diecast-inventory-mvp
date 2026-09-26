@@ -121,7 +121,7 @@ describe('32B §92 — explicit scope prohibitions', () => {
     const migrationDirs = fs
       .readdirSync(path.join(process.cwd(), 'prisma/migrations'))
       .filter((f) => fs.statSync(path.join(process.cwd(), 'prisma/migrations', f)).isDirectory())
-    expect(migrationDirs.length).toBe(53)
+    expect(migrationDirs.length).toBe(54)
     expect(readSrc('prisma/schema.prisma')).not.toMatch(/model ListingPriceHistory|model AdminAuditLog/)
   })
 

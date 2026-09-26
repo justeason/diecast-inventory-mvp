@@ -375,6 +375,6 @@ describe('27B §55-60/§66/§95: explicitly out of scope', () => {
 
   it('migration count stays 53 — no schema change', () => {
     const migrationDirs = fs.readdirSync(path.join(root, 'prisma/migrations')).filter((d) => /^\d/.test(d))
-    expect(migrationDirs.length).toBe(53)
+    expect(migrationDirs.length).toBe(54)
   })
 })

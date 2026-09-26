@@ -6,6 +6,8 @@ import { Resend } from 'resend'
 import { getStripe } from '@/lib/stripe'
 import { prisma } from '@/lib/prisma'
 import { buildPaymentLinkEmail } from '@/lib/email/paymentLinkEmail'
+import { computeInitialReservationExpiry, attachStripeSession } from '@/lib/orderReservation'
+import { logger } from '@/lib/serverLogger'
 
 export type StripeActionState =
   | { success: true }
@@ -35,6 +37,7 @@ export async function createAndSendStripeCheckoutSession(
       stripeSessionId: true,
       orderItems: {
         select: {
+          itemId: true,
           price: true,
           listing: { select: { title: true } },
         },
@@ -165,21 +168,27 @@ export async function createAndSendStripeCheckoutSession(
     return { errors: { form: ['Failed to create Stripe Checkout Session. Please try again.'] } }
   }
 
-  // 7. Save session to DB
+  // 7. Attach session to DB — guarded: the reservation may have been released
+  // by the cron between step 1's read and this point (session-creation-vs-
+  // cron-release race). If so, the session Stripe just created is orphaned —
+  // it must be expired, never returned/emailed, and the released Order must
+  // never be revived or re-reserved as a side effect of this action.
+  const itemIds = order.orderItems.map((oi) => oi.itemId)
+  let attachOutcome: Awaited<ReturnType<typeof attachStripeSession>>
   try {
-    await prisma.order.update({
-      where: { id: order.id },
-      data: {
-        stripeSessionId:        session.id,
-        stripeSessionExpiresAt: new Date(expiresAt * 1000),
-        paymentLink:            session.url,
-        paymentStatus:          'requested',
-        paymentRequestedAt:     new Date(),
-        paymentMethod:          'stripe',
-      },
+    attachOutcome = await attachStripeSession(order.id, itemIds, {
+      stripeSessionId:        session.id,
+      stripeSessionExpiresAt: new Date(expiresAt * 1000),
+      // 39B: the Stripe session's own returned expiry is now the
+      // authoritative reservation deadline — replaces the 30-min
+      // pre-session deadline set at createOrder. Never a hardcoded 23/24h
+      // assumption; this is the exact value Stripe echoed back.
+      reservationExpiresAt:   new Date(expiresAt * 1000),
+      paymentLink:            session.url,
+      paymentRequestedAt:     new Date(),
     })
   } catch (err) {
-    // DB write failed — expire the session so it's not orphaned in Stripe
+    // DB write failed outright — expire the session so it's not orphaned in Stripe
     const name = err instanceof Error ? err.name : 'UnknownError'
     console.error('[stripe] DB update error after session create:', name)
     try {
@@ -188,6 +197,25 @@ export async function createAndSendStripeCheckoutSession(
       // best-effort
     }
     return { errors: { form: ['Failed to save payment session. Please try again.'] } }
+  }
+
+  if (attachOutcome === 'reservation_lost') {
+    try {
+      await stripe.checkout.sessions.expire(session.id)
+      logger.warn('stripe.checkout.orphanedSessionExpired', { orderId: order.id, sessionId: session.id })
+    } catch (err) {
+      // Could NOT confirm the orphaned session was expired — do not claim it
+      // was safely handled. It will still lapse on its own expires_at
+      // eventually, but until then a payable session exists for a Order that
+      // no longer holds its reservation: an unresolved provider-side
+      // exception, reported as such rather than silently assumed resolved.
+      logger.error('stripe.checkout.orphanedSessionExpireFailed', err, { orderId: order.id, sessionId: session.id })
+    }
+    return {
+      errors: {
+        form: ['This order\'s reservation expired before the payment link could be created. Please start a new checkout for this order.'],
+      },
+    }
   }
 
   // 8. Send buyer email (fire-and-forget on failure — session already saved)
@@ -330,6 +358,11 @@ export async function expireStripeSession(
     data: {
       stripeSessionId:        null,
       stripeSessionExpiresAt: null,
+      // 39B: back to the pre-session interval — without this, the stale
+      // session-derived deadline (up to 23h out) would leave the reservation
+      // un-releasable by the cron for hours after the admin explicitly
+      // expired the session, even though no session is active anymore.
+      reservationExpiresAt:   computeInitialReservationExpiry(),
       paymentStatus:          'unpaid',
       paymentLink:            null,
       paymentMethod:          null,

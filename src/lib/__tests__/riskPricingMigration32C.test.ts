@@ -149,7 +149,7 @@ describe('§42/§62 — RiskPolicyConfig schema/config untouched', () => {
 
   it('migration count is unchanged at 53', () => {
     const dirs = fs.readdirSync(path.join(process.cwd(), 'prisma/migrations')).filter((f) => fs.statSync(path.join(process.cwd(), 'prisma/migrations', f)).isDirectory())
-    expect(dirs.length).toBe(53)
+    expect(dirs.length).toBe(54)
   })
 })
 

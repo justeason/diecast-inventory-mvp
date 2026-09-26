@@ -195,6 +195,6 @@ describe('26C §42: no total "Return" metric', () => {
 describe('26C §60/§61: no schema change, no new package expected', () => {
   it('migration count is still 53 — 26C introduced no new migration', () => {
     const migrationDirs = fs.readdirSync(path.join(root, 'prisma/migrations')).filter((d) => /^\d/.test(d))
-    expect(migrationDirs.length).toBe(53)
+    expect(migrationDirs.length).toBe(54)
   })
 })
